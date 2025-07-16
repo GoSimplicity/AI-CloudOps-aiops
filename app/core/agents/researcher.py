@@ -10,7 +10,7 @@ Description: 研究代理 - 提供问题调查和解决方案分析服务
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from langchain_core.tools import tool
 from langchain_community.tools.tavily_search import TavilySearchResults
 from app.config.settings import config
