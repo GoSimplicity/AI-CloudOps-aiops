@@ -1,0 +1,135 @@
+# MCP服务配置文件
+# 支持动态加载和管理多个MCP服务
+
+services:
+  # 基础工具服务
+  - name: time_service
+    display_name: 时间服务
+    description: 提供时间相关的工具服务，包括获取当前时间、时区转换等
+    version: 1.0.0
+    server_url: http://localhost:9000
+    timeout: 30
+    max_retries: 3
+    health_check_interval: 60
+    weight: 1
+    tags: [utility, time, basic]
+    metadata:
+      author: AI-CloudOps
+      category: utility
+      tools: [get_current_time, get_timezone, convert_time]
+
+  - name: file_service
+    display_name: 文件服务
+    description: 提供文件系统操作相关的工具服务
+    version: 1.0.0
+    server_url: http://localhost:9001
+    timeout: 30
+    max_retries: 3
+    health_check_interval: 60
+    weight: 2
+    tags: [file, system, io]
+    metadata:
+      author: AI-CloudOps
+      category: system
+      tools: [read_file, write_file, list_directory, create_directory]
+
+  - name: calculator_service
+    display_name: 计算器服务
+    description: 提供数学计算相关的工具服务
+    version: 1.0.0
+    server_url: http://localhost:9002
+    timeout: 30
+    max_retries: 3
+    health_check_interval: 60
+    weight: 1
+    tags: [math, calculator, utility]
+    metadata:
+      author: AI-CloudOps
+      category: utility
+      tools: [calculate, solve_equation, statistics]
+
+  - name: system_info_service
+    display_name: 系统信息服务
+    description: 提供系统信息查询相关的工具服务
+    version: 1.0.0
+    server_url: http://localhost:9003
+    timeout: 30
+    max_retries: 3
+    health_check_interval: 60
+    weight: 1
+    tags: [system, info, monitoring]
+    metadata:
+      author: AI-CloudOps
+      category: system
+      tools: [get_system_info, get_process_info, get_disk_usage]
+
+  # 网络服务
+  - name: web_service
+    display_name: 网络服务
+    description: 提供网络请求相关的工具服务
+    version: 1.0.0
+    server_url: http://localhost:9004
+    timeout: 30
+    max_retries: 3
+    health_check_interval: 60
+    weight: 2
+    tags: [web, http, network]
+    metadata:
+      author: AI-CloudOps
+      category: network
+      tools: [http_request, fetch_url, parse_html]
+
+  # 数据库服务
+  - name: database_service
+    display_name: 数据库服务
+    description: 提供数据库操作相关的工具服务
+    version: 1.0.0
+    server_url: http://localhost:9005
+    timeout: 30
+    max_retries: 3
+    health_check_interval: 60
+    weight: 2
+    tags: [database, sql, data]
+    metadata:
+      author: AI-CloudOps
+      category: database
+      tools: [execute_sql, query_data, backup_database]
+
+  # 高级服务 - 可按需启用
+  # - name: kubernetes_service
+  #   display_name: Kubernetes服务
+  #   description: 提供Kubernetes集群管理相关的工具服务
+  #   version: 1.0.0
+  #   server_url: http://localhost:9100
+  #   timeout: 60
+  #   max_retries: 2
+  #   health_check_interval: 120
+  #   weight: 3
+  #   tags: [kubernetes, k8s, cluster, devops]
+  #   metadata:
+  #     author: AI-CloudOps
+  #     category: devops
+  #     tools: [get_pods, get_services, get_deployments, apply_yaml]
+
+  # - name: monitoring_service
+  #   display_name: 监控服务
+  #   description: 提供系统监控和告警相关的工具服务
+  #   version: 1.0.0
+  #   server_url: http://localhost:9101
+  #   timeout: 45
+  #   max_retries: 2
+  #   health_check_interval: 90
+  #   weight: 2
+  #   tags: [monitoring, metrics, alerting, observability]
+  #   metadata:
+  #     author: AI-CloudOps
+  #     category: monitoring
+  #     tools: [get_metrics, check_health, send_alert]
+
+# 全局配置
+global_timeout: 30
+max_concurrent_requests: 100
+health_check_enabled: true
+load_balancing: weighted_round_robin
+cache_enabled: true
+cache_ttl: 300

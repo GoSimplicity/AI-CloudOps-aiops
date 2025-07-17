@@ -45,6 +45,9 @@ from .session.session_manager import SessionManager
 from .utils.task_manager import create_safe_task, get_task_manager
 from .utils.helpers import is_test_environment
 
+# 导入MCP集成
+from .mcp_integration import get_mcp_integration
+
 logger = logging.getLogger("aiops.assistant")
 
 
@@ -107,6 +110,7 @@ class AssistantAgent:
             self._init_llm()
             self._init_vector_store()
             self._init_advanced_components()
+            self._init_mcp_integration()
         except Exception as e:
             logger.error(f"组件初始化失败: {e}")
             raise
@@ -411,6 +415,36 @@ class AssistantAgent:
         except Exception as e:
             logger.error(f"高级组件初始化失败: {e}")
 
+    def _init_mcp_integration(self):
+        """初始化MCP集成"""
+        try:
+            import asyncio
+            # 使用事件循环运行异步初始化
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # 如果循环正在运行，使用create_task
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(asyncio.run, self._async_init_mcp())
+                        future.result()
+                else:
+                    loop.run_until_complete(self._async_init_mcp())
+            except RuntimeError:
+                # 没有事件循环，创建新的
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self._async_init_mcp())
+        except Exception as e:
+            logger.error(f"MCP集成初始化失败: {e}")
+            logger.warning("⚠️  MCP集成初始化失败，将使用传统问答模式")
+
+    async def _async_init_mcp(self):
+        """异步初始化MCP集成"""
+        from .mcp_integration import get_mcp_integration
+        self.mcp_integration = await get_mcp_integration()
+        logger.info("MCP集成初始化完成")
+
     # ==================== 知识库管理 ====================
 
     async def refresh_knowledge_base(self) -> Dict[str, Any]:
@@ -519,26 +553,38 @@ class AssistantAgent:
             if session_id:
                 session_id = self.session_manager.add_message_to_history(session_id, "user", question)
 
-            # 性能优化：并行执行文档检索和问题分类
+            # 性能优化：并行执行MCP检查、文档检索和问题分类
             try:
                 async def parallel_tasks():
-                    # 任务1: 快速文档检索
+                    tasks = []
+                    
+                    # 任务1: MCP集成检查
+                    if hasattr(self, 'mcp_integration') and self.mcp_integration:
+                        mcp_task = self.mcp_integration.is_available()
+                        tasks.append(mcp_task)
+                    else:
+                        tasks.append(asyncio.sleep(0, result=False))
+                    
+                    # 任务2: 快速文档检索
                     docs_task = self._retrieve_relevant_docs_fast(question, session_id, history, max_context_docs)
+                    tasks.append(docs_task)
 
-                    # 任务2: 问题分类
+                    # 任务3: 问题分类
                     classification_task = asyncio.get_event_loop().run_in_executor(
                         None, self.answer_generator._classify_question_enhanced, question
                     )
+                    tasks.append(classification_task)
 
-                    return await asyncio.gather(docs_task, classification_task, return_exceptions=True)
+                    return await asyncio.gather(*tasks, return_exceptions=True)
 
                 results = await asyncio.wait_for(parallel_tasks(), timeout=10)
-                relevant_docs, question_type = results
+                mcp_available, relevant_docs, question_type = results
             except Exception as e:
                 logger.error(f"并行任务执行失败: {e}")
                 # 回退到简单的文档检索
                 relevant_docs = self._get_relevant_docs_fallback(question, max_context_docs)
                 question_type = 'general'
+                mcp_available = False
 
             # 处理异常结果
             if isinstance(relevant_docs, Exception):
@@ -547,31 +593,57 @@ class AssistantAgent:
             if isinstance(question_type, Exception):
                 logger.warning(f"问题分类失败: {question_type}")
                 question_type = 'general'
+            if isinstance(mcp_available, Exception):
+                logger.warning(f"MCP检查失败: {mcp_available}")
+                mcp_available = False
 
-            logger.debug(f"检索到文档数量: {len(relevant_docs)}, 问题类型: {question_type}")
+            logger.debug(f"MCP可用: {mcp_available}, 检索到文档数量: {len(relevant_docs)}, 问题类型: {question_type}")
 
-            # 快速回答生成
+            # 优先使用MCP工具回答
             answer = ""
             confidence = 0.7
+            used_mcp = False
+            mcp_tools_used = []
 
-            if relevant_docs:
+            # 如果MCP可用，尝试使用工具回答
+            if mcp_available and hasattr(self, 'mcp_integration') and self.mcp_integration:
                 try:
-                    answer = await asyncio.wait_for(
-                        self._generate_answer_fast(question, relevant_docs, question_type),
+                    mcp_result = await asyncio.wait_for(
+                        self.mcp_integration.process_with_mcp(question),
                         timeout=8
                     )
-                    confidence = 0.8
+                    
+                    if mcp_result.get("used_mcp") and mcp_result.get("response"):
+                        answer = mcp_result["response"]
+                        confidence = 0.9  # MCP工具回答置信度更高
+                        used_mcp = True
+                        mcp_tools_used = ["mcp_tools"]  # 简化工具追踪
+                        logger.info("使用MCP工具回答用户问题")
                 except asyncio.TimeoutError:
-                    logger.warning("答案生成超时，使用快速回答")
-                    answer = self._generate_quick_answer(question, relevant_docs, question_type)
-                    confidence = 0.6
+                    logger.warning("MCP处理超时")
                 except Exception as e:
-                    logger.error(f"答案生成失败: {e}")
-                    answer = self._generate_quick_answer(question, relevant_docs, question_type)
-                    confidence = 0.5
-            else:
-                answer = self._get_fallback_answer(question_type)
-                confidence = 0.3
+                    logger.error(f"MCP处理失败: {e}")
+
+            # 如果没有使用MCP或MCP失败，使用知识库回答
+            if not answer:
+                if relevant_docs:
+                    try:
+                        answer = await asyncio.wait_for(
+                            self._generate_answer_fast(question, relevant_docs, question_type),
+                            timeout=8
+                        )
+                        confidence = 0.8
+                    except asyncio.TimeoutError:
+                        logger.warning("答案生成超时，使用快速回答")
+                        answer = self._generate_quick_answer(question, relevant_docs, question_type)
+                        confidence = 0.6
+                    except Exception as e:
+                        logger.error(f"答案生成失败: {e}")
+                        answer = self._generate_quick_answer(question, relevant_docs, question_type)
+                        confidence = 0.5
+                else:
+                    answer = self._get_fallback_answer(question_type)
+                    confidence = 0.3
 
             # 计算处理时间
             processing_time = time.time() - start_time
@@ -579,12 +651,14 @@ class AssistantAgent:
             # 构建响应
             result = {
                 "answer": answer,
-                "source_documents": self._format_source_documents_simple(relevant_docs[:3]),
+                "source_documents": self._format_source_documents_simple(relevant_docs[:3]) if not used_mcp else [],
                 "relevance_score": confidence,
                 "recall_rate": min(len(relevant_docs) / max_context_docs, 1.0) if relevant_docs else 0.0,
                 "follow_up_questions": self._get_simple_follow_up_questions(question_type)[:2],
                 "total_docs_found": len(relevant_docs),
-                "processing_time": round(processing_time, 2)
+                "processing_time": round(processing_time, 2),
+                "used_mcp": used_mcp,
+                "mcp_tools_used": mcp_tools_used
             }
 
             # 添加助手回复到历史

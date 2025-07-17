@@ -1,0 +1,43 @@
+global_timeout: 30
+services:
+- description: 提供时间相关的工具服务
+  display_name: 时间服务
+  health_check_interval: 60
+  max_retries: 3
+  metadata:
+    author: AI-CloudOps
+    category: utility
+    tools:
+    - get_current_time
+    - get_timezone
+    - convert_time
+  name: time_service
+  server_url: http://localhost:9000
+  tags:
+  - utility
+  - time
+  - basic
+  timeout: 30
+  version: 1.0.0
+  weight: 1
+- description: 提供文件系统操作相关的工具服务
+  display_name: 文件服务
+  health_check_interval: 60
+  max_retries: 3
+  metadata:
+    author: AI-CloudOps
+    category: system
+    tools:
+    - read_file
+    - write_file
+    - list_directory
+    - create_directory
+  name: file_service
+  server_url: http://localhost:9001
+  tags:
+  - file
+  - system
+  - io
+  timeout: 30
+  version: 1.0.0
+  weight: 2

@@ -1,0 +1,87 @@
+{
+  "services": [
+    {
+      "name": "time_service",
+      "display_name": "时间服务",
+      "description": "提供时间相关的工具服务",
+      "version": "1.0.0",
+      "server_url": "http://localhost:9000",
+      "timeout": 30,
+      "max_retries": 3,
+      "health_check_interval": 60,
+      "weight": 1,
+      "tags": [
+        "utility",
+        "time",
+        "basic"
+      ],
+      "metadata": {
+        "author": "AI-CloudOps",
+        "category": "utility",
+        "tools": [
+          "get_current_time",
+          "get_timezone",
+          "convert_time"
+        ]
+      }
+    },
+    {
+      "name": "file_service",
+      "display_name": "文件服务",
+      "description": "提供文件系统操作相关的工具服务",
+      "version": "1.0.0",
+      "server_url": "http://localhost:9001",
+      "timeout": 30,
+      "max_retries": 3,
+      "health_check_interval": 60,
+      "weight": 2,
+      "tags": [
+        "file",
+        "system",
+        "io"
+      ],
+      "metadata": {
+        "author": "AI-CloudOps",
+        "category": "system",
+        "tools": [
+          "read_file",
+          "write_file",
+          "list_directory",
+          "create_directory"
+        ]
+      }
+    },
+    {
+      "name": "calculator_service",
+      "display_name": "计算器服务",
+      "description": "提供数学计算相关的工具服务",
+      "version": "1.0.0",
+      "server_url": "http://localhost:9002",
+      "timeout": 30,
+      "max_retries": 3,
+      "health_check_interval": 60,
+      "weight": 1,
+      "tags": [
+        "math",
+        "calculator",
+        "utility"
+      ],
+      "metadata": {
+        "author": "AI-CloudOps",
+        "category": "utility",
+        "tools": [
+          "calculate",
+          "solve_equation",
+          "statistics"
+        ]
+      }
+    }
+  ],
+  "global_timeout": 30,
+  "max_concurrent_requests": 50,
+  "health_check_enabled": true,
+  "load_balancing": "weighted_round_robin",
+  "cache_enabled": true,
+  "cache_ttl": 300,
+  "environment": "development"
+}
