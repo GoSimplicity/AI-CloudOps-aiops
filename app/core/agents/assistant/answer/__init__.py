@@ -4,4 +4,4 @@
 
 from .reliable_answer_generator import ReliableAnswerGenerator
 
-__all__ = ['ReliableAnswerGenerator']
+__all__ = ["ReliableAnswerGenerator"]

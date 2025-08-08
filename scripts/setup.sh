@@ -1,3 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 简易一键初始化脚本
+
+ROOT_DIR=$(cd $(dirname $0)/.. && pwd)
+cd "$ROOT_DIR"
+
+echo "[INFO] 使用 venv 创建虚拟环境"
+python3 -m venv .venv
+source .venv/bin/activate
+
+echo "[INFO] 安装依赖"
+pip install -U pip
+pip install -r requirements.txt
+
+echo "[INFO] 创建配置与目录"
+mkdir -p logs data/models data/vector_db
+cp -n env.example .env || true
+
+echo "[INFO] 运行测试与静态检查"
+pytest -q || true
+ruff check . || true
+
+echo "[INFO] 完成。可运行: ./scripts/start.sh"
+
 #!/bin/bash
 
 # AIOps平台环境设置脚本

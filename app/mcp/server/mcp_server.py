@@ -68,9 +68,9 @@ class MCPServer:
         """获取工具列表"""
         return [
             {
-                'name': tool.name,
-                'description': tool.description,
-                'parameters': tool.parameters
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
             }
             for tool in self.tools.values()
         ]

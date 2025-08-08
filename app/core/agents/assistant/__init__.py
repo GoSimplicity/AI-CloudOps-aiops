@@ -9,12 +9,12 @@ from .retrieval import VectorStoreManager
 from .storage import DocumentLoader
 
 __all__ = [
-    'AssistantAgent',
-    'SessionData',
-    'FallbackEmbeddings',
-    'FallbackChatModel',
-    'AssistantConfig',
-    'assistant_config',
-    'VectorStoreManager',
-    'DocumentLoader'
+    "AssistantAgent",
+    "SessionData",
+    "FallbackEmbeddings",
+    "FallbackChatModel",
+    "AssistantConfig",
+    "assistant_config",
+    "VectorStoreManager",
+    "DocumentLoader",
 ]

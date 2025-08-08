@@ -5,9 +5,4 @@
 from .base import SessionData, FallbackEmbeddings, FallbackChatModel
 from .config import AssistantConfig
 
-__all__ = [
-    'SessionData',
-    'FallbackEmbeddings',
-    'FallbackChatModel',
-    'AssistantConfig'
-]
+__all__ = ["SessionData", "FallbackEmbeddings", "FallbackChatModel", "AssistantConfig"]

@@ -68,11 +68,11 @@ class AssistantAgent:
 
         # 使用Redis缓存管理器
         self.cache_manager = RedisCacheManager(
-            redis_config=assistant_config.cache_config['redis_config'],
-            cache_prefix=assistant_config.cache_config['cache_prefix'],
-            default_ttl=assistant_config.cache_config['default_ttl'],
-            max_cache_size=assistant_config.cache_config['max_cache_size'],
-            enable_compression=assistant_config.cache_config['enable_compression']
+            redis_config=assistant_config.cache_config["redis_config"],
+            cache_prefix=assistant_config.cache_config["cache_prefix"],
+            default_ttl=assistant_config.cache_config["default_ttl"],
+            max_cache_size=assistant_config.cache_config["max_cache_size"],
+            enable_compression=assistant_config.cache_config["enable_compression"],
         )
 
         self.document_loader = DocumentLoader(str(self.knowledge_base_path))
@@ -114,16 +114,18 @@ class AssistantAgent:
         try:
             # 尝试先从Redis获取预缓存的向量服务
             cached_model = self.cache_manager.get("embedding_model_status")
-            if cached_model and cached_model.get('status') == 'ready':
+            if cached_model and cached_model.get("status") == "ready":
                 logger.info("使用缓存的嵌入模型配置")
         except Exception as e:
             logger.warning(f"检查嵌入缓存失败: {str(e)}")
 
         for attempt in range(max_retries):
             try:
-                logger.info(f"尝试初始化 {self.llm_provider} 嵌入模型 (第 {attempt + 1}/{max_retries} 次)")
+                logger.info(
+                    f"尝试初始化 {self.llm_provider} 嵌入模型 (第 {attempt + 1}/{max_retries} 次)"
+                )
 
-                if self.llm_provider == 'openai':
+                if self.llm_provider == "openai":
                     # 验证配置
                     if not config.llm.api_key:
                         raise ValueError("OpenAI API key 未配置")
@@ -132,14 +134,16 @@ class AssistantAgent:
                     if not config.rag.openai_embedding_model:
                         raise ValueError("OpenAI embedding model 未配置")
 
-                    logger.info(f"OpenAI嵌入配置 - Model: {config.rag.openai_embedding_model}")
+                    logger.info(
+                        f"OpenAI嵌入配置 - Model: {config.rag.openai_embedding_model}"
+                    )
 
                     self.embedding = OpenAIEmbeddings(
                         model=config.rag.openai_embedding_model,
                         api_key=config.llm.api_key,
                         base_url=config.llm.base_url,
                         timeout=10,
-                        max_retries=1
+                        max_retries=1,
                     )
                 else:
                     # Ollama配置验证
@@ -148,11 +152,13 @@ class AssistantAgent:
                     if not config.rag.ollama_embedding_model:
                         raise ValueError("Ollama embedding model 未配置")
 
-                    logger.info(f"Ollama嵌入配置 - Model: {config.rag.ollama_embedding_model}")
+                    logger.info(
+                        f"Ollama嵌入配置 - Model: {config.rag.ollama_embedding_model}"
+                    )
 
                     self.embedding = OllamaEmbeddings(
                         model=config.rag.ollama_embedding_model,
-                        base_url=config.llm.ollama_base_url
+                        base_url=config.llm.ollama_base_url,
                     )
 
                 # 快速嵌入模型测试 - 减少测试量
@@ -165,12 +171,14 @@ class AssistantAgent:
                     raise ValueError("嵌入测试失败")
 
                 # 缓存嵌入模型状态
-                self.cache_manager.set("embedding_model_status", {
-                    'status': 'ready', 
-                    'provider': self.llm_provider
-                })
+                self.cache_manager.set(
+                    "embedding_model_status",
+                    {"status": "ready", "provider": self.llm_provider},
+                )
 
-                logger.info(f"嵌入模型测试成功 - 维度: {len(single_embedding)}, 提供商: {self.llm_provider}")
+                logger.info(
+                    f"嵌入模型测试成功 - 维度: {len(single_embedding)}, 提供商: {self.llm_provider}"
+                )
                 return
 
             except Exception as e:
@@ -179,14 +187,18 @@ class AssistantAgent:
 
                 if attempt < max_retries - 1:
                     # 切换提供商
-                    self.llm_provider = 'ollama' if self.llm_provider == 'openai' else 'openai'
+                    self.llm_provider = (
+                        "ollama" if self.llm_provider == "openai" else "openai"
+                    )
                     logger.info(f"切换到 {self.llm_provider} 嵌入提供商")
                     time.sleep(1)
                 else:
                     # 最后一次尝试使用原始提供商
                     if self.llm_provider != original_provider:
                         self.llm_provider = original_provider
-                        logger.info(f"最后一次尝试使用原始嵌入提供商 {original_provider}")
+                        logger.info(
+                            f"最后一次尝试使用原始嵌入提供商 {original_provider}"
+                        )
 
         # 所有尝试都失败，使用备用嵌入
         logger.error("所有嵌入提供商初始化失败，使用备用嵌入模型")
@@ -201,31 +213,35 @@ class AssistantAgent:
         # 检查LLM缓存
         try:
             cached_llm = self.cache_manager.get("llm_model_status")
-            if cached_llm and cached_llm.get('status') == 'ready':
+            if cached_llm and cached_llm.get("status") == "ready":
                 logger.info("使用缓存的LLM配置")
-                self.llm_provider = cached_llm.get('provider', self.llm_provider)
+                self.llm_provider = cached_llm.get("provider", self.llm_provider)
         except Exception as e:
             logger.warning(f"检查LLM缓存失败: {str(e)}")
 
         for attempt in range(max_retries):
             try:
-                logger.info(f"尝试初始化 {self.llm_provider} 语言模型 (第 {attempt + 1}/{max_retries} 次)")
+                logger.info(
+                    f"尝试初始化 {self.llm_provider} 语言模型 (第 {attempt + 1}/{max_retries} 次)"
+                )
 
-                if self.llm_provider == 'openai':
+                if self.llm_provider == "openai":
                     # 验证配置
                     if not config.llm.api_key:
                         raise ValueError("OpenAI API key 未配置")
                     if not config.llm.base_url:
                         raise ValueError("OpenAI base URL 未配置")
 
-                    logger.info(f"OpenAI配置 - Model: {config.llm.model}, Base URL: {config.llm.base_url}")
+                    logger.info(
+                        f"OpenAI配置 - Model: {config.llm.model}, Base URL: {config.llm.base_url}"
+                    )
 
                     self.llm = ChatOpenAI(
                         model=config.llm.model,
                         temperature=config.llm.temperature,
                         api_key=config.llm.api_key,
                         base_url=config.llm.base_url,
-                        timeout=15
+                        timeout=15,
                     )
 
                     # 任务专用模型
@@ -234,28 +250,30 @@ class AssistantAgent:
                         temperature=0.2,
                         api_key=config.llm.api_key,
                         base_url=config.llm.base_url,
-                        timeout=8
+                        timeout=8,
                     )
 
-                elif self.llm_provider == 'ollama':
+                elif self.llm_provider == "ollama":
                     # 验证配置
                     if not config.llm.ollama_base_url:
                         raise ValueError("Ollama base URL 未配置")
                     if not config.llm.ollama_model:
                         raise ValueError("Ollama model 未配置")
 
-                    logger.info(f"Ollama配置 - Model: {config.llm.ollama_model}, Base URL: {config.llm.ollama_base_url}")
+                    logger.info(
+                        f"Ollama配置 - Model: {config.llm.ollama_model}, Base URL: {config.llm.ollama_base_url}"
+                    )
 
                     self.llm = ChatOllama(
                         model=config.llm.ollama_model,
                         base_url=config.llm.ollama_base_url,
-                        temperature=config.llm.temperature
+                        temperature=config.llm.temperature,
                     )
 
                     self.task_llm = ChatOllama(
                         model=config.llm.ollama_model,
                         base_url=config.llm.ollama_base_url,
-                        temperature=0.2
+                        temperature=0.2,
                     )
 
                 else:
@@ -265,7 +283,7 @@ class AssistantAgent:
                 logger.info("快速测试LLM连接...")
                 test_messages = [
                     SystemMessage(content="你是AI助手"),
-                    HumanMessage(content="测试")
+                    HumanMessage(content="测试"),
                 ]
 
                 response = self.llm.invoke(test_messages)
@@ -280,11 +298,14 @@ class AssistantAgent:
                         self.task_llm = self.llm
 
                 # 缓存LLM状态
-                self.cache_manager.set("llm_model_status", {
-                    'status': 'ready',
-                    'provider': self.llm_provider,
-                    'timestamp': datetime.now().isoformat()
-                })
+                self.cache_manager.set(
+                    "llm_model_status",
+                    {
+                        "status": "ready",
+                        "provider": self.llm_provider,
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                )
 
                 logger.info(f"语言模型初始化成功 - 提供商: {self.llm_provider}")
                 return
@@ -295,7 +316,9 @@ class AssistantAgent:
 
                 if attempt < max_retries - 1:
                     # 切换提供商
-                    self.llm_provider = 'ollama' if self.llm_provider == 'openai' else 'openai'
+                    self.llm_provider = (
+                        "ollama" if self.llm_provider == "openai" else "openai"
+                    )
                     logger.info(f"切换到 {self.llm_provider} 提供商")
                     time.sleep(1)
                 else:
@@ -313,9 +336,7 @@ class AssistantAgent:
     def _init_vector_store(self):
         """初始化向量存储"""
         self.vector_store_manager = VectorStoreManager(
-            str(self.vector_db_path),
-            self.collection_name,
-            self.embedding
+            str(self.vector_db_path), self.collection_name, self.embedding
         )
 
         # 检查向量维度是否匹配
@@ -325,11 +346,18 @@ class AssistantAgent:
             logger.info(f"检测到嵌入维度: {test_dim}")
 
             # 如果之前使用的是不同维度的嵌入模型，则需要清理旧数据
-            if hasattr(self.vector_store_manager, 'redis_manager') and self.vector_store_manager.redis_manager:
+            if (
+                hasattr(self.vector_store_manager, "redis_manager")
+                and self.vector_store_manager.redis_manager
+            ):
                 # 使用redis_manager获取存储的向量维度
-                stored_dim = self.vector_store_manager.redis_manager.get_vector_dimension()
+                stored_dim = (
+                    self.vector_store_manager.redis_manager.get_vector_dimension()
+                )
                 if stored_dim and stored_dim != test_dim:
-                    logger.warning(f"检测到向量维度不匹配: 存储={stored_dim}, 当前={test_dim}，清理旧数据并重建索引")
+                    logger.warning(
+                        f"检测到向量维度不匹配: 存储={stored_dim}, 当前={test_dim}，清理旧数据并重建索引"
+                    )
                     self.vector_store_manager.clear_store()
         except Exception as e:
             logger.warning(f"向量维度检查失败: {e}")
@@ -342,17 +370,26 @@ class AssistantAgent:
 
             # 修复：使用异步运行同步方法
             import asyncio
+
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     # 如果循环正在运行，使用create_task
                     import concurrent.futures
+
                     with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, self.vector_store_manager.create_vector_store(documents, use_memory))
+                        future = executor.submit(
+                            asyncio.run,
+                            self.vector_store_manager.create_vector_store(
+                                documents, use_memory
+                            ),
+                        )
                         success = future.result()
                 else:
                     success = loop.run_until_complete(
-                        self.vector_store_manager.create_vector_store(documents, use_memory)
+                        self.vector_store_manager.create_vector_store(
+                            documents, use_memory
+                        )
                     )
             except RuntimeError:
                 # 没有事件循环，创建新的
@@ -360,7 +397,9 @@ class AssistantAgent:
                 asyncio.set_event_loop(loop)
                 try:
                     success = loop.run_until_complete(
-                        self.vector_store_manager.create_vector_store(documents, use_memory)
+                        self.vector_store_manager.create_vector_store(
+                            documents, use_memory
+                        )
                     )
                 finally:
                     loop.close()
@@ -393,7 +432,7 @@ class AssistantAgent:
                 self.context_retriever = ContextAwareRetriever(
                     self.vector_store_manager.get_retriever(),
                     self.query_rewriter,
-                    self.doc_ranker
+                    self.doc_ranker,
                 )
                 logger.info("上下文感知检索器初始化完成")
 
@@ -422,21 +461,25 @@ class AssistantAgent:
 
             # 重新创建向量存储
             use_memory = is_test_environment()
-            success = await self.vector_store_manager.create_vector_store(documents, use_memory)
+            success = await self.vector_store_manager.create_vector_store(
+                documents, use_memory
+            )
 
             if success:
                 # 重新训练高级组件
                 await asyncio.get_event_loop().run_in_executor(
-                    self.executor,
-                    self._retrain_advanced_components,
-                    documents
+                    self.executor, self._retrain_advanced_components, documents
                 )
 
                 doc_count = len(documents)
                 logger.info(f"知识库刷新成功，包含 {doc_count} 个文档")
                 return {"success": True, "documents_count": doc_count}
             else:
-                return {"success": False, "documents_count": 0, "error": "向量存储创建失败"}
+                return {
+                    "success": False,
+                    "documents_count": 0,
+                    "error": "向量存储创建失败",
+                }
 
         except Exception as e:
             logger.error(f"刷新知识库失败: {e}")
@@ -458,10 +501,14 @@ class AssistantAgent:
                 return False
 
             doc_id = str(uuid.uuid4())
-            filename = metadata.get('filename', f"{doc_id}.txt") if metadata else f"{doc_id}.txt"
+            filename = (
+                metadata.get("filename", f"{doc_id}.txt")
+                if metadata
+                else f"{doc_id}.txt"
+            )
             file_path = self.knowledge_base_path / filename
 
-            with open(file_path, 'w', encoding='utf-8') as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
             logger.info(f"文档已添加: {filename}")
@@ -474,10 +521,7 @@ class AssistantAgent:
     # ==================== 核心问答逻辑 ====================
 
     async def get_answer(
-        self,
-        question: str,
-        session_id: str = None,
-        max_context_docs: int = 4
+        self, question: str, session_id: str = None, max_context_docs: int = 4
     ) -> Dict[str, Any]:
         """获取问题答案 - 性能优化版核心方法"""
 
@@ -486,7 +530,9 @@ class AssistantAgent:
             logger.debug(f"处理问题: '{question[:50]}...', 会话ID: {session_id}")
 
             # 获取会话历史
-            session = self.session_manager.get_session(session_id) if session_id else None
+            session = (
+                self.session_manager.get_session(session_id) if session_id else None
+            )
             history = session.history[-5:] if session and session.history else []
 
             # 优化缓存键生成
@@ -497,7 +543,8 @@ class AssistantAgent:
                 cached_response = await asyncio.wait_for(
                     asyncio.get_event_loop().run_in_executor(
                         None, self.cache_manager.get, cache_key
-                    ), timeout=0.5
+                    ),
+                    timeout=0.5,
                 )
             except (asyncio.TimeoutError, Exception) as e:
                 logger.debug(f"缓存检查超时或失败: {e}")
@@ -505,34 +552,49 @@ class AssistantAgent:
             if cached_response:
                 logger.info("使用缓存回答")
                 if session_id:
-                    self.session_manager.add_message_to_history(session_id, "user", question)
-                    self.session_manager.add_message_to_history(session_id, "assistant", cached_response.get("answer", ""))
+                    self.session_manager.add_message_to_history(
+                        session_id, "user", question
+                    )
+                    self.session_manager.add_message_to_history(
+                        session_id, "assistant", cached_response.get("answer", "")
+                    )
                 return cached_response
 
             # 添加用户消息到历史
             if session_id:
-                session_id = self.session_manager.add_message_to_history(session_id, "user", question)
+                session_id = self.session_manager.add_message_to_history(
+                    session_id, "user", question
+                )
 
             # 性能优化：并行执行文档检索和问题分类
             try:
+
                 async def parallel_tasks():
                     # 任务1: 快速文档检索
-                    docs_task = self._retrieve_relevant_docs_fast(question, session_id, history, max_context_docs)
+                    docs_task = self._retrieve_relevant_docs_fast(
+                        question, session_id, history, max_context_docs
+                    )
 
                     # 任务2: 问题分类
                     classification_task = asyncio.get_event_loop().run_in_executor(
-                        None, self.answer_generator._classify_question_enhanced, question
+                        None,
+                        self.answer_generator._classify_question_enhanced,
+                        question,
                     )
 
-                    return await asyncio.gather(docs_task, classification_task, return_exceptions=True)
+                    return await asyncio.gather(
+                        docs_task, classification_task, return_exceptions=True
+                    )
 
                 results = await asyncio.wait_for(parallel_tasks(), timeout=10)
                 relevant_docs, question_type = results
             except Exception as e:
                 logger.error(f"并行任务执行失败: {e}")
                 # 回退到简单的文档检索
-                relevant_docs = self._get_relevant_docs_fallback(question, max_context_docs)
-                question_type = 'general'
+                relevant_docs = self._get_relevant_docs_fallback(
+                    question, max_context_docs
+                )
+                question_type = "general"
 
             # 处理异常结果
             if isinstance(relevant_docs, Exception):
@@ -540,9 +602,11 @@ class AssistantAgent:
                 relevant_docs = []
             if isinstance(question_type, Exception):
                 logger.warning(f"问题分类失败: {question_type}")
-                question_type = 'general'
+                question_type = "general"
 
-            logger.debug(f"检索到文档数量: {len(relevant_docs)}, 问题类型: {question_type}")
+            logger.debug(
+                f"检索到文档数量: {len(relevant_docs)}, 问题类型: {question_type}"
+            )
 
             # 快速回答生成
             answer = ""
@@ -551,17 +615,23 @@ class AssistantAgent:
             if relevant_docs:
                 try:
                     answer = await asyncio.wait_for(
-                        self._generate_answer_fast(question, relevant_docs, question_type),
-                        timeout=8
+                        self._generate_answer_fast(
+                            question, relevant_docs, question_type
+                        ),
+                        timeout=8,
                     )
                     confidence = 0.8
                 except asyncio.TimeoutError:
                     logger.warning("答案生成超时，使用快速回答")
-                    answer = self._generate_quick_answer(question, relevant_docs, question_type)
+                    answer = self._generate_quick_answer(
+                        question, relevant_docs, question_type
+                    )
                     confidence = 0.6
                 except Exception as e:
                     logger.error(f"答案生成失败: {e}")
-                    answer = self._generate_quick_answer(question, relevant_docs, question_type)
+                    answer = self._generate_quick_answer(
+                        question, relevant_docs, question_type
+                    )
                     confidence = 0.5
             else:
                 answer = self._get_fallback_answer(question_type)
@@ -573,17 +643,25 @@ class AssistantAgent:
             # 构建响应
             result = {
                 "answer": answer,
-                "source_documents": self._format_source_documents_simple(relevant_docs[:3]),
+                "source_documents": self._format_source_documents_simple(
+                    relevant_docs[:3]
+                ),
                 "relevance_score": confidence,
-                "recall_rate": min(len(relevant_docs) / max_context_docs, 1.0) if relevant_docs else 0.0,
-                "follow_up_questions": self._get_simple_follow_up_questions(question_type)[:2],
+                "recall_rate": min(len(relevant_docs) / max_context_docs, 1.0)
+                if relevant_docs
+                else 0.0,
+                "follow_up_questions": self._get_simple_follow_up_questions(
+                    question_type
+                )[:2],
                 "total_docs_found": len(relevant_docs),
-                "processing_time": round(processing_time, 2)
+                "processing_time": round(processing_time, 2),
             }
 
             # 添加助手回复到历史
             if session_id:
-                self.session_manager.add_message_to_history(session_id, "assistant", answer)
+                self.session_manager.add_message_to_history(
+                    session_id, "assistant", answer
+                )
 
             # 异步缓存结果
             try:
@@ -606,30 +684,36 @@ class AssistantAgent:
 
             error_answer = "抱歉，处理您的问题时出现了错误，请稍后重试。"
             if session_id:
-                self.session_manager.add_message_to_history(session_id, "assistant", error_answer)
+                self.session_manager.add_message_to_history(
+                    session_id, "assistant", error_answer
+                )
 
             return {
                 "answer": error_answer,
                 "source_documents": [],
                 "relevance_score": 0.0,
                 "recall_rate": 0.0,
-                "follow_up_questions": ["AIOps平台有哪些核心功能？", "如何部署AIOps系统？"],
+                "follow_up_questions": [
+                    "AIOps平台有哪些核心功能？",
+                    "如何部署AIOps系统？",
+                ],
                 "total_docs_found": 0,
-                "processing_time": 0
+                "processing_time": 0,
             }
 
     async def _retrieve_relevant_docs_fast(
-        self, question: str, session_id: str = None,
-        history: List[Dict] = None, max_docs: int = 4
+        self,
+        question: str,
+        session_id: str = None,
+        history: List[Dict] = None,
+        max_docs: int = 4,
     ) -> List[Document]:
         """快速文档检索 - 性能优化版"""
         try:
             # 直接使用最快的检索方法
             if self.vector_store_manager:
                 docs = await asyncio.get_event_loop().run_in_executor(
-                    self.executor,
-                    self._safe_vector_search_fast,
-                    question, max_docs
+                    self.executor, self._safe_vector_search_fast, question, max_docs
                 )
                 return docs[:max_docs]
             return []
@@ -637,7 +721,9 @@ class AssistantAgent:
             logger.error(f"快速文档检索失败: {e}")
             return []
 
-    def _safe_vector_search_fast(self, question: str, max_docs: int = 4) -> List[Document]:
+    def _safe_vector_search_fast(
+        self, question: str, max_docs: int = 4
+    ) -> List[Document]:
         """安全的快速向量搜索"""
         try:
             return self.vector_store_manager.search_documents(question)[:max_docs]
@@ -659,11 +745,11 @@ class AssistantAgent:
             context = ""
             for i, doc in enumerate(docs[:2]):  # 只使用前2个文档
                 try:
-                    if doc is None or not hasattr(doc, 'page_content'):
+                    if doc is None or not hasattr(doc, "page_content"):
                         logger.warning(f"文档{i}格式无效")
                         continue
                     content = doc.page_content[:300] if doc.page_content else ""
-                    context += f"文档{i+1}: {content}\n\n"
+                    context += f"文档{i + 1}: {content}\n\n"
                 except Exception as doc_e:
                     logger.error(f"处理文档{i}时出错: {doc_e}")
 
@@ -679,21 +765,21 @@ class AssistantAgent:
 
                 messages = [
                     SystemMessage(content=system_prompt),
-                    HumanMessage(content=user_prompt)
+                    HumanMessage(content=user_prompt),
                 ]
 
                 # 检查LLM是否已初始化
-                if not hasattr(self, 'llm') or self.llm is None:
+                if not hasattr(self, "llm") or self.llm is None:
                     logger.error("LLM未初始化，使用备用回答")
                     return self._generate_quick_answer(question, docs, question_type)
 
                 response = await asyncio.wait_for(
                     self.llm.ainvoke(messages),
-                    timeout=15  # 使用适当的超时时间
+                    timeout=15,  # 使用适当的超时时间
                 )
 
                 # 检查响应格式
-                if not hasattr(response, 'content'):
+                if not hasattr(response, "content"):
                     logger.error(f"LLM返回格式异常: {type(response)}")
                     return self._generate_quick_answer(question, docs, question_type)
 
@@ -722,16 +808,19 @@ class AssistantAgent:
             relevant_content = []
             for i, doc in enumerate(docs[:2]):
                 try:
-                    if doc is None or not hasattr(doc, 'page_content'):
+                    if doc is None or not hasattr(doc, "page_content"):
                         logger.warning(f"快速回答：文档{i}格式无效")
                         continue
 
                     content = doc.page_content.strip() if doc.page_content else ""
                     if content:
                         # 提取前几句话
-                        sentences = content.split('。')[:2]
+                        sentences = content.split("。")[:2]
                         if sentences:
-                            relevant_content.append('。'.join(sentences) + ('' if sentences[-1].endswith('。') else '。'))
+                            relevant_content.append(
+                                "。".join(sentences)
+                                + ("" if sentences[-1].endswith("。") else "。")
+                            )
                 except Exception as doc_e:
                     logger.error(f"快速回答处理文档{i}时出错: {doc_e}")
 
@@ -754,14 +843,14 @@ class AssistantAgent:
     def _get_fallback_answer(self, question_type: str) -> str:
         """获取后备答案"""
         fallback_answers = {
-            'core_architecture': "AI-CloudOps平台包含智能运维助手、根因分析、预测扩容、自动修复等核心功能模块。",
-            'deployment': "AI-CloudOps平台支持Docker和Kubernetes部署方式，具体步骤请参考部署文档。",
-            'monitoring': "平台集成Prometheus和Grafana提供全面的监控告警功能。",
-            'troubleshooting': "遇到问题建议查看日志文件，按照故障排查流程进行诊断。",
-            'performance': "系统性能可通过调整配置参数、优化资源分配等方式提升。",
-            'general': "您好，我是AI-CloudOps智能助手。请告诉我您想了解的具体问题。"
+            "core_architecture": "AI-CloudOps平台包含智能运维助手、根因分析、预测扩容、自动修复等核心功能模块。",
+            "deployment": "AI-CloudOps平台支持Docker和Kubernetes部署方式，具体步骤请参考部署文档。",
+            "monitoring": "平台集成Prometheus和Grafana提供全面的监控告警功能。",
+            "troubleshooting": "遇到问题建议查看日志文件，按照故障排查流程进行诊断。",
+            "performance": "系统性能可通过调整配置参数、优化资源分配等方式提升。",
+            "general": "您好，我是AI-CloudOps智能助手。请告诉我您想了解的具体问题。",
         }
-        return fallback_answers.get(question_type, fallback_answers['general'])
+        return fallback_answers.get(question_type, fallback_answers["general"])
 
     def _get_timeout_response(self, question: str) -> Dict[str, Any]:
         """获取超时响应"""
@@ -772,7 +861,7 @@ class AssistantAgent:
             "recall_rate": 0.0,
             "follow_up_questions": ["如何使用AI-CloudOps？", "系统有什么主要功能？"],
             "total_docs_found": 0,
-            "processing_time": 10.0
+            "processing_time": 10.0,
         }
 
     def _cache_result_async(self, cache_key: str, result: Dict[str, Any]):
@@ -782,31 +871,43 @@ class AssistantAgent:
         except Exception as e:
             logger.debug(f"缓存结果失败: {e}")
 
-    def _format_source_documents_simple(self, docs: List[Document]) -> List[Dict[str, Any]]:
+    def _format_source_documents_simple(
+        self, docs: List[Document]
+    ) -> List[Dict[str, Any]]:
         """简化的源文档格式化"""
         formatted_docs = []
         for i, doc in enumerate(docs):
-            filename = doc.metadata.get('filename', f"文档{i+1}") if doc.metadata else f"文档{i+1}"
-            formatted_docs.append({
-                "content": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content,
-                "file_name": filename,
-                "relevance": 0.8
-            })
+            filename = (
+                doc.metadata.get("filename", f"文档{i + 1}")
+                if doc.metadata
+                else f"文档{i + 1}"
+            )
+            formatted_docs.append(
+                {
+                    "content": doc.page_content[:200] + "..."
+                    if len(doc.page_content) > 200
+                    else doc.page_content,
+                    "file_name": filename,
+                    "relevance": 0.8,
+                }
+            )
         return formatted_docs
 
     def _get_simple_follow_up_questions(self, question_type: str) -> List[str]:
         """获取简单的后续问题"""
         simple_questions = {
-            'core_architecture': ["各模块如何协同工作？", "如何扩展系统功能？"],
-            'deployment': ["部署后如何验证？", "有哪些常见问题？"],
-            'monitoring': ["如何设置告警？", "监控数据怎么分析？"],
-            'troubleshooting': ["如何预防问题？", "还有其他解决方案吗？"],
-            'performance': ["如何监控性能？", "有哪些优化建议？"],
-            'general': ["AI-CloudOps有什么特色？", "如何快速上手？"]
+            "core_architecture": ["各模块如何协同工作？", "如何扩展系统功能？"],
+            "deployment": ["部署后如何验证？", "有哪些常见问题？"],
+            "monitoring": ["如何设置告警？", "监控数据怎么分析？"],
+            "troubleshooting": ["如何预防问题？", "还有其他解决方案吗？"],
+            "performance": ["如何监控性能？", "有哪些优化建议？"],
+            "general": ["AI-CloudOps有什么特色？", "如何快速上手？"],
         }
-        return simple_questions.get(question_type, simple_questions['general'])
+        return simple_questions.get(question_type, simple_questions["general"])
 
-    def _get_relevant_docs_fallback(self, question: str, max_docs: int = 4) -> List[Document]:
+    def _get_relevant_docs_fallback(
+        self, question: str, max_docs: int = 4
+    ) -> List[Document]:
         """回退的文档检索方法"""
         try:
             if self.vector_store_manager:
@@ -827,7 +928,7 @@ class AssistantAgent:
             return {
                 "success": False,
                 "message": f"清空缓存失败: {e}",
-                "cleared_count": 0
+                "cleared_count": 0,
             }
 
     async def force_reinitialize(self) -> Dict[str, Any]:
@@ -859,7 +960,7 @@ class AssistantAgent:
                     asyncio.get_event_loop().run_in_executor(
                         self.executor, self.document_loader.load_documents
                     ),
-                    timeout=30
+                    timeout=30,
                 )
             except asyncio.TimeoutError:
                 logger.error("加载文档超时")
@@ -877,8 +978,10 @@ class AssistantAgent:
 
             try:
                 success = await asyncio.wait_for(
-                    self.vector_store_manager.create_vector_store(documents, use_memory),
-                    timeout=60
+                    self.vector_store_manager.create_vector_store(
+                        documents, use_memory
+                    ),
+                    timeout=60,
                 )
             except asyncio.TimeoutError:
                 logger.error("创建向量存储超时")
@@ -890,11 +993,14 @@ class AssistantAgent:
 
             # 5. 重新初始化高级组件
             try:
-                if self.vector_store_manager and self.vector_store_manager.get_retriever():
+                if (
+                    self.vector_store_manager
+                    and self.vector_store_manager.get_retriever()
+                ):
                     self.context_retriever = ContextAwareRetriever(
                         self.vector_store_manager.get_retriever(),
                         self.query_rewriter,
-                        self.doc_ranker
+                        self.doc_ranker,
                     )
                     logger.info("上下文感知检索器重新初始化完成")
 
@@ -914,7 +1020,7 @@ class AssistantAgent:
                 "success": True,
                 "documents_count": len(documents),
                 "message": "小助手强制重新初始化成功",
-                "processing_time": round(total_time, 2)
+                "processing_time": round(total_time, 2),
             }
 
         except Exception as e:
@@ -944,11 +1050,11 @@ class AssistantAgent:
 
         try:
             # 1. 关闭缓存管理器
-            if hasattr(self, 'cache_manager'):
+            if hasattr(self, "cache_manager"):
                 self.cache_manager.shutdown()
 
             # 2. 关闭线程池
-            if hasattr(self, 'executor') and self.executor:
+            if hasattr(self, "executor") and self.executor:
                 self.executor.shutdown(wait=True)
 
             # 3. 关闭任务管理器
@@ -966,13 +1072,13 @@ class AssistantAgent:
             try:
                 self._shutdown = True
 
-                if hasattr(self, 'cache_manager'):
+                if hasattr(self, "cache_manager"):
                     try:
                         self.cache_manager.shutdown()
                     except Exception as e:
                         logger.warning(f"对象销毁时关闭缓存管理器失败: {e}")
 
-                if hasattr(self, 'executor') and self.executor:
+                if hasattr(self, "executor") and self.executor:
                     try:
                         self.executor.shutdown(wait=False)
                     except Exception as e:

@@ -146,8 +146,8 @@ cp env.example .env
 
 4. **启动服务**
 ```bash
-# 开发环境
-python app/main.py
+# 开发环境（从项目根目录执行）
+python -m app.main
 
 # 或使用启动脚本
 bash scripts/start.sh

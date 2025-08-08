@@ -16,6 +16,9 @@ from .coder import CoderAgent
 from .notifier import NotifierAgent
 
 __all__ = [
-    "SupervisorAgent", "K8sFixerAgent", "ResearcherAgent", 
-    "CoderAgent", "NotifierAgent"
+    "SupervisorAgent",
+    "K8sFixerAgent",
+    "ResearcherAgent",
+    "CoderAgent",
+    "NotifierAgent",
 ]

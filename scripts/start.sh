@@ -75,8 +75,8 @@ check_dependencies() {
         log_warn "Python版本低于3.11，某些功能可能不可用"
     fi
     
-    # 检查pip包
-    python3 -c "import flask, pandas, numpy, sklearn, yaml, prometheus_client" 2>/dev/null || {
+    # 检查pip包（核心运行与预测相关依赖）
+    python3 -c "import fastapi, uvicorn, pandas, numpy, sklearn, yaml, prometheus_client" 2>/dev/null || {
         log_error "Python依赖包未完整安装，请运行: pip install -r requirements.txt"
         exit 1
     }
@@ -263,12 +263,10 @@ setup_environment() {
     
     # 设置默认值，优先使用配置文件的值
     export PYTHONPATH="${PYTHONPATH:-.}"
-    export FLASK_APP="${FLASK_APP:-app.main:app}"
     export HOST="${HOST:-$APP_HOST}"
     export PORT="${PORT:-$APP_PORT}"
     
     log_debug "PYTHONPATH: $PYTHONPATH"
-    log_debug "FLASK_APP: $FLASK_APP"
     log_debug "ENV: $ENV"
     log_debug "DEBUG: $DEBUG"
     log_debug "HOST: $HOST"
@@ -327,7 +325,7 @@ start_service() {
     if [ "$1" = "--daemon" ] || [ "$1" = "-d" ]; then
         log_info "以守护进程模式启动..."
         mkdir -p logs
-        nohup python3 app/main.py > logs/app.log 2>&1 &
+        nohup python3 -m app.main > logs/app.log 2>&1 &
         local pid=$!
         echo $pid > logs/app.pid
         log_info "✅ 服务已启动，PID: $pid"
@@ -348,7 +346,7 @@ start_service() {
         echo ""
         
         # 前台启动
-        python3 app/main.py
+        python3 -m app.main
     fi
 }
 

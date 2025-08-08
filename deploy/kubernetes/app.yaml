@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aiops
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aiops-config
+  namespace: aiops
+data:
+  ENV: "production"
+  LOG_LEVEL: "INFO"
+  PROMETHEUS_HOST: "prometheus:9090"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  LLM_PROVIDER: "ollama"
+  OLLAMA_BASE_URL: "http://ollama:11434/v1"
+  OLLAMA_MODEL: "qwen2.5:3b"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aiops-platform
+  namespace: aiops
+  labels:
+    app: aiops-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aiops-platform
+  template:
+    metadata:
+      labels:
+        app: aiops-platform
+    spec:
+      containers:
+        - name: api
+          image: aiops/ai-CloudOps:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: aiops-config
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health/ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health/live
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aiops-platform
+  namespace: aiops
+spec:
+  selector:
+    app: aiops-platform
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aiops-platform
+  namespace: aiops
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+    - host: aiops.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: aiops-platform
+                port:
+                  number: 80

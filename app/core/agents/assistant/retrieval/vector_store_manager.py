@@ -14,7 +14,10 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
 # Redis向量存储
-from app.core.vector.redis_vector_store import RedisVectorStoreManager, OptimizedRedisVectorStore
+from app.core.vector.redis_vector_store import (
+    RedisVectorStoreManager,
+    OptimizedRedisVectorStore,
+)
 from app.core.agents.assistant.models.config import assistant_config
 
 logger = logging.getLogger("aiops.assistant.vector_store_manager")
@@ -22,8 +25,10 @@ logger = logging.getLogger("aiops.assistant.vector_store_manager")
 
 class VectorStoreManager:
     """向量存储管理器"""
-    
-    def __init__(self, vector_db_path: str, collection_name: str, embedding_model: Embeddings):
+
+    def __init__(
+        self, vector_db_path: str, collection_name: str, embedding_model: Embeddings
+    ):
         self.vector_db_path = vector_db_path
         self.collection_name = collection_name
         self.embedding_model = embedding_model
@@ -31,14 +36,14 @@ class VectorStoreManager:
 
         # 获取Redis配置
         redis_config = {
-            'host': assistant_config.redis_config['host'],
-            'port': assistant_config.redis_config['port'],
-            'db': assistant_config.redis_config['db'],
-            'password': assistant_config.redis_config['password'],
-            'connection_timeout': assistant_config.redis_config['connection_timeout'],
-            'socket_timeout': assistant_config.redis_config['socket_timeout'],
-            'max_connections': assistant_config.redis_config['max_connections'],
-            'decode_responses': assistant_config.redis_config['decode_responses']
+            "host": assistant_config.redis_config["host"],
+            "port": assistant_config.redis_config["port"],
+            "db": assistant_config.redis_config["db"],
+            "password": assistant_config.redis_config["password"],
+            "connection_timeout": assistant_config.redis_config["connection_timeout"],
+            "socket_timeout": assistant_config.redis_config["socket_timeout"],
+            "max_connections": assistant_config.redis_config["max_connections"],
+            "decode_responses": assistant_config.redis_config["decode_responses"],
         }
 
         # 动态获取嵌入维度
@@ -55,7 +60,7 @@ class VectorStoreManager:
             redis_config=redis_config,
             collection_name=collection_name,
             embedding_dimensions=vector_dim,
-            local_storage_path=vector_db_path
+            local_storage_path=vector_db_path,
         )
 
         # 使用优化的向量存储
@@ -66,7 +71,7 @@ class VectorStoreManager:
             vector_dim=vector_dim,
             local_storage_path=vector_db_path,
             use_faiss=True,
-            faiss_index_type="Flat"
+            faiss_index_type="Flat",
         )
 
         self.retriever = None
@@ -80,10 +85,15 @@ class VectorStoreManager:
 
                 # 检查Redis向量存储健康状态
                 health = self.redis_manager.health_check()
-                if health.get('status') == 'healthy' and health.get('document_count', 0) > 0:
+                if (
+                    health.get("status") == "healthy"
+                    and health.get("document_count", 0) > 0
+                ):
                     # 初始化检索器
                     self.retriever = self.redis_manager.get_retriever()
-                    logger.info(f"Redis向量存储加载成功，包含 {health['document_count']} 个文档")
+                    logger.info(
+                        f"Redis向量存储加载成功，包含 {health['document_count']} 个文档"
+                    )
                     return True
                 else:
                     logger.info("Redis向量存储为空或不可用")
@@ -93,7 +103,9 @@ class VectorStoreManager:
             logger.error(f"加载Redis向量存储失败: {e}")
             return False
 
-    async def create_vector_store(self, documents: List[Document], use_memory: bool = False) -> bool:
+    async def create_vector_store(
+        self, documents: List[Document], use_memory: bool = False
+    ) -> bool:
         """创建向量数据库"""
         if not self.redis_manager:
             logger.error("Redis管理器未初始化，无法创建向量存储")
@@ -107,8 +119,10 @@ class VectorStoreManager:
             # 分批处理文档
             batch_size = 50
             for i in range(0, len(documents), batch_size):
-                batch = documents[i:i+batch_size]
-                logger.info(f"添加文档批次 {i//batch_size + 1}/{(len(documents)+batch_size-1)//batch_size}")
+                batch = documents[i : i + batch_size]
+                logger.info(
+                    f"添加文档批次 {i // batch_size + 1}/{(len(documents) + batch_size - 1) // batch_size}"
+                )
                 vector_store.add_documents(batch)
 
             logger.info(f"成功添加 {len(documents)} 个文档到向量存储")
@@ -126,12 +140,18 @@ class VectorStoreManager:
                     self.optimized_store = optimized_store
                     self.redis_manager = redis_manager
 
-                def get_relevant_documents(self, query: str, **kwargs) -> List[Document]:
+                def get_relevant_documents(
+                    self, query: str, **kwargs
+                ) -> List[Document]:
                     try:
-                        k = kwargs.get('k', 8)  # 增加默认检索数量
-                        similarity_threshold = kwargs.get('similarity_threshold', 0.1)  # 大幅降低阈值
+                        k = kwargs.get("k", 8)  # 增加默认检索数量
+                        similarity_threshold = kwargs.get(
+                            "similarity_threshold", 0.1
+                        )  # 大幅降低阈值
 
-                        logger.debug(f"开始检索相关文档 - 查询: '{query}', k={k}, 阈值={similarity_threshold}")
+                        logger.debug(
+                            f"开始检索相关文档 - 查询: '{query}', k={k}, 阈值={similarity_threshold}"
+                        )
 
                         # 首先尝试混合搜索
                         try:
@@ -140,7 +160,7 @@ class VectorStoreManager:
                                 k=k,
                                 semantic_weight=0.5,
                                 lexical_weight=0.5,
-                                similarity_threshold=similarity_threshold
+                                similarity_threshold=similarity_threshold,
                             )
 
                             if results:
@@ -157,7 +177,7 @@ class VectorStoreManager:
                             results = self.optimized_store.similarity_search(
                                 query,
                                 k=k,
-                                similarity_threshold=0.05  # 极低阈值确保找到结果
+                                similarity_threshold=0.05,  # 极低阈值确保找到结果
                             )
 
                             if results:
@@ -172,18 +192,22 @@ class VectorStoreManager:
                         # 最后尝试关键词搜索
                         try:
                             # 分解查询为关键词
-                            query_words = [word for word in query.split() if len(word) > 1]
+                            query_words = [
+                                word for word in query.split() if len(word) > 1
+                            ]
                             all_results = []
 
                             for word in query_words[:3]:  # 只用前3个关键词
                                 try:
-                                    word_results = self.optimized_store.similarity_search(
-                                        word,
-                                        k=max(2, k//2),
-                                        similarity_threshold=0.01  # 最低阈值
+                                    word_results = (
+                                        self.optimized_store.similarity_search(
+                                            word,
+                                            k=max(2, k // 2),
+                                            similarity_threshold=0.01,  # 最低阈值
+                                        )
                                     )
                                     all_results.extend([doc for doc, _ in word_results])
-                                except:
+                                except Exception:
                                     continue
 
                             # 去重
@@ -197,7 +221,9 @@ class VectorStoreManager:
                                     if len(unique_results) >= k:
                                         break
 
-                            logger.debug(f"关键词搜索找到 {len(unique_results)} 个去重结果")
+                            logger.debug(
+                                f"关键词搜索找到 {len(unique_results)} 个去重结果"
+                            )
                             return unique_results
 
                         except Exception as e:
@@ -218,7 +244,9 @@ class VectorStoreManager:
                         query_str = str(query)
                     return self.get_relevant_documents(query_str)
 
-            self.retriever = OptimizedRetriever(self.optimized_store, self.redis_manager)
+            self.retriever = OptimizedRetriever(
+                self.optimized_store, self.redis_manager
+            )
         return self.retriever
 
     def search_documents(self, query: str, max_retries: int = 3) -> List[Document]:
@@ -232,10 +260,14 @@ class VectorStoreManager:
         for attempt in range(max_retries):
             try:
                 # 使用改进的检索器
-                docs = self.retriever.get_relevant_documents(query, k=10, similarity_threshold=0.05)
+                docs = self.retriever.get_relevant_documents(
+                    query, k=10, similarity_threshold=0.05
+                )
 
                 if docs:
-                    logger.debug(f"第 {attempt + 1} 次尝试成功，搜索到 {len(docs)} 个文档")
+                    logger.debug(
+                        f"第 {attempt + 1} 次尝试成功，搜索到 {len(docs)} 个文档"
+                    )
                     return docs
                 else:
                     logger.debug(f"第 {attempt + 1} 次尝试搜索返回空结果")
@@ -247,7 +279,9 @@ class VectorStoreManager:
                         if keywords:
                             expanded_query = " ".join(keywords[:2])  # 用前两个关键词
                             logger.debug(f"尝试关键词查询: '{expanded_query}'")
-                            docs = self.retriever.get_relevant_documents(expanded_query, k=8, similarity_threshold=0.01)
+                            docs = self.retriever.get_relevant_documents(
+                                expanded_query, k=8, similarity_threshold=0.01
+                            )
                             if docs:
                                 logger.debug(f"关键词查询成功，找到 {len(docs)} 个文档")
                                 return docs

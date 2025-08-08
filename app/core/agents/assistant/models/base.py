@@ -17,6 +17,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 @dataclass
 class SessionData:
     """会话数据结构"""
+
     session_id: str
     created_at: str
     history: List[Dict[str, Any]]
@@ -26,7 +27,7 @@ class SessionData:
 
 class FallbackEmbeddings(Embeddings):
     """备用嵌入模型"""
-    
+
     def __init__(self, dimensions: int = 384):
         self.dimensions = dimensions
         self._cache = {}
@@ -38,7 +39,7 @@ class FallbackEmbeddings(Embeddings):
         if text in self._cache:
             return self._cache[text]
 
-        text_hash = hash(text) % (2 ** 32)
+        text_hash = hash(text) % (2**32)
         np.random.seed(text_hash)
         embedding = list(np.random.rand(self.dimensions))
         self._cache[text] = embedding
@@ -47,7 +48,7 @@ class FallbackEmbeddings(Embeddings):
 
 class FallbackChatModel(BaseChatModel):
     """备用聊天模型"""
-    
+
     @property
     def _llm_type(self) -> str:
         return "fallback_chat_model"

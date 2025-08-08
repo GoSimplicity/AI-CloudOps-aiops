@@ -20,13 +20,13 @@ from .k8s_base_tool import K8sBaseTool
 
 class K8sPodTool(K8sBaseTool):
     """k8s Pod管理工具"""
-    
+
     def __init__(self):
         super().__init__(
             name="k8s_pod_management",
-            description="k8s Pod管理工具，支持查看Pod列表、获取Pod详情、删除Pod、重启Pod等操作"
+            description="k8s Pod管理工具，支持查看Pod列表、获取Pod详情、删除Pod、重启Pod等操作",
         )
-    
+
     def get_parameters(self) -> Dict[str, Any]:
         """获取工具参数定义"""
         return {
@@ -35,69 +35,71 @@ class K8sPodTool(K8sBaseTool):
                 "operation": {
                     "type": "string",
                     "description": "要执行的操作",
-                    "enum": ["list_pods", "get_pod_details", "delete_pod", "restart_pod", "get_pod_events"]
+                    "enum": [
+                        "list_pods",
+                        "get_pod_details",
+                        "delete_pod",
+                        "restart_pod",
+                        "get_pod_events",
+                    ],
                 },
                 "config_path": {
                     "type": "string",
-                    "description": "可选的kubeconfig文件路径"
+                    "description": "可选的kubeconfig文件路径",
                 },
                 "namespace": {
                     "type": "string",
-                    "description": "命名空间，默认为default"
+                    "description": "命名空间，默认为default",
                 },
                 "pod_name": {
                     "type": "string",
-                    "description": "Pod名称（部分操作需要）"
+                    "description": "Pod名称（部分操作需要）",
                 },
                 "label_selector": {
                     "type": "string",
-                    "description": "标签选择器，格式如：app=nginx,version=v1"
+                    "description": "标签选择器，格式如：app=nginx,version=v1",
                 },
                 "field_selector": {
                     "type": "string",
-                    "description": "字段选择器，格式如：status.phase=Running"
+                    "description": "字段选择器，格式如：status.phase=Running",
                 },
                 "all_namespaces": {
                     "type": "boolean",
                     "description": "是否查看所有命名空间",
-                    "default": False
+                    "default": False,
                 },
                 "max_results": {
                     "type": "integer",
                     "description": "最大返回结果数",
                     "minimum": 1,
                     "maximum": 100,
-                    "default": 50
+                    "default": 50,
                 },
                 "time_window_hours": {
                     "type": "integer",
                     "description": "事件查询时间窗口（小时），仅适用于get_pod_events",
                     "minimum": 1,
                     "maximum": 24,
-                    "default": 2
-                }
+                    "default": 2,
+                },
             },
-            "required": ["operation"]
+            "required": ["operation"],
         }
-    
+
     def _create_api_clients(self) -> Dict[str, client.ApiClient]:
         """创建Pod工具需要的API客户端"""
-        return {
-            "v1": client.CoreV1Api(),
-            "apps_v1": client.AppsV1Api()
-        }
-    
-    
+        return {"v1": client.CoreV1Api(), "apps_v1": client.AppsV1Api()}
+
     async def _execute_internal(self, parameters: Dict[str, Any]) -> Any:
         """执行工具内部逻辑"""
         operation = parameters.get("operation")
         config_path = parameters.get("config_path")
-        
+
         # 初始化API客户端
         clients = self._initialize_clients(config_path)
         v1 = clients["v1"]
         apps_v1 = clients["apps_v1"]
-        
+
         # 根据操作类型执行相应的方法
         if operation == "list_pods":
             return await self._list_pods(v1, parameters)
@@ -113,10 +115,12 @@ class K8sPodTool(K8sBaseTool):
             return {
                 "success": False,
                 "error": "不支持的操作",
-                "message": f"未知的操作类型: {operation}"
+                "message": f"未知的操作类型: {operation}",
             }
-    
-    async def _list_pods(self, v1: client.CoreV1Api, parameters: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def _list_pods(
+        self, v1: client.CoreV1Api, parameters: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """获取Pod列表"""
         try:
             namespace = parameters.get("namespace", "default")
@@ -124,9 +128,9 @@ class K8sPodTool(K8sBaseTool):
             label_selector = parameters.get("label_selector")
             field_selector = parameters.get("field_selector")
             max_results = parameters.get("max_results", 50)
-            
+
             loop = asyncio.get_event_loop()
-            
+
             # 根据参数获取Pod列表
             if all_namespaces:
                 pods = await loop.run_in_executor(
@@ -134,8 +138,8 @@ class K8sPodTool(K8sBaseTool):
                     lambda: v1.list_pod_for_all_namespaces(
                         label_selector=label_selector,
                         field_selector=field_selector,
-                        limit=max_results
-                    )
+                        limit=max_results,
+                    ),
                 )
             else:
                 pods = await loop.run_in_executor(
@@ -144,10 +148,10 @@ class K8sPodTool(K8sBaseTool):
                         namespace=namespace,
                         label_selector=label_selector,
                         field_selector=field_selector,
-                        limit=max_results
-                    )
+                        limit=max_results,
+                    ),
                 )
-            
+
             # 格式化Pod信息
             pod_list = []
             for pod in pods.items:
@@ -156,52 +160,57 @@ class K8sPodTool(K8sBaseTool):
                     "namespace": pod.metadata.namespace,
                     "status": pod.status.phase,
                     "ready": self._get_pod_ready_status(pod),
-                    "restart_count": sum(cs.restart_count or 0 for cs in pod.status.container_statuses or []),
+                    "restart_count": sum(
+                        cs.restart_count or 0
+                        for cs in pod.status.container_statuses or []
+                    ),
                     "age": self._calculate_age(pod.metadata.creation_timestamp),
                     "node": pod.spec.node_name or "未分配",
                     "ip": pod.status.pod_ip or "无",
                     "labels": pod.metadata.labels or {},
-                    "containers": [cs.name for cs in pod.spec.containers or []]
+                    "containers": [cs.name for cs in pod.spec.containers or []],
                 }
                 pod_list.append(pod_info)
-            
+
             return {
                 "success": True,
                 "operation": "list_pods",
                 "total_count": len(pod_list),
                 "pods": pod_list,
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": datetime.utcnow().isoformat() + "Z",
             }
-            
+
         except Exception as e:
             return {
                 "success": False,
                 "error": "获取Pod列表失败",
                 "message": str(e),
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": datetime.utcnow().isoformat() + "Z",
             }
-    
-    async def _get_pod_details(self, v1: client.CoreV1Api, parameters: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def _get_pod_details(
+        self, v1: client.CoreV1Api, parameters: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """获取Pod详细信息"""
         try:
             pod_name = parameters.get("pod_name")
             namespace = parameters.get("namespace", "default")
-            
+
             if not pod_name:
                 return {
                     "success": False,
                     "error": "缺少参数",
-                    "message": "Pod名称是必需的参数"
+                    "message": "Pod名称是必需的参数",
                 }
-            
+
             loop = asyncio.get_event_loop()
-            
+
             # 获取Pod详细信息
             pod = await loop.run_in_executor(
                 self._executor,
-                lambda: v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+                lambda: v1.read_namespaced_pod(name=pod_name, namespace=namespace),
             )
-            
+
             # 格式化详细信息
             pod_details = {
                 "name": pod.metadata.name,
@@ -219,14 +228,18 @@ class K8sPodTool(K8sBaseTool):
                             "status": cond.status,
                             "reason": cond.reason,
                             "message": cond.message,
-                            "last_transition_time": cond.last_transition_time.isoformat() if cond.last_transition_time else None
+                            "last_transition_time": cond.last_transition_time.isoformat()
+                            if cond.last_transition_time
+                            else None,
                         }
                         for cond in pod.status.conditions or []
                     ],
                     "pod_ip": pod.status.pod_ip,
                     "host_ip": pod.status.host_ip,
-                    "start_time": pod.status.start_time.isoformat() if pod.status.start_time else None,
-                    "qos_class": pod.status.qos_class
+                    "start_time": pod.status.start_time.isoformat()
+                    if pod.status.start_time
+                    else None,
+                    "qos_class": pod.status.qos_class,
                 },
                 "spec": {
                     "node_name": pod.spec.node_name,
@@ -238,16 +251,21 @@ class K8sPodTool(K8sBaseTool):
                             "name": container.name,
                             "image": container.image,
                             "ports": [
-                                {"containerPort": port.container_port, "protocol": port.protocol}
+                                {
+                                    "containerPort": port.container_port,
+                                    "protocol": port.protocol,
+                                }
                                 for port in container.ports or []
                             ],
                             "resources": {
                                 "requests": container.resources.requests or {},
-                                "limits": container.resources.limits or {}
-                            } if container.resources else {}
+                                "limits": container.resources.limits or {},
+                            }
+                            if container.resources
+                            else {},
                         }
                         for container in pod.spec.containers or []
-                    ]
+                    ],
                 },
                 "container_statuses": [
                     {
@@ -256,146 +274,135 @@ class K8sPodTool(K8sBaseTool):
                         "restart_count": cs.restart_count or 0,
                         "image": cs.image,
                         "image_id": cs.image_id,
-                        "state": self._format_container_state(cs.state)
+                        "state": self._format_container_state(cs.state),
                     }
                     for cs in pod.status.container_statuses or []
-                ]
+                ],
             }
-            
+
             return {
                 "success": True,
                 "operation": "get_pod_details",
                 "pod_details": pod_details,
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": datetime.utcnow().isoformat() + "Z",
             }
-            
+
         except ApiException as e:
             if e.status == 404:
                 return {
                     "success": False,
                     "error": "Pod不存在",
-                    "message": f"在命名空间 {namespace} 中找不到Pod {pod_name}"
+                    "message": f"在命名空间 {namespace} 中找不到Pod {pod_name}",
                 }
             else:
-                return {
-                    "success": False,
-                    "error": "获取Pod详情失败",
-                    "message": str(e)
-                }
+                return {"success": False, "error": "获取Pod详情失败", "message": str(e)}
         except Exception as e:
-            return {
-                "success": False,
-                "error": "获取Pod详情失败",
-                "message": str(e)
-            }
-    
-    async def _delete_pod(self, v1: client.CoreV1Api, parameters: Dict[str, Any]) -> Dict[str, Any]:
+            return {"success": False, "error": "获取Pod详情失败", "message": str(e)}
+
+    async def _delete_pod(
+        self, v1: client.CoreV1Api, parameters: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """删除Pod"""
         try:
             pod_name = parameters.get("pod_name")
             namespace = parameters.get("namespace", "default")
-            
+
             if not pod_name:
                 return {
                     "success": False,
                     "error": "缺少参数",
-                    "message": "Pod名称是必需的参数"
+                    "message": "Pod名称是必需的参数",
                 }
-            
+
             loop = asyncio.get_event_loop()
-            
+
             # 删除Pod
             await loop.run_in_executor(
                 self._executor,
                 lambda: v1.delete_namespaced_pod(
                     name=pod_name,
                     namespace=namespace,
-                    body=client.V1DeleteOptions(
-                        grace_period_seconds=30
-                    )
-                )
+                    body=client.V1DeleteOptions(grace_period_seconds=30),
+                ),
             )
-            
+
             return {
                 "success": True,
                 "operation": "delete_pod",
                 "message": f"Pod {pod_name} 在命名空间 {namespace} 中已成功删除",
                 "pod_name": pod_name,
                 "namespace": namespace,
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": datetime.utcnow().isoformat() + "Z",
             }
-            
+
         except ApiException as e:
             if e.status == 404:
                 return {
                     "success": False,
                     "error": "Pod不存在",
-                    "message": f"在命名空间 {namespace} 中找不到Pod {pod_name}"
+                    "message": f"在命名空间 {namespace} 中找不到Pod {pod_name}",
                 }
             else:
-                return {
-                    "success": False,
-                    "error": "删除Pod失败",
-                    "message": str(e)
-                }
+                return {"success": False, "error": "删除Pod失败", "message": str(e)}
         except Exception as e:
-            return {
-                "success": False,
-                "error": "删除Pod失败",
-                "message": str(e)
-            }
-    
-    async def _restart_pod(self, v1: client.CoreV1Api, apps_v1: client.AppsV1Api, parameters: Dict[str, Any]) -> Dict[str, Any]:
+            return {"success": False, "error": "删除Pod失败", "message": str(e)}
+
+    async def _restart_pod(
+        self,
+        v1: client.CoreV1Api,
+        apps_v1: client.AppsV1Api,
+        parameters: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """重启Pod（通过删除Pod让Deployment/ReplicaSet重新创建）"""
         try:
             pod_name = parameters.get("pod_name")
             namespace = parameters.get("namespace", "default")
-            
+
             if not pod_name:
                 return {
                     "success": False,
                     "error": "缺少参数",
-                    "message": "Pod名称是必需的参数"
+                    "message": "Pod名称是必需的参数",
                 }
-            
+
             loop = asyncio.get_event_loop()
-            
+
             # 首先获取Pod信息以检查所属的控制器
             try:
                 pod = await loop.run_in_executor(
                     self._executor,
-                    lambda: v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+                    lambda: v1.read_namespaced_pod(name=pod_name, namespace=namespace),
                 )
             except ApiException as e:
                 if e.status == 404:
                     return {
                         "success": False,
                         "error": "Pod不存在",
-                        "message": f"在命名空间 {namespace} 中找不到Pod {pod_name}"
+                        "message": f"在命名空间 {namespace} 中找不到Pod {pod_name}",
                     }
                 raise
-            
+
             # 检查Pod的所有者引用
             owner_refs = pod.metadata.owner_references or []
             has_controller = any(ref.controller for ref in owner_refs)
-            
+
             if not has_controller:
                 return {
                     "success": False,
                     "error": "无法重启Pod",
-                    "message": f"Pod {pod_name} 不受任何控制器管理，无法自动重启。请手动删除Pod。"
+                    "message": f"Pod {pod_name} 不受任何控制器管理，无法自动重启。请手动删除Pod。",
                 }
-            
+
             # 删除Pod让控制器重新创建
             await loop.run_in_executor(
                 self._executor,
                 lambda: v1.delete_namespaced_pod(
                     name=pod_name,
                     namespace=namespace,
-                    body=client.V1DeleteOptions(grace_period_seconds=0)
-                )
+                    body=client.V1DeleteOptions(grace_period_seconds=0),
+                ),
             )
-            
+
             return {
                 "success": True,
                 "operation": "restart_pod",
@@ -403,73 +410,79 @@ class K8sPodTool(K8sBaseTool):
                 "pod_name": pod_name,
                 "namespace": namespace,
                 "controller_info": [
-                    {
-                        "kind": ref.kind,
-                        "name": ref.name,
-                        "controller": ref.controller
-                    }
+                    {"kind": ref.kind, "name": ref.name, "controller": ref.controller}
                     for ref in owner_refs
                 ],
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": datetime.utcnow().isoformat() + "Z",
             }
-            
+
         except Exception as e:
-            return {
-                "success": False,
-                "error": "重启Pod失败",
-                "message": str(e)
-            }
-    
-    async def _get_pod_events(self, v1: client.CoreV1Api, parameters: Dict[str, Any]) -> Dict[str, Any]:
+            return {"success": False, "error": "重启Pod失败", "message": str(e)}
+
+    async def _get_pod_events(
+        self, v1: client.CoreV1Api, parameters: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """获取Pod相关事件"""
         try:
             pod_name = parameters.get("pod_name")
             namespace = parameters.get("namespace", "default")
             time_window_hours = parameters.get("time_window_hours", 2)
-            
+
             if not pod_name:
                 return {
                     "success": False,
                     "error": "缺少参数",
-                    "message": "Pod名称是必需的参数"
+                    "message": "Pod名称是必需的参数",
                 }
-            
+
             loop = asyncio.get_event_loop()
             since_time = datetime.utcnow() - timedelta(hours=time_window_hours)
-            
+
             # 获取命名空间内的所有事件
             events = await loop.run_in_executor(
                 self._executor,
                 lambda: v1.list_namespaced_event(
                     namespace=namespace,
                     field_selector=f"involvedObject.name={pod_name}",
-                    limit=50
-                )
+                    limit=50,
+                ),
             )
-            
+
             # 过滤和格式化事件
             pod_events = []
             for event in events.items:
                 event_time = event.last_timestamp or event.first_timestamp
-                if event_time and event_time >= since_time.replace(tzinfo=event_time.tzinfo):
-                    pod_events.append({
-                        "type": event.type,
-                        "reason": event.reason,
-                        "message": event.message,
-                        "source": event.source.component if event.source else "Unknown",
-                        "count": event.count or 1,
-                        "first_timestamp": event.first_timestamp.isoformat() if event.first_timestamp else None,
-                        "last_timestamp": event.last_timestamp.isoformat() if event.last_timestamp else None,
-                        "involved_object": {
-                            "kind": event.involved_object.kind,
-                            "name": event.involved_object.name,
-                            "namespace": event.involved_object.namespace
+                if event_time and event_time >= since_time.replace(
+                    tzinfo=event_time.tzinfo
+                ):
+                    pod_events.append(
+                        {
+                            "type": event.type,
+                            "reason": event.reason,
+                            "message": event.message,
+                            "source": event.source.component
+                            if event.source
+                            else "Unknown",
+                            "count": event.count or 1,
+                            "first_timestamp": event.first_timestamp.isoformat()
+                            if event.first_timestamp
+                            else None,
+                            "last_timestamp": event.last_timestamp.isoformat()
+                            if event.last_timestamp
+                            else None,
+                            "involved_object": {
+                                "kind": event.involved_object.kind,
+                                "name": event.involved_object.name,
+                                "namespace": event.involved_object.namespace,
+                            },
                         }
-                    })
-            
+                    )
+
             # 按时间排序
-            pod_events.sort(key=lambda x: x["last_timestamp"] or x["first_timestamp"], reverse=True)
-            
+            pod_events.sort(
+                key=lambda x: x["last_timestamp"] or x["first_timestamp"], reverse=True
+            )
+
             return {
                 "success": True,
                 "operation": "get_pod_events",
@@ -478,41 +491,38 @@ class K8sPodTool(K8sBaseTool):
                 "time_window_hours": time_window_hours,
                 "total_events": len(pod_events),
                 "events": pod_events,
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": datetime.utcnow().isoformat() + "Z",
             }
-            
+
         except Exception as e:
-            return {
-                "success": False,
-                "error": "获取Pod事件失败",
-                "message": str(e)
-            }
-    
+            return {"success": False, "error": "获取Pod事件失败", "message": str(e)}
+
     def _get_pod_ready_status(self, pod) -> str:
         """获取Pod就绪状态"""
         if not pod.status.container_statuses:
             return "0/0"
-        
+
         ready_count = sum(1 for cs in pod.status.container_statuses if cs.ready)
         total_count = len(pod.status.container_statuses)
         return f"{ready_count}/{total_count}"
-    
-    
+
     def _format_container_state(self, state) -> Dict[str, Any]:
         """格式化容器状态"""
         if not state:
             return {"state": "unknown"}
-        
+
         if state.running:
             return {
                 "state": "running",
-                "started_at": state.running.started_at.isoformat() if state.running.started_at else None
+                "started_at": state.running.started_at.isoformat()
+                if state.running.started_at
+                else None,
             }
         elif state.waiting:
             return {
                 "state": "waiting",
                 "reason": state.waiting.reason,
-                "message": state.waiting.message
+                "message": state.waiting.message,
             }
         elif state.terminated:
             return {
@@ -520,9 +530,12 @@ class K8sPodTool(K8sBaseTool):
                 "reason": state.terminated.reason,
                 "message": state.terminated.message,
                 "exit_code": state.terminated.exit_code,
-                "started_at": state.terminated.started_at.isoformat() if state.terminated.started_at else None,
-                "finished_at": state.terminated.finished_at.isoformat() if state.terminated.finished_at else None
+                "started_at": state.terminated.started_at.isoformat()
+                if state.terminated.started_at
+                else None,
+                "finished_at": state.terminated.finished_at.isoformat()
+                if state.terminated.finished_at
+                else None,
             }
         else:
             return {"state": "unknown"}
-    

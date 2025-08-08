@@ -7,4 +7,4 @@
 
 from .redis_vector_store import RedisVectorStore
 
-__all__ = ['RedisVectorStore']
+__all__ = ["RedisVectorStore"]

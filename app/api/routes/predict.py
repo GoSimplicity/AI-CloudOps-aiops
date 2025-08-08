@@ -26,8 +26,9 @@ router = APIRouter(tags=["prediction"])
 # 初始化预测服务
 prediction_service = PredictionService()
 
-@router.post('/predict')
-@router.get('/predict')
+
+@router.post("/predict")
+@router.get("/predict")
 async def predict_instances(request_data: Optional[PredictionRequest] = Body(None)):
     """
     预测实例数接口
@@ -45,35 +46,41 @@ async def predict_instances(request_data: Optional[PredictionRequest] = Body(Non
             if not validate_qps(predict_request.current_qps):
                 raise HTTPException(status_code=400, detail="QPS参数无效")
 
-        logger.info(f"收到预测请求: QPS={predict_request.current_qps}, 时间={predict_request.timestamp}")
+        logger.info(
+            f"收到预测请求: QPS={predict_request.current_qps}, 时间={predict_request.timestamp}"
+        )
 
         # 调用预测服务
         try:
-            prediction_result = await asyncio.to_thread(
-                prediction_service.predict_instances,
-                predict_request.current_qps,
-                predict_request.timestamp
+            prediction_result = await prediction_service.predict(
+                current_qps=predict_request.current_qps,
+                timestamp=predict_request.timestamp,
             )
         except Exception as predict_error:
             logger.error(f"预测服务调用失败: {str(predict_error)}")
-            raise HTTPException(status_code=500, detail="预测失败，模型未加载或服务异常")
+            raise HTTPException(
+                status_code=500, detail="预测失败，模型未加载或服务异常"
+            )
 
         # 检查预测结果
         if prediction_result is None:
             logger.error("预测服务返回空结果")
-            raise HTTPException(status_code=500, detail="预测失败，模型未加载或服务异常")
+            raise HTTPException(
+                status_code=500, detail="预测失败，模型未加载或服务异常"
+            )
 
         # 构建响应
         response = PredictionResponse(
-            predicted_instances=prediction_result.get('predicted_instances', 0),
-            confidence=prediction_result.get('confidence', 0.0),
-            timestamp=predict_request.timestamp,
-            qps=predict_request.current_qps,
-            model_version=prediction_result.get('model_version', '1.0'),
-            recommendation=prediction_result.get('recommendation', '建议维持当前实例数')
+            instances=prediction_result.get("instances", 0),
+            current_qps=prediction_result.get("current_qps", predict_request.current_qps or 0.0),
+            timestamp=prediction_result.get("timestamp", (predict_request.timestamp or datetime.datetime.utcnow()).isoformat()),
+            confidence=prediction_result.get("confidence", 0.0),
+            model_version=prediction_result.get("model_version", "1.0"),
+            prediction_type=prediction_result.get("prediction_type"),
+            features=prediction_result.get("features"),
         )
 
-        return APIResponse(code=0, message="预测成功", data=response.dict()).dict()
+        return APIResponse(code=0, message="预测成功", data=response.model_dump()).model_dump()
 
     except HTTPException:
         raise
@@ -81,34 +88,39 @@ async def predict_instances(request_data: Optional[PredictionRequest] = Body(Non
         logger.error(f"预测请求处理失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"预测失败: {str(e)}")
 
-@router.post('/predict/trend')
-@router.get('/predict/trend')
-async def predict_trend(hours_ahead: Optional[int] = 24, current_qps: Optional[float] = None):
+
+@router.post("/predict/trend")
+@router.get("/predict/trend")
+async def predict_trend(
+    hours_ahead: Optional[int] = 24, current_qps: Optional[float] = None
+):
     """
     负载趋势预测接口
     """
     try:
         # 验证参数
         if hours_ahead < 1 or hours_ahead > 168:
-            raise HTTPException(status_code=400, detail="hours_ahead参数必须在1-168之间")
+            raise HTTPException(
+                status_code=400, detail="hours_ahead参数必须在1-168之间"
+            )
 
         if current_qps is not None and not validate_qps(current_qps):
             raise HTTPException(status_code=400, detail="QPS参数无效")
 
-        logger.info(f"收到趋势预测请求: hours_ahead={hours_ahead}, current_qps={current_qps}")
+        logger.info(
+            f"收到趋势预测请求: hours_ahead={hours_ahead}, current_qps={current_qps}"
+        )
 
         # 调用趋势预测服务
         try:
-            result = await asyncio.to_thread(
-                prediction_service.predict_trend,
-                hours_ahead=hours_ahead,
-                current_qps=current_qps
+            result = await prediction_service.predict_trend(
+                hours_ahead=hours_ahead, current_qps=current_qps
             )
         except Exception as predict_error:
             logger.error(f"趋势预测失败: {str(predict_error)}")
             raise HTTPException(status_code=500, detail="趋势预测失败")
 
-        return APIResponse(code=0, message="趋势预测成功", data=result).dict()
+        return APIResponse(code=0, message="趋势预测成功", data=result).model_dump()
 
     except HTTPException:
         raise
@@ -116,7 +128,8 @@ async def predict_trend(hours_ahead: Optional[int] = 24, current_qps: Optional[f
         logger.error(f"趋势预测请求处理失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"趋势预测失败: {str(e)}")
 
-@router.post('/predict/models/reload')
+
+@router.post("/predict/models/reload")
 async def reload_models():
     """
     重新加载预测模型接口
@@ -133,24 +146,25 @@ async def reload_models():
                 message="模型重载成功",
                 data={
                     "timestamp": datetime.datetime.utcnow().isoformat(),
-                    "models_reloaded": True
-                }
-            ).dict()
+                    "models_reloaded": True,
+                },
+            ).model_dump()
         else:
             return APIResponse(
                 code=500,
                 message="模型重载失败",
                 data={
                     "timestamp": datetime.datetime.utcnow().isoformat(),
-                    "models_reloaded": False
-                }
-            ).dict()
+                    "models_reloaded": False,
+                },
+            ).model_dump()
 
     except Exception as e:
         logger.error(f"模型重载失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"模型重载失败: {str(e)}")
 
-@router.get('/predict/info')
+
+@router.get("/predict/info")
 async def get_model_info():
     """
     获取预测模型信息接口
@@ -161,17 +175,14 @@ async def get_model_info():
         # 获取模型信息
         model_info = await asyncio.to_thread(prediction_service.get_model_info)
 
-        return APIResponse(
-            code=0,
-            message="模型信息获取成功",
-            data=model_info
-        ).dict()
+        return APIResponse(code=0, message="模型信息获取成功", data=model_info).model_dump()
 
     except Exception as e:
         logger.error(f"获取模型信息失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取模型信息失败: {str(e)}")
 
-@router.get('/predict/health')
+
+@router.get("/predict/health")
 async def predict_health():
     """
     预测服务健康检查接口
@@ -186,9 +197,9 @@ async def predict_health():
             data={
                 "healthy": health_status,
                 "timestamp": datetime.datetime.utcnow().isoformat(),
-                "service": "prediction"
-            }
-        ).dict()
+                "service": "prediction",
+            },
+        ).model_dump()
 
     except Exception as e:
         logger.error(f"预测服务健康检查失败: {str(e)}")

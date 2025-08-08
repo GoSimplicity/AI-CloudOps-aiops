@@ -15,7 +15,7 @@ from app.core.agents.assistant.models.base import SessionData
 
 class SessionManager:
     """会话管理器"""
-    
+
     def __init__(self):
         self.sessions: Dict[str, SessionData] = {}
         self._session_lock = threading.Lock()
@@ -28,7 +28,7 @@ class SessionManager:
             created_at=datetime.now().isoformat(),
             history=[],
             metadata={},
-            context_summary=""
+            context_summary="",
         )
 
         with self._session_lock:
@@ -47,11 +47,13 @@ class SessionManager:
 
         with self._session_lock:
             session = self.sessions[session_id]
-            session.history.append({
-                "role": role,
-                "content": content,
-                "timestamp": datetime.now().isoformat()
-            })
+            session.history.append(
+                {
+                    "role": role,
+                    "content": content,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
 
             # 限制历史长度
             max_history = 20  # 减少历史长度
@@ -60,23 +62,27 @@ class SessionManager:
 
             # 更新上下文摘要
             if len(session.history) >= 4:
-                session.context_summary = self._generate_context_summary(session.history[-4:])
+                session.context_summary = self._generate_context_summary(
+                    session.history[-4:]
+                )
 
         return session_id
 
     def _generate_context_summary(self, history: List[Dict]) -> str:
         """生成对话上下文摘要"""
         try:
-            user_messages = [msg['content'] for msg in history if msg.get('role') == 'user']
-            all_text = ' '.join(user_messages)
+            user_messages = [
+                msg["content"] for msg in history if msg.get("role") == "user"
+            ]
+            all_text = " ".join(user_messages)
 
             keywords = []
-            for word in ['部署', '监控', '故障', '性能', '配置', '安装']:
+            for word in ["部署", "监控", "故障", "性能", "配置", "安装"]:
                 if word in all_text:
                     keywords.append(word)
 
             return f"对话主题: {', '.join(keywords)}" if keywords else "一般咨询"
-        except:
+        except Exception:
             return "一般咨询"
 
     def clear_session_history(self, session_id: str) -> bool:

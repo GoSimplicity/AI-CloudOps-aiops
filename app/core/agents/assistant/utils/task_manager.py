@@ -61,8 +61,7 @@ class TaskManager:
 
         try:
             await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=timeout
+                asyncio.gather(*tasks, return_exceptions=True), timeout=timeout
             )
             logger.debug("所有任务已完成")
         except asyncio.TimeoutError:
@@ -73,8 +72,7 @@ class TaskManager:
 
             try:
                 await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=1.0
+                    asyncio.gather(*tasks, return_exceptions=True), timeout=1.0
                 )
             except asyncio.TimeoutError:
                 logger.warning("部分任务取消操作超时")

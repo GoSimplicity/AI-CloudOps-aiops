@@ -11,13 +11,22 @@ services:
     environment:
       # 设置环境类型
       - ENV=${ENV:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DEBUG=${DEBUG:-false}
       # 仅保留敏感配置
-      - LLM_API_KEY=${LLM_API_KEY:-sk-xrykvuqngkhbsmdtmvhzsupjafandfyhcdbcqojlyvrftttq}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://api.siliconflow.cn/v1}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b}
       # 仅用于通知的webhook
       - FEISHU_WEBHOOK=${FEISHU_WEBHOOK:-}
       # Tavily API密钥
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      # Prometheus / Redis in-compose 地址
+      - PROMETHEUS_HOST=${PROMETHEUS_HOST:-prometheus:9090}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -26,6 +35,7 @@ services:
     depends_on:
       - prometheus
       - ollama
+      - redis
     restart: unless-stopped
     networks:
       - aiops-network
@@ -70,13 +80,14 @@ services:
     restart: unless-stopped
     networks:
       - aiops-network
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # 如需 GPU, 取消注释以下 block
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
     # 预拉取常用模型
     command: >
       sh -c "ollama serve &

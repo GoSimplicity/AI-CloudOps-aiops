@@ -23,441 +23,439 @@ logger = logging.getLogger("aiops.kubernetes")
 
 
 class KubernetesService:
-  def __init__(self):
-    self.apps_v1 = None
-    self.core_v1 = None
-    self.initialized = False
-    self.last_init_attempt = 0
-    self._init_retry_interval = 60  # 60秒后重试初始化
-    self._try_init()
-
-  def _try_init(self):
-    """尝试初始化Kubernetes客户端"""
-    try:
-      if time.time() - self.last_init_attempt < self._init_retry_interval:
-        return  # 避免频繁重试
-
-      self.last_init_attempt = time.time()
-      self._load_config()
-      self.apps_v1 = client.AppsV1Api()
-      self.core_v1 = client.CoreV1Api()
-
-      # 测试连接
-      try:
-        api = client.VersionApi()
-        api.get_code()
-
-        # 尝试列出命名空间，再次确认连接
-        self.core_v1.list_namespace(limit=1)
-
-        self.initialized = True
-        logger.info("Kubernetes服务初始化完成")
-      except Exception as e:
+    def __init__(self):
+        self.apps_v1 = None
+        self.core_v1 = None
         self.initialized = False
-        logger.error(f"Kubernetes连接测试失败: {str(e)}")
-        raise
+        self.last_init_attempt = 0
+        self._init_retry_interval = 60  # 60秒后重试初始化
+        self._try_init()
 
-    except Exception as e:
-      self.initialized = False
-      logger.error(f"Kubernetes初始化失败: {str(e)}")
+    def _try_init(self):
+        """尝试初始化Kubernetes客户端"""
+        try:
+            if time.time() - self.last_init_attempt < self._init_retry_interval:
+                return  # 避免频繁重试
 
-  def _load_config(self):
-    """加载Kubernetes配置"""
-    try:
-      base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-      config_file = os.path.join(base_dir, config.k8s.config_path)
-      logger.info(f"尝试加载K8s配置: in_cluster={config.k8s.in_cluster}, config_path={config_file}")
+            self.last_init_attempt = time.time()
+            self._load_config()
+            self.apps_v1 = client.AppsV1Api()
+            self.core_v1 = client.CoreV1Api()
 
-      # 检查配置文件是否存在
-      if not config.k8s.in_cluster and config_file:
-        # 检查文件是否存在
-        if not os.path.exists(config_file):
-          logger.error(f"K8s配置文件不存在: {config_file}")
-          # 尝试查找其他可能的位置
-          alternate_paths = [
-            os.path.join(os.getcwd(), "deploy/kubernetes/config"),
-            os.path.join(os.getcwd(), "config"),
-            os.path.expanduser("~/.kube/config")
-          ]
-
-          for path in alternate_paths:
-            if os.path.exists(path):
-              logger.info(f"找到替代配置文件: {path}")
-              config_file = path
-              break
-          else:
-            logger.info("尝试从默认位置加载配置")
+            # 测试连接
             try:
-              k8s_config.load_kube_config()
-              logger.info("成功从默认位置加载K8s配置")
-              return
+                api = client.VersionApi()
+                api.get_code()
+
+                # 尝试列出命名空间，再次确认连接
+                self.core_v1.list_namespace(limit=1)
+
+                self.initialized = True
+                logger.info("Kubernetes服务初始化完成")
             except Exception as e:
-              logger.error(f"从默认位置加载K8s配置失败: {str(e)}")
-              raise
+                self.initialized = False
+                logger.error(f"Kubernetes连接测试失败: {str(e)}")
+                raise
 
-      if config.k8s.in_cluster:
-        k8s_config.load_incluster_config()
-        logger.info("使用集群内K8s配置")
-      else:
-        k8s_config.load_kube_config(config_file=config_file)
-        logger.info(f"使用本地K8s配置文件: {config_file}")
+        except Exception as e:
+            self.initialized = False
+            logger.error(f"Kubernetes初始化失败: {str(e)}")
 
-    except Exception as e:
-      logger.error(f"无法加载K8s配置: {str(e)}")
-      raise
+    def _load_config(self):
+        """加载Kubernetes配置"""
+        try:
+            base_dir = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
+            config_file = os.path.join(base_dir, config.k8s.config_path)
+            logger.info(
+                f"尝试加载K8s配置: in_cluster={config.k8s.in_cluster}, config_path={config_file}"
+            )
 
-  def _ensure_initialized(self):
-    """确保Kubernetes客户端已初始化"""
-    if not self.initialized:
-      self._try_init()
-    if not self.initialized:
-      logger.warning("Kubernetes未初始化，相关功能将返回模拟数据或空值")
+            # 检查配置文件是否存在
+            if not config.k8s.in_cluster and config_file:
+                # 检查文件是否存在
+                if not os.path.exists(config_file):
+                    logger.error(f"K8s配置文件不存在: {config_file}")
+                    # 尝试查找其他可能的位置
+                    alternate_paths = [
+                        os.path.join(os.getcwd(), "deploy/kubernetes/config"),
+                        os.path.join(os.getcwd(), "config"),
+                        os.path.expanduser("~/.kube/config"),
+                    ]
 
-    return True  # 始终返回True，让调用者继续执行
+                    for path in alternate_paths:
+                        if os.path.exists(path):
+                            logger.info(f"找到替代配置文件: {path}")
+                            config_file = path
+                            break
+                    else:
+                        logger.info("尝试从默认位置加载配置")
+                        try:
+                            k8s_config.load_kube_config()
+                            logger.info("成功从默认位置加载K8s配置")
+                            return
+                        except Exception as e:
+                            logger.error(f"从默认位置加载K8s配置失败: {str(e)}")
+                            raise
 
-  async def get_deployment(self, name: str, namespace: str = None) -> Optional[Dict]:
-    """获取Deployment信息"""
-    if not self._ensure_initialized():
-      logger.warning("Kubernetes未初始化，无法获取Deployment信息")
-      return None
+            if config.k8s.in_cluster:
+                k8s_config.load_incluster_config()
+                logger.info("使用集群内K8s配置")
+            else:
+                k8s_config.load_kube_config(config_file=config_file)
+                logger.info(f"使用本地K8s配置文件: {config_file}")
 
-    try:
-      namespace = namespace or config.k8s.namespace
-      deployment = self.apps_v1.read_namespaced_deployment(
-        name=name, namespace=namespace
-      )
+        except Exception as e:
+            logger.error(f"无法加载K8s配置: {str(e)}")
+            raise
 
-      deployment_dict = deployment.to_dict()
-      # 清理敏感信息
-      if 'metadata' in deployment_dict:
-        metadata = deployment_dict['metadata']
-        for key in ['managed_fields', 'resource_version', 'uid', 'self_link']:
-          metadata.pop(key, None)
+    def _ensure_initialized(self):
+        """确保Kubernetes客户端已初始化"""
+        if not self.initialized:
+            self._try_init()
+        if not self.initialized:
+            logger.warning("Kubernetes未初始化，相关功能将返回模拟数据或空值")
+            logger.info("提示：请确保Kubernetes集群正在运行，或检查kubeconfig配置")
 
-      logger.info(f"获取Deployment成功: {name}")
-      return deployment_dict
+        return self.initialized  # 返回实际的初始化状态
 
-    except ApiException as e:
-      logger.error(f"获取Deployment失败: {str(e)}")
-      return None
-    except Exception as e:
-      logger.error(f"获取Deployment异常: {str(e)}")
-      return None
+    async def get_deployment(self, name: str, namespace: str = None) -> Optional[Dict]:
+        """获取Deployment信息"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法获取Deployment信息")
+            return None
 
-  async def patch_deployment(
-    self,
-    name: str,
-    patch: Dict[str, Any],
-    namespace: str = None
-  ) -> bool:
-    """更新Deployment"""
-    if not self._ensure_initialized():
-      logger.warning("Kubernetes未初始化，无法更新Deployment")
-      return False
+        try:
+            namespace = namespace or config.k8s.namespace
+            deployment = self.apps_v1.read_namespaced_deployment(
+                name=name, namespace=namespace
+            )
 
-    try:
-      namespace = namespace or config.k8s.namespace
+            deployment_dict = deployment.to_dict()
+            # 清理敏感信息
+            if "metadata" in deployment_dict:
+                metadata = deployment_dict["metadata"]
+                for key in ["managed_fields", "resource_version", "uid", "self_link"]:
+                    metadata.pop(key, None)
 
-      logger.info(f"更新Deployment: {name}, patch: {json.dumps(patch, indent=2)}")
+            logger.info(f"获取Deployment成功: {name}")
+            return deployment_dict
 
-      self.apps_v1.patch_namespaced_deployment(
-        name=name,
-        namespace=namespace,
-        body=patch
-      )
+        except ApiException as e:
+            logger.error(f"获取Deployment失败: {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"获取Deployment异常: {str(e)}")
+            return None
 
-      logger.info(f"成功更新Deployment {name}")
-      return True
+    async def patch_deployment(
+        self, name: str, patch: Dict[str, Any], namespace: str = None
+    ) -> bool:
+        """更新Deployment"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法更新Deployment")
+            return False
 
-    except ApiException as e:
-      logger.error(f"更新Deployment失败: {str(e)}")
-      return False
-    except Exception as e:
-      logger.error(f"更新Deployment异常: {str(e)}")
-      return False
+        try:
+            namespace = namespace or config.k8s.namespace
 
-  async def get_pods(self, namespace: str = None, label_selector: str = None) -> List[Dict]:
-    """获取Pod列表"""
-    if not self._ensure_initialized():
-      logger.warning("Kubernetes未初始化，无法获取Pod列表")
-      return []
+            logger.info(f"更新Deployment: {name}, patch: {json.dumps(patch, indent=2)}")
 
-    try:
-      namespace = namespace or config.k8s.namespace
-      pods = self.core_v1.list_namespaced_pod(
-        namespace=namespace,
-        label_selector=label_selector
-      )
+            self.apps_v1.patch_namespaced_deployment(
+                name=name, namespace=namespace, body=patch
+            )
 
-      pod_list = []
-      for pod in pods.items:
-        pod_dict = pod.to_dict()
-        # 清理不必要的字段
-        if 'metadata' in pod_dict:
-          metadata = pod_dict['metadata']
-          for key in ['managed_fields', 'resource_version', 'uid']:
-            metadata.pop(key, None)
-        pod_list.append(pod_dict)
+            logger.info(f"成功更新Deployment {name}")
+            return True
 
-      logger.info(f"获取到 {len(pod_list)} 个Pod")
-      return pod_list
+        except ApiException as e:
+            logger.error(f"更新Deployment失败: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"更新Deployment异常: {str(e)}")
+            return False
 
-    except ApiException as e:
-      logger.error(f"获取Pod列表失败: {str(e)}")
-      return []
-    except Exception as e:
-      logger.error(f"获取Pod列表异常: {str(e)}")
-      return []
+    async def get_pods(
+        self, namespace: str = None, label_selector: str = None
+    ) -> List[Dict]:
+        """获取Pod列表"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法获取Pod列表")
+            return []
 
-  async def get_events(
-    self,
-    namespace: str = None,
-    field_selector: str = None,
-    limit: int = 100
-  ) -> List[Dict]:
-    """获取事件列表"""
-    if not self._ensure_initialized():
-      logger.warning("Kubernetes未初始化，无法获取事件列表")
-      return []
+        try:
+            namespace = namespace or config.k8s.namespace
+            pods = self.core_v1.list_namespaced_pod(
+                namespace=namespace, label_selector=label_selector
+            )
 
-    try:
-      namespace = namespace or config.k8s.namespace
-      events = self.core_v1.list_namespaced_event(
-        namespace=namespace,
-        field_selector=field_selector,
-        limit=limit
-      )
+            pod_list = []
+            for pod in pods.items:
+                pod_dict = pod.to_dict()
+                # 清理不必要的字段
+                if "metadata" in pod_dict:
+                    metadata = pod_dict["metadata"]
+                    for key in ["managed_fields", "resource_version", "uid"]:
+                        metadata.pop(key, None)
+                pod_list.append(pod_dict)
 
-      event_list = []
-      for event in events.items:
-        event_dict = event.to_dict()
-        # 清理不必要的字段
-        if 'metadata' in event_dict:
-          metadata = event_dict['metadata']
-          for key in ['managed_fields', 'resource_version', 'uid']:
-            metadata.pop(key, None)
-        event_list.append(event_dict)
+            logger.info(f"获取到 {len(pod_list)} 个Pod")
+            return pod_list
 
-      logger.info(f"获取到 {len(event_list)} 个事件")
-      return event_list
+        except ApiException as e:
+            logger.error(f"获取Pod列表失败: {str(e)}")
+            return []
+        except Exception as e:
+            logger.error(f"获取Pod列表异常: {str(e)}")
+            return []
 
-    except ApiException as e:
-      logger.error(f"获取事件列表失败: {str(e)}")
-      return []
-    except Exception as e:
-      logger.error(f"获取事件列表异常: {str(e)}")
-      return []
+    async def get_events(
+        self, namespace: str = None, field_selector: str = None, limit: int = 100
+    ) -> List[Dict]:
+        """获取事件列表"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法获取事件列表")
+            return []
 
-  async def restart_deployment(self, name: str, namespace: str = None) -> bool:
-    """重启Deployment"""
-    if not self._ensure_initialized():
-      logger.warning("Kubernetes未初始化，无法重启Deployment")
-      return False
+        try:
+            namespace = namespace or config.k8s.namespace
+            events = self.core_v1.list_namespaced_event(
+                namespace=namespace, field_selector=field_selector, limit=limit
+            )
 
-    try:
-      namespace = namespace or config.k8s.namespace
+            event_list = []
+            for event in events.items:
+                event_dict = event.to_dict()
+                # 清理不必要的字段
+                if "metadata" in event_dict:
+                    metadata = event_dict["metadata"]
+                    for key in ["managed_fields", "resource_version", "uid"]:
+                        metadata.pop(key, None)
+                event_list.append(event_dict)
 
-      # 添加重启注解
-      patch = {
-        "spec": {
-          "template": {
-            "metadata": {
-              "annotations": {
-                "kubectl.kubernetes.io/restartedAt":
-                  datetime.utcnow().isoformat()
-              }
+            logger.info(f"获取到 {len(event_list)} 个事件")
+            return event_list
+
+        except ApiException as e:
+            logger.error(f"获取事件列表失败: {str(e)}")
+            return []
+        except Exception as e:
+            logger.error(f"获取事件列表异常: {str(e)}")
+            return []
+
+    async def restart_deployment(self, name: str, namespace: str = None) -> bool:
+        """重启Deployment"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法重启Deployment")
+            return False
+
+        try:
+            namespace = namespace or config.k8s.namespace
+
+            # 添加重启注解
+            patch = {
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "annotations": {
+                                "kubectl.kubernetes.io/restartedAt": datetime.utcnow().isoformat()
+                            }
+                        }
+                    }
+                }
             }
-          }
-        }
-      }
 
-      result = await self.patch_deployment(name, patch, namespace)
-      if result:
-        logger.info(f"成功重启Deployment: {name}")
+            result = await self.patch_deployment(name, patch, namespace)
+            if result:
+                logger.info(f"成功重启Deployment: {name}")
 
-      return result
+            return result
 
-    except Exception as e:
-      logger.error(f"重启Deployment失败: {str(e)}")
-      return False
+        except Exception as e:
+            logger.error(f"重启Deployment失败: {str(e)}")
+            return False
 
-  async def scale_deployment(self, name: str, replicas: int, namespace: str = None) -> bool:
-    """扩缩容Deployment"""
-    if not self._ensure_initialized():
-      logger.warning("Kubernetes未初始化，无法扩缩容Deployment")
-      return False
+    async def scale_deployment(
+        self, name: str, replicas: int, namespace: str = None
+    ) -> bool:
+        """扩缩容Deployment"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法扩缩容Deployment")
+            return False
 
-    try:
-      namespace = namespace or config.k8s.namespace
+        try:
+            namespace = namespace or config.k8s.namespace
 
-      patch = {
-        "spec": {
-          "replicas": replicas
-        }
-      }
+            patch = {"spec": {"replicas": replicas}}
 
-      result = await self.patch_deployment(name, patch, namespace)
-      if result:
-        logger.info(f"成功扩缩容Deployment {name} 到 {replicas} 副本")
+            result = await self.patch_deployment(name, patch, namespace)
+            if result:
+                logger.info(f"成功扩缩容Deployment {name} 到 {replicas} 副本")
 
-      return result
+            return result
 
-    except Exception as e:
-      logger.error(f"扩缩容Deployment失败: {str(e)}")
-      return False
+        except Exception as e:
+            logger.error(f"扩缩容Deployment失败: {str(e)}")
+            return False
 
-  def is_healthy(self) -> bool:
-    """检查Kubernetes连接是否健康"""
-    if not self.initialized:
-      logger.warning("Kubernetes未初始化")
-      return False
+    def is_healthy(self) -> bool:
+        """检查Kubernetes连接是否健康"""
+        if not self.initialized:
+            logger.warning("Kubernetes未初始化")
+            return False
 
-    try:
-      # 尝试获取API版本并列出命名空间以确认连接
-      client.VersionApi().get_code()
-      self.core_v1.list_namespace(limit=1)
+        try:
+            # 尝试获取API版本并列出命名空间以确认连接
+            client.VersionApi().get_code()
+            self.core_v1.list_namespace(limit=1)
 
-      return True
-    except Exception as e:
-      logger.error(f"Kubernetes健康检查失败: {str(e)}")
-      self.initialized = False
-      return False
+            return True
+        except Exception as e:
+            logger.error(f"Kubernetes健康检查失败: {str(e)}")
+            self.initialized = False
+            return False
 
-  async def get_deployment_status(self, name: str, namespace: str = None) -> Optional[
-    Dict[str, Any]]:
-    """获取Deployment状态详情"""
-    if not self._ensure_initialized():
-      logger.warning("Kubernetes未初始化，无法获取Deployment状态")
-      return None
+    async def get_deployment_status(
+        self, name: str, namespace: str = None
+    ) -> Optional[Dict[str, Any]]:
+        """获取Deployment状态详情"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法获取Deployment状态")
+            return None
 
-    try:
-      deployment = await self.get_deployment(name, namespace)
-      if not deployment:
-        return None
+        try:
+            deployment = await self.get_deployment(name, namespace)
+            if not deployment:
+                return None
 
-      status = deployment.get('status', {})
-      spec = deployment.get('spec', {})
+            status = deployment.get("status", {})
+            spec = deployment.get("spec", {})
 
-      return {
-        'name': name,
-        'namespace': namespace or config.k8s.namespace,
-        'replicas': spec.get('replicas', 0),
-        'ready_replicas': status.get('ready_replicas', 0),
-        'available_replicas': status.get('available_replicas', 0),
-        'updated_replicas': status.get('updated_replicas', 0),
-        'conditions': status.get('conditions', []),
-        'strategy': spec.get('strategy', {}),
-        'creation_timestamp': deployment.get('metadata', {}).get('creation_timestamp')
-      }
+            return {
+                "name": name,
+                "namespace": namespace or config.k8s.namespace,
+                "replicas": spec.get("replicas", 0),
+                "ready_replicas": status.get("ready_replicas", 0),
+                "available_replicas": status.get("available_replicas", 0),
+                "updated_replicas": status.get("updated_replicas", 0),
+                "conditions": status.get("conditions", []),
+                "strategy": spec.get("strategy", {}),
+                "creation_timestamp": deployment.get("metadata", {}).get(
+                    "creation_timestamp"
+                ),
+            }
 
-    except Exception as e:
-      logger.error(f"获取Deployment状态失败: {str(e)}")
-      return None
+        except Exception as e:
+            logger.error(f"获取Deployment状态失败: {str(e)}")
+            return None
 
-  async def get_deployments(self, namespace: str = None) -> List[Dict]:
-    """获取所有Deployment列表"""
-    if not self._ensure_initialized():
-      logger.warning("Kubernetes未初始化，无法获取Deployment列表")
-      return []
+    async def get_deployments(self, namespace: str = None) -> List[Dict]:
+        """获取所有Deployment列表"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法获取Deployment列表")
+            return []
 
-    try:
-      namespace = namespace or config.k8s.namespace
-      deployments = self.apps_v1.list_namespaced_deployment(namespace=namespace)
+        try:
+            namespace = namespace or config.k8s.namespace
+            deployments = self.apps_v1.list_namespaced_deployment(namespace=namespace)
 
-      deployment_list = []
-      for deployment in deployments.items:
-        deployment_dict = deployment.to_dict()
-        # 清理不必要的字段
-        if 'metadata' in deployment_dict:
-          metadata = deployment_dict['metadata']
-          for key in ['managed_fields', 'resource_version', 'uid']:
-            metadata.pop(key, None)
-        deployment_list.append(deployment_dict)
+            deployment_list = []
+            for deployment in deployments.items:
+                deployment_dict = deployment.to_dict()
+                # 清理不必要的字段
+                if "metadata" in deployment_dict:
+                    metadata = deployment_dict["metadata"]
+                    for key in ["managed_fields", "resource_version", "uid"]:
+                        metadata.pop(key, None)
+                deployment_list.append(deployment_dict)
 
-      logger.info(f"获取到 {len(deployment_list)} 个Deployment")
-      return deployment_list
+            logger.info(f"获取到 {len(deployment_list)} 个Deployment")
+            return deployment_list
 
-    except ApiException as e:
-      logger.error(f"获取Deployment列表失败: {str(e)}")
-      return []
-    except Exception as e:
-      logger.error(f"获取Deployment列表异常: {str(e)}")
-      return []
+        except ApiException as e:
+            logger.error(f"获取Deployment列表失败: {str(e)}")
+            return []
+        except Exception as e:
+            logger.error(f"获取Deployment列表异常: {str(e)}")
+            return []
 
-  async def get_services(self, namespace: str = None) -> List[Dict]:
-    """获取所有Service列表"""
-    if not self._ensure_initialized():
-      logger.warning("Kubernetes未初始化，无法获取Service列表")
-      return []
+    async def get_services(self, namespace: str = None) -> List[Dict]:
+        """获取所有Service列表"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法获取Service列表")
+            return []
 
-    try:
-      namespace = namespace or config.k8s.namespace
-      services = self.core_v1.list_namespaced_service(namespace=namespace)
+        try:
+            namespace = namespace or config.k8s.namespace
+            services = self.core_v1.list_namespaced_service(namespace=namespace)
 
-      service_list = []
-      for service in services.items:
-        service_dict = service.to_dict()
-        # 清理不必要的字段
-        if 'metadata' in service_dict:
-          metadata = service_dict['metadata']
-          for key in ['managed_fields', 'resource_version', 'uid']:
-            metadata.pop(key, None)
-        service_list.append(service_dict)
+            service_list = []
+            for service in services.items:
+                service_dict = service.to_dict()
+                # 清理不必要的字段
+                if "metadata" in service_dict:
+                    metadata = service_dict["metadata"]
+                    for key in ["managed_fields", "resource_version", "uid"]:
+                        metadata.pop(key, None)
+                service_list.append(service_dict)
 
-      logger.info(f"获取到 {len(service_list)} 个Service")
-      return service_list
+            logger.info(f"获取到 {len(service_list)} 个Service")
+            return service_list
 
-    except ApiException as e:
-      logger.error(f"获取Service列表失败: {str(e)}")
-      return []
-    except Exception as e:
-      logger.error(f"获取Service列表异常: {str(e)}")
-      return []
+        except ApiException as e:
+            logger.error(f"获取Service列表失败: {str(e)}")
+            return []
+        except Exception as e:
+            logger.error(f"获取Service列表异常: {str(e)}")
+            return []
 
-  async def get_service(self, name: str, namespace: str = None) -> Optional[Dict]:
-    """获取单个Service"""
-    if not self._ensure_initialized():
-      logger.warning("Kubernetes未初始化，无法获取Service")
-      return None
+    async def get_service(self, name: str, namespace: str = None) -> Optional[Dict]:
+        """获取单个Service"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法获取Service")
+            return None
 
-    try:
-      namespace = namespace or config.k8s.namespace
-      service = self.core_v1.read_namespaced_service(name=name, namespace=namespace)
-      return service.to_dict()
+        try:
+            namespace = namespace or config.k8s.namespace
+            service = self.core_v1.read_namespaced_service(
+                name=name, namespace=namespace
+            )
+            return service.to_dict()
 
-    except ApiException as e:
-      if e.status != 404:
-        logger.error(f"获取Service失败: {str(e)}")
-      return None
-    except Exception as e:
-      logger.error(f"获取Service异常: {str(e)}")
-      return None
+        except ApiException as e:
+            if e.status != 404:
+                logger.error(f"获取Service失败: {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"获取Service异常: {str(e)}")
+            return None
 
-  async def get_nodes(self) -> List[Dict]:
-    """获取所有节点列表"""
-    if not self._ensure_initialized():
-      logger.warning("Kubernetes未初始化，无法获取节点列表")
-      return []
+    async def get_nodes(self) -> List[Dict]:
+        """获取所有节点列表"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法获取节点列表")
+            return []
 
-    try:
-      nodes = self.core_v1.list_node()
+        try:
+            nodes = self.core_v1.list_node()
 
-      node_list = []
-      for node in nodes.items:
-        node_dict = node.to_dict()
-        # 清理不必要的字段
-        if 'metadata' in node_dict:
-          metadata = node_dict['metadata']
-          for key in ['managed_fields', 'resource_version', 'uid']:
-            metadata.pop(key, None)
-        node_list.append(node_dict)
+            node_list = []
+            for node in nodes.items:
+                node_dict = node.to_dict()
+                # 清理不必要的字段
+                if "metadata" in node_dict:
+                    metadata = node_dict["metadata"]
+                    for key in ["managed_fields", "resource_version", "uid"]:
+                        metadata.pop(key, None)
+                node_list.append(node_dict)
 
-      logger.info(f"获取到 {len(node_list)} 个节点")
-      return node_list
+            logger.info(f"获取到 {len(node_list)} 个节点")
+            return node_list
 
-    except ApiException as e:
-      logger.error(f"获取节点列表失败: {str(e)}")
-      return []
-    except Exception as e:
-      logger.error(f"获取节点列表异常: {str(e)}")
-      return []
+        except ApiException as e:
+            logger.error(f"获取节点列表失败: {str(e)}")
+            return []
+        except Exception as e:
+            logger.error(f"获取节点列表异常: {str(e)}")
+            return []

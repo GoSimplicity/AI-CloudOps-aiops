@@ -10,7 +10,7 @@ Description: 根因分析API路由 - 提供异常检测、相关性分析和根�
 """
 
 from fastapi import APIRouter, HTTPException
-from datetime import datetime, timedelta
+from datetime import datetime
 import asyncio
 import logging
 from app.core.rca.analyzer import RCAAnalyzer
@@ -27,7 +27,8 @@ router = APIRouter(tags=["rca"])
 # 初始化分析器
 rca_analyzer = RCAAnalyzer()
 
-@router.post('/rca')
+
+@router.post("/rca")
 async def root_cause_analysis(request_data: RCARequest):
     """
     根因分析接口
@@ -38,20 +39,23 @@ async def root_cause_analysis(request_data: RCARequest):
             raise HTTPException(status_code=400, detail="无效的时间范围")
 
         # 检查时间范围限制
-        time_diff = (request_data.end_time - request_data.start_time).total_seconds() / 60
-        max_minutes = getattr(config, 'rca_max_time_range_minutes', 1440)  # 默认24小时
-        
+        time_diff = (
+            request_data.end_time - request_data.start_time
+        ).total_seconds() / 60
+        max_minutes = getattr(config, "rca_max_time_range_minutes", 1440)  # 默认24小时
+
         if time_diff > max_minutes:
             raise HTTPException(
-                status_code=400, 
-                detail=f"时间范围不能超过{max_minutes}分钟"
+                status_code=400, detail=f"时间范围不能超过{max_minutes}分钟"
             )
 
         # 验证指标列表
         if request_data.metrics and not validate_metric_list(request_data.metrics):
             raise HTTPException(status_code=400, detail="无效的指标列表")
 
-        logger.info(f"开始根因分析: {request_data.start_time} 到 {request_data.end_time}")
+        logger.info(
+            f"开始根因分析: {request_data.start_time} 到 {request_data.end_time}"
+        )
 
         # 调用根因分析服务
         try:
@@ -60,13 +64,13 @@ async def root_cause_analysis(request_data: RCARequest):
                 request_data.start_time,
                 request_data.end_time,
                 request_data.metrics,
-                request_data.threshold
+                request_data.threshold,
             )
         except Exception as analysis_error:
             logger.error(f"根因分析执行失败: {str(analysis_error)}")
             raise HTTPException(status_code=500, detail="根因分析执行失败")
 
-        return APIResponse(code=0, message="根因分析完成", data=analysis_result).dict()
+        return APIResponse(code=0, message="根因分析完成", data=analysis_result).model_dump()
 
     except HTTPException:
         raise
@@ -74,12 +78,13 @@ async def root_cause_analysis(request_data: RCARequest):
         logger.error(f"根因分析请求处理失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"根因分析失败: {str(e)}")
 
-@router.post('/rca/anomaly')
+
+@router.post("/rca/anomaly")
 async def detect_anomaly(
     start_time: datetime,
     end_time: datetime,
     metrics: Optional[list] = None,
-    sensitivity: Optional[float] = 0.8
+    sensitivity: Optional[float] = 0.8,
 ):
     """
     异常检测接口
@@ -97,11 +102,7 @@ async def detect_anomaly(
 
         # 调用异常检测服务
         anomalies = await asyncio.to_thread(
-            rca_analyzer.detect_anomalies,
-            start_time,
-            end_time,
-            metrics,
-            sensitivity
+            rca_analyzer.detect_anomalies, start_time, end_time, metrics, sensitivity
         )
 
         return APIResponse(
@@ -111,11 +112,11 @@ async def detect_anomaly(
                 "anomalies": anomalies,
                 "detection_period": {
                     "start": start_time.isoformat(),
-                    "end": end_time.isoformat()
+                    "end": end_time.isoformat(),
                 },
-                "sensitivity": sensitivity
-            }
-        ).dict()
+                "sensitivity": sensitivity,
+            },
+        ).model_dump()
 
     except HTTPException:
         raise
@@ -123,12 +124,13 @@ async def detect_anomaly(
         logger.error(f"异常检测失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"异常检测失败: {str(e)}")
 
-@router.post('/rca/correlation')
+
+@router.post("/rca/correlation")
 async def analyze_correlation(
     start_time: datetime,
     end_time: datetime,
     target_metric: str,
-    metrics: Optional[list] = None
+    metrics: Optional[list] = None,
 ):
     """
     相关性分析接口
@@ -150,7 +152,7 @@ async def analyze_correlation(
             start_time,
             end_time,
             target_metric,
-            metrics
+            metrics,
         )
 
         return APIResponse(
@@ -161,10 +163,10 @@ async def analyze_correlation(
                 "correlations": correlations,
                 "analysis_period": {
                     "start": start_time.isoformat(),
-                    "end": end_time.isoformat()
-                }
-            }
-        ).dict()
+                    "end": end_time.isoformat(),
+                },
+            },
+        ).model_dump()
 
     except HTTPException:
         raise
@@ -172,11 +174,10 @@ async def analyze_correlation(
         logger.error(f"相关性分析失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"相关性分析失败: {str(e)}")
 
-@router.post('/rca/timeline')
+
+@router.post("/rca/timeline")
 async def generate_timeline(
-    start_time: datetime,
-    end_time: datetime,
-    events: Optional[list] = None
+    start_time: datetime, end_time: datetime, events: Optional[list] = None
 ):
     """
     事件时间线生成接口
@@ -190,10 +191,7 @@ async def generate_timeline(
 
         # 调用时间线生成服务
         timeline = await asyncio.to_thread(
-            rca_analyzer.generate_timeline,
-            start_time,
-            end_time,
-            events
+            rca_analyzer.generate_timeline, start_time, end_time, events
         )
 
         return APIResponse(
@@ -203,10 +201,10 @@ async def generate_timeline(
                 "timeline": timeline,
                 "period": {
                     "start": start_time.isoformat(),
-                    "end": end_time.isoformat()
-                }
-            }
-        ).dict()
+                    "end": end_time.isoformat(),
+                },
+            },
+        ).model_dump()
 
     except HTTPException:
         raise
@@ -214,7 +212,8 @@ async def generate_timeline(
         logger.error(f"事件时间线生成失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"事件时间线生成失败: {str(e)}")
 
-@router.get('/rca/history')
+
+@router.get("/rca/history")
 async def get_analysis_history(limit: Optional[int] = 50):
     """
     获取分析历史记录接口
@@ -232,12 +231,8 @@ async def get_analysis_history(limit: Optional[int] = 50):
         return APIResponse(
             code=0,
             message="分析历史记录获取成功",
-            data={
-                "history": history,
-                "count": len(history),
-                "limit": limit
-            }
-        ).dict()
+            data={"history": history, "count": len(history), "limit": limit},
+        ).model_dump()
 
     except HTTPException:
         raise
@@ -245,7 +240,8 @@ async def get_analysis_history(limit: Optional[int] = 50):
         logger.error(f"获取分析历史记录失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取分析历史记录失败: {str(e)}")
 
-@router.get('/rca/health')
+
+@router.get("/rca/health")
 async def rca_health():
     """
     RCA服务健康检查接口
@@ -260,9 +256,9 @@ async def rca_health():
             data={
                 "healthy": health_status,
                 "timestamp": datetime.utcnow().isoformat(),
-                "service": "rca"
-            }
-        ).dict()
+                "service": "rca",
+            },
+        ).model_dump()
 
     except Exception as e:
         logger.error(f"RCA服务健康检查失败: {str(e)}")

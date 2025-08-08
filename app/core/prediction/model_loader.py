@@ -19,6 +19,7 @@ from app.config.settings import config
 
 logger = logging.getLogger("aiops.model_loader")
 
+
 class ModelLoader:
     def __init__(self):
         self.model = None
@@ -29,7 +30,11 @@ class ModelLoader:
     def load_models(self) -> bool:
         """加载预测模型和标准化器"""
         try:
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            base_dir = os.path.dirname(
+                os.path.dirname(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                )
+            )
             model_path = os.path.join(base_dir, config.prediction.model_path)
             scaler_path = os.path.join(base_dir, config.prediction.scaler_path)
 
@@ -64,11 +69,14 @@ class ModelLoader:
     def _load_model_metadata(self):
         """加载模型元数据"""
         try:
-            metadata_path = config.prediction.model_path.replace('.pkl', '_metadata.json')
+            metadata_path = config.prediction.model_path.replace(
+                ".pkl", "_metadata.json"
+            )
             metadata_path = os.path.abspath(metadata_path)
             if os.path.exists(metadata_path):
                 import json
-                with open(metadata_path, 'r') as f:
+
+                with open(metadata_path, "r") as f:
                     self.model_metadata = json.load(f)
                 logger.info("成功加载模型元数据")
             else:
@@ -78,7 +86,7 @@ class ModelLoader:
                     "created_at": datetime.now().isoformat(),
                     "features": ["QPS", "sin_time", "cos_time"],
                     "target": "instances",
-                    "algorithm": "unknown"
+                    "algorithm": "unknown",
                 }
                 logger.warning("未找到模型元数据，使用默认值")
         except Exception as e:
@@ -95,7 +103,7 @@ class ModelLoader:
             "loaded": self.is_model_loaded(),
             "metadata": self.model_metadata,
             "model_path": config.prediction.model_path,
-            "scaler_path": config.prediction.scaler_path
+            "scaler_path": config.prediction.scaler_path,
         }
 
     def validate_model(self) -> bool:
@@ -105,14 +113,10 @@ class ModelLoader:
 
         try:
             # 获取模型所需的特征列表
-            model_features = self.model_metadata.get('features', [])
+            model_features = self.model_metadata.get("features", [])
 
             # 创建测试数据 - 包含模型训练时使用的所有特征
-            test_features_dict = {
-                "QPS": [10.0],
-                "sin_time": [0.5],
-                "cos_time": [0.8]
-            }
+            test_features_dict = {"QPS": [10.0], "sin_time": [0.5], "cos_time": [0.8]}
 
             # 为新版本模型添加额外特征
             extra_features = {
@@ -125,7 +129,7 @@ class ModelLoader:
                 "QPS_1d_ago": [11.0],
                 "QPS_1w_ago": [10.5],
                 "QPS_change": [0.1],
-                "QPS_avg_6h": [9.8]
+                "QPS_avg_6h": [9.8],
             }
 
             # 根据模型所需特征添加额外特征
@@ -142,7 +146,9 @@ class ModelLoader:
             prediction = self.model.predict(scaled_features)
 
             # 验证预测结果
-            if len(prediction) != 1 or not isinstance(prediction[0], (int, float, np.integer, np.floating)):
+            if len(prediction) != 1 or not isinstance(
+                prediction[0], (int, float, np.integer, np.floating)
+            ):
                 logger.error("模型预测结果格式错误")
                 return False
 
@@ -167,9 +173,12 @@ class ModelLoader:
     def save_model_metadata(self, metadata: dict):
         """保存模型元数据"""
         try:
-            metadata_path = config.prediction.model_path.replace('.pkl', '_metadata.json')
+            metadata_path = config.prediction.model_path.replace(
+                ".pkl", "_metadata.json"
+            )
             import json
-            with open(metadata_path, 'w') as f:
+
+            with open(metadata_path, "w") as f:
                 json.dump(metadata, f, indent=2)
             logger.info("模型元数据保存成功")
         except Exception as e:

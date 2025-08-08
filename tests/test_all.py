@@ -9,7 +9,6 @@ License: Apache 2.0
 Description: AIOps平台全量测试脚本，运行所有测试模块
 """
 
-
 import sys
 import pytest
 import logging
@@ -17,10 +16,10 @@ from pathlib import Path
 
 # 配置日志
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("test_all")
+
 
 def run_all_tests():
     """运行所有测试模块"""
@@ -64,6 +63,7 @@ def run_all_tests():
 
     return all_passed
 
+
 if __name__ == "__main__":
     try:
         success = run_all_tests()
@@ -74,5 +74,6 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"测试过程出现未处理异常: {str(e)}")
         import traceback
+
         logger.error(traceback.format_exc())
         sys.exit(1)

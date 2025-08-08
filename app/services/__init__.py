@@ -15,4 +15,8 @@ except Exception:
     KubernetesService = None
 
 # 仅导出可用的服务，避免未使用导入
-__all__ = [name for name in ["KubernetesService"] if name != "KubernetesService" or KubernetesService is not None]
+__all__ = [
+    name
+    for name in ["KubernetesService"]
+    if name != "KubernetesService" or KubernetesService is not None
+]

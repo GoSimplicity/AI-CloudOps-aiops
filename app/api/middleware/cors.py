@@ -14,6 +14,7 @@ import logging
 
 logger = logging.getLogger("aiops.cors")
 
+
 def setup_cors(app):
     """设置CORS中间件"""
     try:
@@ -25,8 +26,8 @@ def setup_cors(app):
             allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
         )
-        
+
         logger.info("CORS中间件设置完成")
-        
+
     except Exception as e:
         logger.error(f"CORS中间件设置失败: {str(e)}")

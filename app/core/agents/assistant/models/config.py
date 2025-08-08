@@ -4,6 +4,7 @@
 """
 助手配置模块
 """
+
 from pathlib import Path
 from app.config.settings import config
 
@@ -22,26 +23,23 @@ class AssistantConfig:
 
         # Redis配置
         self.redis_config = {
-            'host': config.redis.host,
-            'port': config.redis.port,
-            'db': config.redis.db,
-            'password': config.redis.password,
-            'connection_timeout': config.redis.connection_timeout,
-            'socket_timeout': config.redis.socket_timeout,
-            'max_connections': config.redis.max_connections,
-            'decode_responses': config.redis.decode_responses
+            "host": config.redis.host,
+            "port": config.redis.port,
+            "db": config.redis.db,
+            "password": config.redis.password,
+            "connection_timeout": config.redis.connection_timeout,
+            "socket_timeout": config.redis.socket_timeout,
+            "max_connections": config.redis.max_connections,
+            "decode_responses": config.redis.decode_responses,
         }
 
         # 缓存配置
         self.cache_config = {
-            'redis_config': {
-                **self.redis_config,
-                'db': config.redis.db + 1
-            },
-            'cache_prefix': "aiops_assistant_cache:",
-            'default_ttl': 3600,
-            'max_cache_size': 1000,
-            'enable_compression': True
+            "redis_config": {**self.redis_config, "db": config.redis.db + 1},
+            "cache_prefix": "aiops_assistant_cache:",
+            "default_ttl": 3600,
+            "max_cache_size": 1000,
+            "enable_compression": True,
         }
 
     def ensure_directories(self):

@@ -9,7 +9,6 @@ License: Apache 2.0
 Description: 代码生成代理 - 自动生成运维问题修复脚本和配置文件
 """
 
-
 import logging
 import sys
 import io
@@ -24,18 +23,20 @@ from app.config.settings import config
 
 logger = logging.getLogger("aiops.coder")
 
+
 class CoderAgent:
     """Code generation agent for operations automation"""
+
     def __init__(self):
         self.llm = ChatOpenAI(
             model=config.llm.model,
             api_key=config.llm.api_key,
-            base_url=config.llm.base_url
+            base_url=config.llm.base_url,
         )
         self.python_tool = PythonAstREPLTool()
         self.execution_context = {}
         logger.info("Coder Agent initialized")
-    
+
     @tool
     async def analyze_metrics_data(self, metrics_data: str) -> str:
         """Analyze metrics data and provide insights"""
@@ -48,7 +49,7 @@ class CoderAgent:
                     return "无法解析指标数据，请提供有效的JSON格式数据"
             else:
                 data = metrics_data
-            
+
             # 执行数据分析
             analysis_code = f"""
 import pandas as pd
@@ -113,15 +114,15 @@ else:
 
 print(report)
 """
-            
+
             # 执行分析代码
             result = self._execute_python_code(analysis_code)
             return result
-            
+
         except Exception as e:
             logger.error(f"分析指标数据失败: {str(e)}")
             return f"分析失败: {str(e)}"
-    
+
     @tool
     async def calculate_correlation_insights(self, correlation_data: str) -> str:
         """计算相关性洞察"""
@@ -134,7 +135,7 @@ print(report)
                     return "无法解析相关性数据"
             else:
                 data = correlation_data
-            
+
             analysis_code = f"""
 import json
 import numpy as np
@@ -200,14 +201,14 @@ else:
 
 print(report)
 """
-            
+
             result = self._execute_python_code(analysis_code)
             return result
-            
+
         except Exception as e:
             logger.error(f"计算相关性洞察失败: {str(e)}")
             return f"计算失败: {str(e)}"
-    
+
     @tool
     async def generate_prediction_analysis(self, prediction_data: str) -> str:
         """生成预测分析报告"""
@@ -219,7 +220,7 @@ print(report)
                     return "无法解析预测数据"
             else:
                 data = prediction_data
-            
+
             analysis_code = f"""
 import json
 from datetime import datetime
@@ -296,59 +297,61 @@ else:
 
 print(report)
 """
-            
+
             result = self._execute_python_code(analysis_code)
             return result
-            
+
         except Exception as e:
             logger.error(f"生成预测分析失败: {str(e)}")
             return f"分析失败: {str(e)}"
-    
+
     def _execute_python_code(self, code: str) -> str:
         """安全执行Python代码"""
         try:
             # 捕获输出
             old_stdout = sys.stdout
             sys.stdout = captured_output = io.StringIO()
-            
+
             # 创建安全的执行环境
             safe_globals = {
-                '__builtins__': {
-                    'print': print,
-                    'len': len,
-                    'sum': sum,
-                    'max': max,
-                    'min': min,
-                    'abs': abs,
-                    'round': round,
-                    'enumerate': enumerate,
-                    'range': range,
-                    'isinstance': isinstance,
+                "__builtins__": {
+                    "print": print,
+                    "len": len,
+                    "sum": sum,
+                    "max": max,
+                    "min": min,
+                    "abs": abs,
+                    "round": round,
+                    "enumerate": enumerate,
+                    "range": range,
+                    "isinstance": isinstance,
                 },
-                'pd': pd,
-                'np': np,
-                'json': json,
-                'datetime': __import__('datetime')
+                "pd": pd,
+                "np": np,
+                "json": json,
+                "datetime": __import__("datetime"),
             }
-            
+
             # 执行代码
             exec(code, safe_globals)
-            
+
             # 恢复输出
             sys.stdout = old_stdout
-            
+
             # 获取结果
             output = captured_output.getvalue()
             return output if output else "代码执行完成，但无输出"
-            
+
         except Exception as e:
             # 恢复输出
             sys.stdout = old_stdout
             logger.error(f"Python代码执行失败: {str(e)}")
             return f"代码执行失败: {str(e)}"
-    
+
     @tool
-    async def create_data_visualization(self, data: str, chart_type: str = "summary") -> str:
+    async def create_data_visualization(
+        self, data: str, chart_type: str = "summary"
+    ) -> str:
         """创建数据可视化（文本版）"""
         try:
             # 由于无法生成真实图表，创建ASCII艺术风格的数据展示
@@ -359,7 +362,7 @@ print(report)
                     return "无法解析数据进行可视化"
             else:
                 parsed_data = data
-            
+
             visualization_code = f"""
 import json
 
@@ -413,20 +416,20 @@ else:
 
 print(chart)
 """
-            
+
             result = self._execute_python_code(visualization_code)
             return result
-            
+
         except Exception as e:
             logger.error(f"创建数据可视化失败: {str(e)}")
             return f"可视化失败: {str(e)}"
-    
+
     def get_available_tools(self) -> List[str]:
         """获取可用的编程工具"""
         return [
             "analyze_metrics_data",
-            "calculate_correlation_insights", 
+            "calculate_correlation_insights",
             "generate_prediction_analysis",
             "create_data_visualization",
-            "python_code_execution"
+            "python_code_execution",
         ]

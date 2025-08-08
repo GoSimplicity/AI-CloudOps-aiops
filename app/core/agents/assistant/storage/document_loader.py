@@ -24,9 +24,9 @@ class DocumentLoader:
 
         # 仅保留 txt 和 markdown
         self.supported_extensions = {
-            '.txt': self._load_text_file,
-            '.md': self._load_markdown_file,
-            '.markdown': self._load_markdown_file,
+            ".txt": self._load_text_file,
+            ".md": self._load_markdown_file,
+            ".markdown": self._load_markdown_file,
         }
 
     def load_documents(self) -> List[Document]:
@@ -46,7 +46,8 @@ class DocumentLoader:
 
         all_files = list(self.knowledge_base_path.rglob("*"))
         supported_files = [
-            f for f in all_files
+            f
+            for f in all_files
             if f.is_file() and f.suffix.lower() in self.supported_extensions
         ]
         supported_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
@@ -72,35 +73,39 @@ class DocumentLoader:
             if len(content) < 10:
                 continue
 
-            content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)
-            content = re.sub(r'[ \t]+', ' ', content)
+            content = re.sub(r"\n\s*\n\s*\n", "\n\n", content)
+            content = re.sub(r"[ \t]+", " ", content)
 
             doc.page_content = content
             if doc.metadata:
-                doc.metadata.update({
-                    'content_length': len(content),
-                    'word_count': len(content.split()),
-                    'line_count': len(content.splitlines())
-                })
+                doc.metadata.update(
+                    {
+                        "content_length": len(content),
+                        "word_count": len(content.split()),
+                        "line_count": len(content.splitlines()),
+                    }
+                )
             cleaned.append(doc)
         return cleaned
 
     def _load_text_file(self, file_path: Path) -> List[Document]:
         """加载纯文本文件"""
         try:
-            content = file_path.read_text(encoding='utf-8').strip()
+            content = file_path.read_text(encoding="utf-8").strip()
             if not content:
                 return []
-            return [Document(
-                page_content=content,
-                metadata={
-                    "source": str(file_path),
-                    "filename": file_path.name,
-                    "filetype": "text",
-                    "modified_time": file_path.stat().st_mtime,
-                    "file_size": file_path.stat().st_size
-                }
-            )]
+            return [
+                Document(
+                    page_content=content,
+                    metadata={
+                        "source": str(file_path),
+                        "filename": file_path.name,
+                        "filetype": "text",
+                        "modified_time": file_path.stat().st_mtime,
+                        "file_size": file_path.stat().st_size,
+                    },
+                )
+            ]
         except Exception as e:
             logger.error(f"加载文本文件失败 {file_path}: {e}")
             return []
@@ -108,13 +113,15 @@ class DocumentLoader:
     def _load_markdown_file(self, file_path: Path) -> List[Document]:
         """加载 Markdown 文件"""
         try:
-            content = file_path.read_text(encoding='utf-8').strip()
+            content = file_path.read_text(encoding="utf-8").strip()
             if not content:
                 return []
 
-            headers_to_split_on = [("#", "Header 1"),
-                                   ("##", "Header 2"),
-                                   ("###", "Header 3")]
+            headers_to_split_on = [
+                ("#", "Header 1"),
+                ("##", "Header 2"),
+                ("###", "Header 3"),
+            ]
 
             try:
                 md_docs = MarkdownHeaderTextSplitter(
@@ -122,26 +129,30 @@ class DocumentLoader:
                 ).split_text(content)
 
                 for doc in md_docs:
-                    doc.metadata.update({
-                        "source": str(file_path),
-                        "filename": file_path.name,
-                        "filetype": "markdown",
-                        "modified_time": file_path.stat().st_mtime,
-                        "file_size": file_path.stat().st_size
-                    })
+                    doc.metadata.update(
+                        {
+                            "source": str(file_path),
+                            "filename": file_path.name,
+                            "filetype": "markdown",
+                            "modified_time": file_path.stat().st_mtime,
+                            "file_size": file_path.stat().st_size,
+                        }
+                    )
                 return md_docs
             except Exception:
                 # 降级为单文档
-                return [Document(
-                    page_content=content,
-                    metadata={
-                        "source": str(file_path),
-                        "filename": file_path.name,
-                        "filetype": "markdown",
-                        "modified_time": file_path.stat().st_mtime,
-                        "file_size": file_path.stat().st_size
-                    }
-                )]
+                return [
+                    Document(
+                        page_content=content,
+                        metadata={
+                            "source": str(file_path),
+                            "filename": file_path.name,
+                            "filetype": "markdown",
+                            "modified_time": file_path.stat().st_mtime,
+                            "file_size": file_path.stat().st_size,
+                        },
+                    )
+                ]
         except Exception as e:
             logger.error(f"加载 Markdown 文件失败 {file_path}: {e}")
             return []

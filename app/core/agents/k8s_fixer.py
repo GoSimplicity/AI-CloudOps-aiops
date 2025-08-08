@@ -16,14 +16,14 @@ from typing import Dict, Any, List
 from app.services.kubernetes import KubernetesService
 from app.services.llm import LLMService
 from app.config.settings import config
+from app.core.agents.k8s_fixer_enhanced import EnhancedK8sFixerAgent
 
 logger = logging.getLogger("aiops.k8s_fixer")
 
-# 导入增强版修复代理
-from app.core.agents.k8s_fixer_enhanced import EnhancedK8sFixerAgent
 
 class K8sFixerAgent:
     """Kubernetes fixer agent for cluster issue diagnosis and automatic repair"""
+
     def __init__(self):
         self.k8s_service = KubernetesService()
         self.llm_service = LLMService()
@@ -39,12 +39,18 @@ class K8sFixerAgent:
             if is_healthy:
                 logger.info("LLM服务连接正常，K8s修复Agent准备就绪")
                 # 输出当前激活的模型配置
-                logger.info(f"当前激活的LLM配置: provider={config.llm.provider}, model={config.llm.effective_model}")
+                logger.info(
+                    f"当前激活的LLM配置: provider={config.llm.provider}, model={config.llm.effective_model}"
+                )
             else:
                 logger.warning("LLM服务连接异常，K8s修复Agent将尝试使用备用LLM服务")
                 # 尝试输出当前的LLM配置信息用于诊断
-                logger.info(f"主要LLM配置: provider={config.llm.provider}, model={config.llm.effective_model}, base_url={config.llm.effective_base_url}")
-                logger.info(f"备用LLM配置: provider={'ollama' if config.llm.provider.lower() == 'openai' else 'openai'}, model={config.llm.ollama_model if config.llm.provider.lower() == 'openai' else config.llm.model}")
+                logger.info(
+                    f"主要LLM配置: provider={config.llm.provider}, model={config.llm.effective_model}, base_url={config.llm.effective_base_url}"
+                )
+                logger.info(
+                    f"备用LLM配置: provider={'ollama' if config.llm.provider.lower() == 'openai' else 'openai'}, model={config.llm.ollama_model if config.llm.provider.lower() == 'openai' else config.llm.model}"
+                )
 
                 # 尝试故障切换检查 - 检查主模型和备用模型的可用性
                 self._test_model_failover()
@@ -66,10 +72,12 @@ class K8sFixerAgent:
                     response = requests.get(
                         f"{config.llm.base_url.rstrip('/')}/models",
                         headers=headers,
-                        timeout=3
+                        timeout=3,
                     )
                     primary_healthy = response.status_code < 400
-                    logger.info(f"主要OpenAI模型服务状态: {'可用' if primary_healthy else '不可用'}")
+                    logger.info(
+                        f"主要OpenAI模型服务状态: {'可用' if primary_healthy else '不可用'}"
+                    )
                 except Exception as e:
                     logger.warning(f"无法连接到OpenAI API: {str(e)}")
 
@@ -78,7 +86,9 @@ class K8sFixerAgent:
                     ollama_host = config.llm.ollama_base_url.replace("/v1", "")
                     response = requests.get(f"{ollama_host}/api/tags", timeout=3)
                     backup_healthy = response.status_code == 200
-                    logger.info(f"备用Ollama模型服务状态: {'可用' if backup_healthy else '不可用'}")
+                    logger.info(
+                        f"备用Ollama模型服务状态: {'可用' if backup_healthy else '不可用'}"
+                    )
                 except Exception as e:
                     logger.warning(f"无法连接到Ollama API: {str(e)}")
             else:
@@ -87,7 +97,9 @@ class K8sFixerAgent:
                     ollama_host = config.llm.ollama_base_url.replace("/v1", "")
                     response = requests.get(f"{ollama_host}/api/tags", timeout=3)
                     primary_healthy = response.status_code == 200
-                    logger.info(f"主要Ollama模型服务状态: {'可用' if primary_healthy else '不可用'}")
+                    logger.info(
+                        f"主要Ollama模型服务状态: {'可用' if primary_healthy else '不可用'}"
+                    )
                 except Exception as e:
                     logger.warning(f"无法连接到Ollama API: {str(e)}")
 
@@ -97,10 +109,12 @@ class K8sFixerAgent:
                     response = requests.get(
                         f"{config.llm.base_url.rstrip('/')}/models",
                         headers=headers,
-                        timeout=3
+                        timeout=3,
                     )
                     backup_healthy = response.status_code < 400
-                    logger.info(f"备用OpenAI模型服务状态: {'可用' if backup_healthy else '不可用'}")
+                    logger.info(
+                        f"备用OpenAI模型服务状态: {'可用' if backup_healthy else '不可用'}"
+                    )
                 except Exception as e:
                     logger.warning(f"无法连接到OpenAI API: {str(e)}")
 
@@ -116,14 +130,13 @@ class K8sFixerAgent:
             logger.error(f"模型故障切换测试失败: {str(e)}")
 
     async def analyze_and_fix_deployment(
-        self,
-        deployment_name: str,
-        namespace: str,
-        error_description: str
+        self, deployment_name: str, namespace: str, error_description: str
     ) -> str:
         """使用增强版代理分析并修复Kubernetes Deployment问题"""
         try:
-            logger.info(f"使用增强版代理开始分析和修复Deployment: {deployment_name}/{namespace}")
+            logger.info(
+                f"使用增强版代理开始分析和修复Deployment: {deployment_name}/{namespace}"
+            )
 
             # 创建增强版修复代理实例
             enhanced_agent = EnhancedK8sFixerAgent()
@@ -153,7 +166,7 @@ class K8sFixerAgent:
             "deploy/kubernetes/config",
             "../deploy/kubernetes/config",
             "config",
-            os.path.expanduser("~/.kube/config")
+            os.path.expanduser("~/.kube/config"),
         ]
 
         working_path = None
@@ -182,17 +195,17 @@ class K8sFixerAgent:
         self,
         deployment: Dict[str, Any],
         context: Dict[str, Any],
-        force_fix: bool = False
+        force_fix: bool = False,
     ) -> Dict[str, Any]:
         """识别并修复常见的Kubernetes问题"""
         try:
-            deployment_name = deployment.get('metadata', {}).get('name', 'unknown')
-            namespace = deployment.get('metadata', {}).get('namespace', 'default')
-            pod_template = deployment.get('spec', {}).get('template', {})
-            containers = pod_template.get('spec', {}).get('containers', [])
+            deployment_name = deployment.get("metadata", {}).get("name", "unknown")
+            namespace = deployment.get("metadata", {}).get("namespace", "default")
+            pod_template = deployment.get("spec", {}).get("template", {})
+            containers = pod_template.get("spec", {}).get("containers", [])
 
             if not containers:
-                return {'fixed': False, 'message': '无法找到容器配置'}
+                return {"fixed": False, "message": "无法找到容器配置"}
 
             main_container = containers[0]
             issues_found = []
@@ -200,22 +213,28 @@ class K8sFixerAgent:
             patch = {"spec": {"template": {"spec": {"containers": [{}]}}}}
             container_patch = patch["spec"]["template"]["spec"]["containers"][0]
             need_to_patch = False
-            is_nginx = deployment_name.lower().startswith("nginx") or "nginx" in main_container.get('image', '').lower()
+            is_nginx = (
+                deployment_name.lower().startswith("nginx")
+                or "nginx" in main_container.get("image", "").lower()
+            )
 
             # 如果是Nginx，添加容器名称
             if is_nginx:
-                container_patch['name'] = main_container.get('name', 'nginx')
+                container_patch["name"] = main_container.get("name", "nginx")
 
             # 检查是否存在CrashLoopBackOff问题
             pod_issues = []
-            for pod in context.get('pods', []):
-                status = pod.get('status', {})
-                container_statuses = status.get('container_statuses', [])
+            for pod in context.get("pods", []):
+                status = pod.get("status", {})
+                container_statuses = status.get("container_statuses", [])
                 for c_status in container_statuses:
-                    if c_status.get('state', {}).get('waiting', {}).get('reason') == 'CrashLoopBackOff':
-                        pod_issues.append('CrashLoopBackOff')
-                if status.get('phase') != 'Running' or not self._is_pod_ready(status):
-                    pod_issues.append('NotReady')
+                    if (
+                        c_status.get("state", {}).get("waiting", {}).get("reason")
+                        == "CrashLoopBackOff"
+                    ):
+                        pod_issues.append("CrashLoopBackOff")
+                if status.get("phase") != "Running" or not self._is_pod_ready(status):
+                    pod_issues.append("NotReady")
 
             # 特殊处理 nginx-problematic 部署
             if deployment_name == "nginx-problematic":
@@ -226,75 +245,83 @@ class K8sFixerAgent:
                 fixes_applied = []
 
                 # 检查资源请求和限制
-                if 'resources' in main_container:
-                    resources = main_container['resources']
-                    if 'requests' in resources and 'memory' in resources['requests']:
-                        memory_request = resources['requests']['memory']
-                        if memory_request.endswith('Mi'):
+                if "resources" in main_container:
+                    resources = main_container["resources"]
+                    if "requests" in resources and "memory" in resources["requests"]:
+                        memory_request = resources["requests"]["memory"]
+                        if memory_request.endswith("Mi"):
                             memory_value = int(memory_request[:-2])
                             if memory_value > 256:
                                 issues_found.append(f"内存请求({memory_request})过高")
-                                if 'resources' not in container_patch:
-                                    container_patch['resources'] = {}
-                                if 'requests' not in container_patch['resources']:
-                                    container_patch['resources']['requests'] = {}
-                                container_patch['resources']['requests']['memory'] = "128Mi"
-                                fixes_applied.append(f"将内存请求从{memory_request}降低到128Mi")
+                                if "resources" not in container_patch:
+                                    container_patch["resources"] = {}
+                                if "requests" not in container_patch["resources"]:
+                                    container_patch["resources"]["requests"] = {}
+                                container_patch["resources"]["requests"]["memory"] = (
+                                    "128Mi"
+                                )
+                                fixes_applied.append(
+                                    f"将内存请求从{memory_request}降低到128Mi"
+                                )
                                 need_to_patch = True
 
-                    if 'requests' in resources and 'cpu' in resources['requests']:
-                        cpu_request = resources['requests']['cpu']
-                        if cpu_request.endswith('m'):
+                    if "requests" in resources and "cpu" in resources["requests"]:
+                        cpu_request = resources["requests"]["cpu"]
+                        if cpu_request.endswith("m"):
                             cpu_value = int(cpu_request[:-1])
                             if cpu_value > 300:
                                 issues_found.append(f"CPU请求({cpu_request})过高")
-                                if 'resources' not in container_patch:
-                                    container_patch['resources'] = {}
-                                if 'requests' not in container_patch['resources']:
-                                    container_patch['resources']['requests'] = {}
-                                container_patch['resources']['requests']['cpu'] = "200m"
-                                fixes_applied.append(f"将CPU请求从{cpu_request}降低到200m")
+                                if "resources" not in container_patch:
+                                    container_patch["resources"] = {}
+                                if "requests" not in container_patch["resources"]:
+                                    container_patch["resources"]["requests"] = {}
+                                container_patch["resources"]["requests"]["cpu"] = "200m"
+                                fixes_applied.append(
+                                    f"将CPU请求从{cpu_request}降低到200m"
+                                )
                                 need_to_patch = True
 
                 # 检查ReadinessProbe
-                if 'readinessProbe' in main_container:
-                    readiness_probe = main_container['readinessProbe']
+                if "readinessProbe" in main_container:
+                    readiness_probe = main_container["readinessProbe"]
 
                     # 检查HTTP探针路径
-                    if 'httpGet' in readiness_probe:
-                        path = readiness_probe.get('httpGet', {}).get('path')
-                        if path == '/health':
+                    if "httpGet" in readiness_probe:
+                        path = readiness_probe.get("httpGet", {}).get("path")
+                        if path == "/health":
                             issues_found.append("Nginx ReadinessProbe的HTTP路径不正确")
-                            if 'readinessProbe' not in container_patch:
-                                container_patch['readinessProbe'] = {}
-                            if 'httpGet' not in container_patch['readinessProbe']:
-                                container_patch['readinessProbe']['httpGet'] = {}
-                            container_patch['readinessProbe']['httpGet']['path'] = '/'
-                            fixes_applied.append("将Nginx ReadinessProbe的HTTP路径修改为'/'")
+                            if "readinessProbe" not in container_patch:
+                                container_patch["readinessProbe"] = {}
+                            if "httpGet" not in container_patch["readinessProbe"]:
+                                container_patch["readinessProbe"]["httpGet"] = {}
+                            container_patch["readinessProbe"]["httpGet"]["path"] = "/"
+                            fixes_applied.append(
+                                "将Nginx ReadinessProbe的HTTP路径修改为'/'"
+                            )
                             need_to_patch = True
 
                     # 检查探针频率
-                    if readiness_probe.get('periodSeconds', 10) < 5:
+                    if readiness_probe.get("periodSeconds", 10) < 5:
                         issues_found.append("ReadinessProbe探针频率过高")
-                        if 'readinessProbe' not in container_patch:
-                            container_patch['readinessProbe'] = {}
-                        container_patch['readinessProbe']['periodSeconds'] = 10
+                        if "readinessProbe" not in container_patch:
+                            container_patch["readinessProbe"] = {}
+                        container_patch["readinessProbe"]["periodSeconds"] = 10
                         fixes_applied.append("将ReadinessProbe周期调整为10秒")
                         need_to_patch = True
 
                     # 检查失败阈值
-                    if readiness_probe.get('failureThreshold', 3) < 2:
+                    if readiness_probe.get("failureThreshold", 3) < 2:
                         issues_found.append("ReadinessProbe失败阈值过低")
-                        if 'readinessProbe' not in container_patch:
-                            container_patch['readinessProbe'] = {}
-                        container_patch['readinessProbe']['failureThreshold'] = 3
+                        if "readinessProbe" not in container_patch:
+                            container_patch["readinessProbe"] = {}
+                        container_patch["readinessProbe"]["failureThreshold"] = 3
                         fixes_applied.append("将ReadinessProbe失败阈值调整为3")
                         need_to_patch = True
 
                 # 应用修复
                 if need_to_patch:
                     # 确保container_patch中包含name字段
-                    container_patch['name'] = main_container.get('name', 'nginx')
+                    container_patch["name"] = main_container.get("name", "nginx")
 
                     # 应用修补
                     patch_result = await self.k8s_service.patch_deployment(
@@ -305,97 +332,102 @@ class K8sFixerAgent:
                         logger.info(f"成功应用修复补丁: {deployment_name}")
                         message = f"""
 自动修复 {deployment_name} 完成:
-- 发现的问题：{', '.join(issues_found)}
-- 执行的操作：{', '.join(fixes_applied)}
+- 发现的问题：{", ".join(issues_found)}
+- 执行的操作：{", ".join(fixes_applied)}
                         """
-                        return {'fixed': True, 'message': message}
+                        return {"fixed": True, "message": message}
                     else:
                         logger.error(f"应用修复补丁失败: {deployment_name}")
-                        return {'fixed': False, 'message': f"尝试修复{deployment_name}失败，无法应用修补"}
+                        return {
+                            "fixed": False,
+                            "message": f"尝试修复{deployment_name}失败，无法应用修补",
+                        }
                 else:
                     logger.info(f"无需修补: {deployment_name}")
-                    return {'fixed': False, 'message': f"检查了{deployment_name}，但没有发现需要修复的问题"}
+                    return {
+                        "fixed": False,
+                        "message": f"检查了{deployment_name}，但没有发现需要修复的问题",
+                    }
 
             # 检查CrashLoopBackOff问题
-            if 'CrashLoopBackOff' in pod_issues:
+            if "CrashLoopBackOff" in pod_issues:
                 # 情况1：有livenessProbe但没有readinessProbe
-                if 'livenessProbe' in main_container and 'readinessProbe' not in main_container:
+                if (
+                    "livenessProbe" in main_container
+                    and "readinessProbe" not in main_container
+                ):
                     # 可能是缺少readinessProbe导致的问题，添加默认的readinessProbe
                     issues_found.append("缺少ReadinessProbe")
-                    container_patch['readinessProbe'] = {
-                        'httpGet': {
-                            'path': '/',
-                            'port': 80
-                        },
-                        'initialDelaySeconds': 5,
-                        'periodSeconds': 10,
-                        'failureThreshold': 3
+                    container_patch["readinessProbe"] = {
+                        "httpGet": {"path": "/", "port": 80},
+                        "initialDelaySeconds": 5,
+                        "periodSeconds": 10,
+                        "failureThreshold": 3,
                     }
                     fixes_applied.append("添加默认的Nginx ReadinessProbe")
                     need_to_patch = True
 
                 # 情况2：有livenessProbe配置问题，无论是否有readinessProbe
-                if 'livenessProbe' in main_container:
-                    liveness_probe = main_container['livenessProbe']
+                if "livenessProbe" in main_container:
+                    liveness_probe = main_container["livenessProbe"]
                     liveness_issues = []
 
                     # 检查HTTP探针路径
-                    if 'httpGet' in liveness_probe:
-                        path = liveness_probe.get('httpGet', {}).get('path')
-                        if path != '/' and is_nginx:
+                    if "httpGet" in liveness_probe:
+                        path = liveness_probe.get("httpGet", {}).get("path")
+                        if path != "/" and is_nginx:
                             liveness_issues.append("路径错误")
-                            if 'livenessProbe' not in container_patch:
-                                container_patch['livenessProbe'] = {}
-                            if 'httpGet' not in container_patch['livenessProbe']:
-                                container_patch['livenessProbe']['httpGet'] = {}
-                            container_patch['livenessProbe']['httpGet']['path'] = '/'
+                            if "livenessProbe" not in container_patch:
+                                container_patch["livenessProbe"] = {}
+                            if "httpGet" not in container_patch["livenessProbe"]:
+                                container_patch["livenessProbe"]["httpGet"] = {}
+                            container_patch["livenessProbe"]["httpGet"]["path"] = "/"
                             fixes_applied.append("修复livenessProbe路径为/")
                             need_to_patch = True
 
                     # 检查探针频率
-                    if liveness_probe.get('periodSeconds', 10) < 5:
+                    if liveness_probe.get("periodSeconds", 10) < 5:
                         liveness_issues.append("探针频率过高")
-                        if 'livenessProbe' not in container_patch:
-                            container_patch['livenessProbe'] = {}
-                        container_patch['livenessProbe']['periodSeconds'] = 10
+                        if "livenessProbe" not in container_patch:
+                            container_patch["livenessProbe"] = {}
+                        container_patch["livenessProbe"]["periodSeconds"] = 10
                         fixes_applied.append("调整livenessProbe周期为10秒")
                         need_to_patch = True
 
                     # 检查失败阈值
-                    if liveness_probe.get('failureThreshold', 3) < 2:
+                    if liveness_probe.get("failureThreshold", 3) < 2:
                         liveness_issues.append("失败阈值过低")
-                        if 'livenessProbe' not in container_patch:
-                            container_patch['livenessProbe'] = {}
-                        container_patch['livenessProbe']['failureThreshold'] = 3
+                        if "livenessProbe" not in container_patch:
+                            container_patch["livenessProbe"] = {}
+                        container_patch["livenessProbe"]["failureThreshold"] = 3
                         fixes_applied.append("调整livenessProbe失败阈值为3")
                         need_to_patch = True
 
                     # 检查初始延迟
-                    if liveness_probe.get('initialDelaySeconds', 10) < 5:
+                    if liveness_probe.get("initialDelaySeconds", 10) < 5:
                         liveness_issues.append("初始延迟过短")
-                        if 'livenessProbe' not in container_patch:
-                            container_patch['livenessProbe'] = {}
-                        container_patch['livenessProbe']['initialDelaySeconds'] = 10
+                        if "livenessProbe" not in container_patch:
+                            container_patch["livenessProbe"] = {}
+                        container_patch["livenessProbe"]["initialDelaySeconds"] = 10
                         fixes_applied.append("调整livenessProbe初始延迟为10秒")
                         need_to_patch = True
 
                     if liveness_issues:
-                        issues_found.append(f"LivenessProbe配置问题: {', '.join(liveness_issues)}")
+                        issues_found.append(
+                            f"LivenessProbe配置问题: {', '.join(liveness_issues)}"
+                        )
                         logger.info(f"检测到LivenessProbe问题: {liveness_issues}")
 
                 # 情况3：强制修复模式下的通用处理
                 if force_fix and is_nginx:
                     # 确保livenessProbe配置正确
-                    if 'livenessProbe' not in container_patch:
-                        container_patch['livenessProbe'] = {}
-                    container_patch['livenessProbe'] = {
-                        'httpGet': {
-                            'path': '/',
-                            'port': 80
-                        },
-                        'initialDelaySeconds': 10,
-                        'periodSeconds': 10,
-                        'failureThreshold': 3
+                    if "livenessProbe" not in container_patch:
+                        container_patch["livenessProbe"] = {}
+                    container_patch["livenessProbe"] = {
+                        "httpGet": {"path": "/", "port": 80},
+                        "initialDelaySeconds": 10,
+                        "periodSeconds": 10,
+                        "failureThreshold": 3,
                     }
                     if "LivenessProbe配置问题" not in issues_found:
                         issues_found.append("LivenessProbe配置问题")
@@ -403,162 +435,168 @@ class K8sFixerAgent:
                     need_to_patch = True
 
             # 检查ReadinessProbe
-            if 'readinessProbe' in main_container:
-                probe = main_container['readinessProbe']
+            if "readinessProbe" in main_container:
+                probe = main_container["readinessProbe"]
 
                 # 检查失败阈值过低
-                if probe.get('failureThreshold', 3) < 2:
+                if probe.get("failureThreshold", 3) < 2:
                     issues_found.append("ReadinessProbe失败阈值过低")
-                    if 'readinessProbe' not in container_patch:
-                        container_patch['readinessProbe'] = {}
-                    container_patch['readinessProbe']['failureThreshold'] = 3
+                    if "readinessProbe" not in container_patch:
+                        container_patch["readinessProbe"] = {}
+                    container_patch["readinessProbe"]["failureThreshold"] = 3
                     fixes_applied.append("将ReadinessProbe失败阈值调整为3")
                     need_to_patch = True
 
                 # 检查探针频率过高
-                if probe.get('periodSeconds', 10) < 5:
+                if probe.get("periodSeconds", 10) < 5:
                     issues_found.append("ReadinessProbe探针频率过高")
-                    if 'readinessProbe' not in container_patch:
-                        container_patch['readinessProbe'] = {}
-                    container_patch['readinessProbe']['periodSeconds'] = 10
+                    if "readinessProbe" not in container_patch:
+                        container_patch["readinessProbe"] = {}
+                    container_patch["readinessProbe"]["periodSeconds"] = 10
                     fixes_applied.append("将ReadinessProbe周期调整为10秒")
                     need_to_patch = True
 
                 # 检查初始延迟
-                if probe.get('initialDelaySeconds', 5) < 5:
+                if probe.get("initialDelaySeconds", 5) < 5:
                     issues_found.append("ReadinessProbe初始延迟过短")
-                    if 'readinessProbe' not in container_patch:
-                        container_patch['readinessProbe'] = {}
-                    container_patch['readinessProbe']['initialDelaySeconds'] = 5
+                    if "readinessProbe" not in container_patch:
+                        container_patch["readinessProbe"] = {}
+                    container_patch["readinessProbe"]["initialDelaySeconds"] = 5
                     fixes_applied.append("将ReadinessProbe初始延迟调整为5秒")
                     need_to_patch = True
 
                 # 检查HTTP探针路径
-                if 'httpGet' in probe:
-                    path = probe.get('httpGet', {}).get('path')
-                    if path == '/health' and is_nginx:
+                if "httpGet" in probe:
+                    path = probe.get("httpGet", {}).get("path")
+                    if path == "/health" and is_nginx:
                         # Nginx默认页面是/，/health需要额外配置
                         issues_found.append("Nginx ReadinessProbe的HTTP路径不正确")
-                        if 'readinessProbe' not in container_patch:
-                            container_patch['readinessProbe'] = {}
-                        if 'httpGet' not in container_patch['readinessProbe']:
-                            container_patch['readinessProbe']['httpGet'] = {}
-                        container_patch['readinessProbe']['httpGet']['path'] = '/'
-                        fixes_applied.append("将Nginx ReadinessProbe的HTTP路径修改为'/'")
+                        if "readinessProbe" not in container_patch:
+                            container_patch["readinessProbe"] = {}
+                        if "httpGet" not in container_patch["readinessProbe"]:
+                            container_patch["readinessProbe"]["httpGet"] = {}
+                        container_patch["readinessProbe"]["httpGet"]["path"] = "/"
+                        fixes_applied.append(
+                            "将Nginx ReadinessProbe的HTTP路径修改为'/'"
+                        )
                         need_to_patch = True
 
             # 检查LivenessProbe
-            if 'livenessProbe' in main_container:
-                probe = main_container['livenessProbe']
+            if "livenessProbe" in main_container:
+                probe = main_container["livenessProbe"]
 
                 # 检查失败阈值过低
-                if probe.get('failureThreshold', 3) < 2:
+                if probe.get("failureThreshold", 3) < 2:
                     issues_found.append("LivenessProbe失败阈值过低")
-                    if 'livenessProbe' not in container_patch:
-                        container_patch['livenessProbe'] = {}
-                    container_patch['livenessProbe']['failureThreshold'] = 3
+                    if "livenessProbe" not in container_patch:
+                        container_patch["livenessProbe"] = {}
+                    container_patch["livenessProbe"]["failureThreshold"] = 3
                     fixes_applied.append("将LivenessProbe失败阈值调整为3")
                     need_to_patch = True
 
                 # 检查探针频率过高
-                if probe.get('periodSeconds', 10) < 5:
+                if probe.get("periodSeconds", 10) < 5:
                     issues_found.append("LivenessProbe探针频率过高")
-                    if 'livenessProbe' not in container_patch:
-                        container_patch['livenessProbe'] = {}
-                    container_patch['livenessProbe']['periodSeconds'] = 10
+                    if "livenessProbe" not in container_patch:
+                        container_patch["livenessProbe"] = {}
+                    container_patch["livenessProbe"]["periodSeconds"] = 10
                     fixes_applied.append("将LivenessProbe周期调整为10秒")
                     need_to_patch = True
 
                 # 检查初始延迟
-                if probe.get('initialDelaySeconds', 10) < 5:
+                if probe.get("initialDelaySeconds", 10) < 5:
                     issues_found.append("LivenessProbe初始延迟过短")
-                    if 'livenessProbe' not in container_patch:
-                        container_patch['livenessProbe'] = {}
-                    container_patch['livenessProbe']['initialDelaySeconds'] = 10
+                    if "livenessProbe" not in container_patch:
+                        container_patch["livenessProbe"] = {}
+                    container_patch["livenessProbe"]["initialDelaySeconds"] = 10
                     fixes_applied.append("将LivenessProbe初始延迟调整为10秒")
                     need_to_patch = True
 
                 # 检查HTTP探针路径
-                if 'httpGet' in probe:
-                    path = probe.get('httpGet', {}).get('path')
-                    if (path == '/nonexistent' or path == '/health' or path == '/healthz') and is_nginx:
+                if "httpGet" in probe:
+                    path = probe.get("httpGet", {}).get("path")
+                    if (
+                        path == "/nonexistent"
+                        or path == "/health"
+                        or path == "/healthz"
+                    ) and is_nginx:
                         # Nginx默认页面是/，其他路径需要额外配置
                         issues_found.append("Nginx LivenessProbe的HTTP路径不正确")
-                        if 'livenessProbe' not in container_patch:
-                            container_patch['livenessProbe'] = {}
-                        if 'httpGet' not in container_patch['livenessProbe']:
-                            container_patch['livenessProbe']['httpGet'] = {}
-                        container_patch['livenessProbe']['httpGet']['path'] = '/'
+                        if "livenessProbe" not in container_patch:
+                            container_patch["livenessProbe"] = {}
+                        if "httpGet" not in container_patch["livenessProbe"]:
+                            container_patch["livenessProbe"]["httpGet"] = {}
+                        container_patch["livenessProbe"]["httpGet"]["path"] = "/"
                         fixes_applied.append("将LivenessProbe路径调整为/")
                         need_to_patch = True
-            elif is_nginx and (force_fix or 'NotReady' in pod_issues):
+            elif is_nginx and (force_fix or "NotReady" in pod_issues):
                 # 如果是Nginx但没有LivenessProbe，添加一个
-                container_patch['livenessProbe'] = {
-                    'httpGet': {
-                        'path': '/',
-                        'port': 80
-                    },
-                    'initialDelaySeconds': 10,
-                    'periodSeconds': 10,
-                    'failureThreshold': 3
+                container_patch["livenessProbe"] = {
+                    "httpGet": {"path": "/", "port": 80},
+                    "initialDelaySeconds": 10,
+                    "periodSeconds": 10,
+                    "failureThreshold": 3,
                 }
                 fixes_applied.append("添加默认的Nginx LivenessProbe")
                 need_to_patch = True
                 issues_found.append("缺少LivenessProbe")
 
             # 如果是Nginx但没有ReadinessProbe，添加一个
-            if is_nginx and 'readinessProbe' not in main_container and (force_fix or 'NotReady' in pod_issues):
-                container_patch['readinessProbe'] = {
-                    'httpGet': {
-                        'path': '/',
-                        'port': 80
-                    },
-                    'initialDelaySeconds': 5,
-                    'periodSeconds': 10,
-                    'failureThreshold': 3
+            if (
+                is_nginx
+                and "readinessProbe" not in main_container
+                and (force_fix or "NotReady" in pod_issues)
+            ):
+                container_patch["readinessProbe"] = {
+                    "httpGet": {"path": "/", "port": 80},
+                    "initialDelaySeconds": 5,
+                    "periodSeconds": 10,
+                    "failureThreshold": 3,
                 }
                 fixes_applied.append("添加默认的Nginx ReadinessProbe")
                 need_to_patch = True
                 issues_found.append("缺少ReadinessProbe")
 
             # 检查资源请求和限制
-            if 'resources' in main_container:
-                resources = main_container['resources']
+            if "resources" in main_container:
+                resources = main_container["resources"]
 
                 # 检查内存请求
-                if 'requests' in resources and 'memory' in resources['requests']:
-                    memory_request = resources['requests']['memory']
-                    if memory_request.endswith('Mi'):
+                if "requests" in resources and "memory" in resources["requests"]:
+                    memory_request = resources["requests"]["memory"]
+                    if memory_request.endswith("Mi"):
                         memory_value = int(memory_request[:-2])
                         if memory_value > 256:  # 假设超过256Mi就认为可能过高
                             issues_found.append(f"内存请求({memory_request})过高")
-                            if 'resources' not in container_patch:
-                                container_patch['resources'] = {}
-                            if 'requests' not in container_patch['resources']:
-                                container_patch['resources']['requests'] = {}
-                            container_patch['resources']['requests']['memory'] = "128Mi"
-                            fixes_applied.append(f"将内存请求从{memory_request}降低到128Mi")
+                            if "resources" not in container_patch:
+                                container_patch["resources"] = {}
+                            if "requests" not in container_patch["resources"]:
+                                container_patch["resources"]["requests"] = {}
+                            container_patch["resources"]["requests"]["memory"] = "128Mi"
+                            fixes_applied.append(
+                                f"将内存请求从{memory_request}降低到128Mi"
+                            )
                             need_to_patch = True
 
                 # 检查CPU请求
-                if 'requests' in resources and 'cpu' in resources['requests']:
-                    cpu_request = resources['requests']['cpu']
-                    if cpu_request.endswith('m'):
+                if "requests" in resources and "cpu" in resources["requests"]:
+                    cpu_request = resources["requests"]["cpu"]
+                    if cpu_request.endswith("m"):
                         cpu_value = int(cpu_request[:-1])
                         if cpu_value > 300:  # 假设超过300m就认为可能过高
                             issues_found.append(f"CPU请求({cpu_request})过高")
-                            if 'resources' not in container_patch:
-                                container_patch['resources'] = {}
-                            if 'requests' not in container_patch['resources']:
-                                container_patch['resources']['requests'] = {}
-                            container_patch['resources']['requests']['cpu'] = "200m"
+                            if "resources" not in container_patch:
+                                container_patch["resources"] = {}
+                            if "requests" not in container_patch["resources"]:
+                                container_patch["resources"]["requests"] = {}
+                            container_patch["resources"]["requests"]["cpu"] = "200m"
                             fixes_applied.append(f"将CPU请求从{cpu_request}降低到200m")
                             need_to_patch = True
 
             # 应用修复
             if need_to_patch:
                 # 确保container_patch中包含name字段
-                container_patch['name'] = main_container.get('name', 'nginx')
+                container_patch["name"] = main_container.get("name", "nginx")
 
                 # 应用修补
                 patch_result = await self.k8s_service.patch_deployment(
@@ -569,40 +607,43 @@ class K8sFixerAgent:
                     logger.info(f"成功应用修复补丁: {deployment_name}")
                     message = f"""
 自动修复 {deployment_name} 完成:
-- 发现的问题：{', '.join(issues_found)}
-- 执行的操作：{', '.join(fixes_applied)}
+- 发现的问题：{", ".join(issues_found)}
+- 执行的操作：{", ".join(fixes_applied)}
                     """
-                    return {'fixed': True, 'message': message}
+                    return {"fixed": True, "message": message}
                 else:
                     logger.error(f"应用修复补丁失败: {deployment_name}")
-                    return {'fixed': False, 'message': f"尝试修复{deployment_name}失败，无法应用修补"}
+                    return {
+                        "fixed": False,
+                        "message": f"尝试修复{deployment_name}失败，无法应用修补",
+                    }
             else:
                 # 即使没有需要修补的内容，也返回有意义的结果
                 if issues_found:
                     logger.info(f"发现问题但无法自动修复: {issues_found}")
                     return {
-                        'fixed': False,
-                        'message': f"检测到以下问题但未应用自动修复：{', '.join(issues_found)}\n请参考Kubernetes文档或联系管理员手动修复。"
+                        "fixed": False,
+                        "message": f"检测到以下问题但未应用自动修复：{', '.join(issues_found)}\n请参考Kubernetes文档或联系管理员手动修复。",
                     }
                 else:
-                    return {'fixed': False, 'message': f"未发现 {deployment_name} 的常见问题"}
+                    return {
+                        "fixed": False,
+                        "message": f"未发现 {deployment_name} 的常见问题",
+                    }
 
         except Exception as e:
             logger.error(f"识别和修复常见问题失败: {str(e)}")
-            return {'fixed': False, 'message': f"修复失败: {str(e)}"}
+            return {"fixed": False, "message": f"修复失败: {str(e)}"}
 
     async def _execute_fix(
-        self,
-        deployment_name: str,
-        namespace: str,
-        analysis: Dict[str, Any]
+        self, deployment_name: str, namespace: str, analysis: Dict[str, Any]
     ) -> str:
         """执行修复操作"""
         try:
             actions_taken = []
 
             # 检查分析结果
-            action = analysis.get('action')
+            action = analysis.get("action")
             if not action:
                 return "分析未提供修复操作"
 
@@ -611,29 +652,41 @@ class K8sFixerAgent:
                 logger.info("执行资源配置修复")
 
                 # 准备资源补丁
-                resources_patch = {"spec": {"template": {"spec": {"containers": [{"resources": {}}]}}}}
-                resources = resources_patch["spec"]["template"]["spec"]["containers"][0]["resources"]
+                resources_patch = {
+                    "spec": {"template": {"spec": {"containers": [{"resources": {}}]}}}
+                }
+                resources = resources_patch["spec"]["template"]["spec"]["containers"][
+                    0
+                ]["resources"]
 
                 # 解析资源建议
                 if "requests" in analysis:
                     resources["requests"] = {}
                     if "cpu" in analysis["requests"]:
                         resources["requests"]["cpu"] = analysis["requests"]["cpu"]
-                        actions_taken.append(f"设置CPU请求: {analysis['requests']['cpu']}")
+                        actions_taken.append(
+                            f"设置CPU请求: {analysis['requests']['cpu']}"
+                        )
 
                     if "memory" in analysis["requests"]:
                         resources["requests"]["memory"] = analysis["requests"]["memory"]
-                        actions_taken.append(f"设置内存请求: {analysis['requests']['memory']}")
+                        actions_taken.append(
+                            f"设置内存请求: {analysis['requests']['memory']}"
+                        )
 
                 if "limits" in analysis:
                     resources["limits"] = {}
                     if "cpu" in analysis["limits"]:
                         resources["limits"]["cpu"] = analysis["limits"]["cpu"]
-                        actions_taken.append(f"设置CPU限制: {analysis['limits']['cpu']}")
+                        actions_taken.append(
+                            f"设置CPU限制: {analysis['limits']['cpu']}"
+                        )
 
                     if "memory" in analysis["limits"]:
                         resources["limits"]["memory"] = analysis["limits"]["memory"]
-                        actions_taken.append(f"设置内存限制: {analysis['limits']['memory']}")
+                        actions_taken.append(
+                            f"设置内存限制: {analysis['limits']['memory']}"
+                        )
 
                 # 应用补丁
                 success = await self.k8s_service.patch_deployment(
@@ -646,7 +699,11 @@ class K8sFixerAgent:
                     logger.error(f"修改资源配置失败: {deployment_name}")
                     return "修改资源配置失败"
 
-            elif "修改健康检查" in action or "修改readinessProbe" in action or "修改livenessProbe" in action:
+            elif (
+                "修改健康检查" in action
+                or "修改readinessProbe" in action
+                or "修改livenessProbe" in action
+            ):
                 logger.info("执行健康检查配置修复")
 
                 # 检查是修改readinessProbe还是livenessProbe
@@ -655,19 +712,27 @@ class K8sFixerAgent:
                     probe_type = "livenessProbe"
 
                 # 准备健康检查补丁
-                probe_patch = {"spec": {"template": {"spec": {"containers": [{probe_type: {}}]}}}}
-                probe = probe_patch["spec"]["template"]["spec"]["containers"][0][probe_type]
+                probe_patch = {
+                    "spec": {"template": {"spec": {"containers": [{probe_type: {}}]}}}
+                }
+                probe = probe_patch["spec"]["template"]["spec"]["containers"][0][
+                    probe_type
+                ]
 
                 # 解析健康检查建议
                 if "httpGet" in analysis:
                     probe["httpGet"] = {}
                     if "path" in analysis["httpGet"]:
                         probe["httpGet"]["path"] = analysis["httpGet"]["path"]
-                        actions_taken.append(f"修改HTTP检查路径: {analysis['httpGet']['path']}")
+                        actions_taken.append(
+                            f"修改HTTP检查路径: {analysis['httpGet']['path']}"
+                        )
 
                     if "port" in analysis["httpGet"]:
                         probe["httpGet"]["port"] = int(analysis["httpGet"]["port"])
-                        actions_taken.append(f"修改HTTP检查端口: {analysis['httpGet']['port']}")
+                        actions_taken.append(
+                            f"修改HTTP检查端口: {analysis['httpGet']['port']}"
+                        )
 
                 if "periodSeconds" in analysis:
                     probe["periodSeconds"] = int(analysis["periodSeconds"])
@@ -675,7 +740,9 @@ class K8sFixerAgent:
 
                 if "failureThreshold" in analysis:
                     probe["failureThreshold"] = int(analysis["failureThreshold"])
-                    actions_taken.append(f"修改失败阈值: {analysis['failureThreshold']}")
+                    actions_taken.append(
+                        f"修改失败阈值: {analysis['failureThreshold']}"
+                    )
 
                 # 应用补丁
                 success = await self.k8s_service.patch_deployment(
@@ -721,7 +788,7 @@ class K8sFixerAgent:
 自动修复完成：
 - 部署: {deployment_name}
 - 命名空间: {namespace}
-- 执行的操作: {'; '.join(actions_taken)}
+- 执行的操作: {"; ".join(actions_taken)}
 - 验证结果: {verification}
                 """
             else:
@@ -734,10 +801,7 @@ class K8sFixerAgent:
             return f"执行修复操作失败: {str(e)}"
 
     async def _execute_additional_action(
-        self,
-        deployment_name: str,
-        namespace: str,
-        action: str
+        self, deployment_name: str, namespace: str, action: str
     ) -> str:
         """执行额外的修复操作"""
         try:
@@ -747,7 +811,8 @@ class K8sFixerAgent:
             if "扩展副本" in action and "replicas" in action:
                 # 解析副本数
                 import re
-                replicas_match = re.search(r'(\d+)', action)
+
+                replicas_match = re.search(r"(\d+)", action)
                 if replicas_match:
                     replicas = int(replicas_match.group(1))
                     success = await self.k8s_service.scale_deployment(
@@ -768,15 +833,20 @@ class K8sFixerAgent:
         try:
             # 等待短暂时间以便修改生效
             import asyncio
+
             await asyncio.sleep(3)
 
             # 重试多次检查
             retries = 3
             for attempt in range(retries):
                 # 获取最新部署状态
-                deployment = await self.k8s_service.get_deployment(deployment_name, namespace)
+                deployment = await self.k8s_service.get_deployment(
+                    deployment_name, namespace
+                )
                 if not deployment:
-                    logger.warning(f"验证修复时无法获取部署: {deployment_name} (尝试 {attempt+1}/{retries})")
+                    logger.warning(
+                        f"验证修复时无法获取部署: {deployment_name} (尝试 {attempt + 1}/{retries})"
+                    )
                     if attempt < retries - 1:
                         await asyncio.sleep(2)
                         continue
@@ -784,8 +854,7 @@ class K8sFixerAgent:
 
                 # 获取最新Pod状态
                 pods = await self.k8s_service.get_pods(
-                    namespace=namespace,
-                    label_selector=f"app={deployment_name}"
+                    namespace=namespace, label_selector=f"app={deployment_name}"
                 )
 
                 # 检查Pod状态
@@ -797,24 +866,29 @@ class K8sFixerAgent:
                 crash_loop_pods = []
 
                 for pod in pods:
-                    status = pod.get('status', {})
-                    pod_name = pod.get('metadata', {}).get('name', 'unknown')
+                    status = pod.get("status", {})
+                    pod_name = pod.get("metadata", {}).get("name", "unknown")
 
                     # 检查Pod状态
                     if self._is_pod_ready(status):
                         ready_pods += 1
 
                     # 检查CrashLoopBackOff
-                    container_statuses = status.get('container_statuses', [])
+                    container_statuses = status.get("container_statuses", [])
                     for c_status in container_statuses:
-                        if c_status.get('state', {}).get('waiting', {}).get('reason') == 'CrashLoopBackOff':
+                        if (
+                            c_status.get("state", {}).get("waiting", {}).get("reason")
+                            == "CrashLoopBackOff"
+                        ):
                             has_crash_loop = True
                             crash_loop_pods.append(pod_name)
 
                 # 检查是否有足够的Pod已就绪
                 if total_pods == 0:
                     if attempt < retries - 1:
-                        logger.info(f"未找到相关Pod，等待后重试 (尝试 {attempt+1}/{retries})")
+                        logger.info(
+                            f"未找到相关Pod，等待后重试 (尝试 {attempt + 1}/{retries})"
+                        )
                         await asyncio.sleep(2)
                         continue
                     return "未找到相关Pod"
@@ -824,13 +898,17 @@ class K8sFixerAgent:
 
                 # 如果所有Pod都已就绪，验证成功
                 if ready_pods == total_pods:
-                    logger.info(f"验证成功: 所有Pod ({ready_pods}/{total_pods}) 均已就绪")
+                    logger.info(
+                        f"验证成功: 所有Pod ({ready_pods}/{total_pods}) 均已就绪"
+                    )
                     return f"修复成功: 所有Pod ({ready_pods}/{total_pods}) 均已就绪"
 
                 # 如果大部分Pod已就绪，算部分成功
                 if readiness_percentage >= 50:
                     if attempt < retries - 1:
-                        logger.info(f"部分Pod已就绪 ({ready_pods}/{total_pods})，等待后重试 (尝试 {attempt+1}/{retries})")
+                        logger.info(
+                            f"部分Pod已就绪 ({ready_pods}/{total_pods})，等待后重试 (尝试 {attempt + 1}/{retries})"
+                        )
                         await asyncio.sleep(3)
                         continue
                     return f"部分修复: 就绪Pod: {ready_pods}/{total_pods} ({readiness_percentage:.1f}%)"
@@ -838,14 +916,18 @@ class K8sFixerAgent:
                 # 如果有CrashLoopBackOff问题，验证失败
                 if has_crash_loop:
                     if attempt < retries - 1:
-                        logger.warning(f"检测到CrashLoopBackOff状态，等待后重试 (尝试 {attempt+1}/{retries})")
+                        logger.warning(
+                            f"检测到CrashLoopBackOff状态，等待后重试 (尝试 {attempt + 1}/{retries})"
+                        )
                         await asyncio.sleep(3)
                         continue
                     return f"验证失败: {len(crash_loop_pods)}/{total_pods} 的Pod处于CrashLoopBackOff状态"
 
                 # 继续等待更多Pod就绪
                 if attempt < retries - 1:
-                    logger.info(f"当前就绪Pod: {ready_pods}/{total_pods}，等待后重试 (尝试 {attempt+1}/{retries})")
+                    logger.info(
+                        f"当前就绪Pod: {ready_pods}/{total_pods}，等待后重试 (尝试 {attempt + 1}/{retries})"
+                    )
                     await asyncio.sleep(3)
                     continue
 
@@ -858,29 +940,29 @@ class K8sFixerAgent:
 
     def _extract_pod_info(self, pod: Dict[str, Any]) -> Dict[str, Any]:
         """提取Pod信息"""
-        status = pod.get('status', {})
+        status = pod.get("status", {})
 
         return {
-            'name': pod.get('metadata', {}).get('name', ''),
-            'ready': self._is_pod_ready(status),
-            'phase': status.get('phase', ''),
-            'restart_count': self._get_restart_count(status),
-            'creation_timestamp': pod.get('metadata', {}).get('creation_timestamp')
+            "name": pod.get("metadata", {}).get("name", ""),
+            "ready": self._is_pod_ready(status),
+            "phase": status.get("phase", ""),
+            "restart_count": self._get_restart_count(status),
+            "creation_timestamp": pod.get("metadata", {}).get("creation_timestamp"),
         }
 
     def _is_pod_ready(self, status: Dict[str, Any]) -> bool:
         """检查Pod是否就绪"""
-        conditions = status.get('conditions', [])
+        conditions = status.get("conditions", [])
         for condition in conditions:
-            if condition.get('type') == 'Ready':
-                return condition.get('status') == 'True'
+            if condition.get("type") == "Ready":
+                return condition.get("status") == "True"
         return False
 
     def _get_restart_count(self, status: Dict[str, Any]) -> int:
         """获取Pod重启次数"""
-        container_statuses = status.get('container_statuses', [])
+        container_statuses = status.get("container_statuses", [])
         if container_statuses:
-            return container_statuses[0].get('restart_count', 0)
+            return container_statuses[0].get("restart_count", 0)
         return 0
 
     async def diagnose_cluster_health(self, namespace: str = None) -> str:
@@ -903,7 +985,7 @@ class K8sFixerAgent:
                 for node in nodes.items:
                     conditions = node.status.conditions
                     for condition in conditions:
-                        if condition.type == 'Ready' and condition.status == 'True':
+                        if condition.type == "Ready" and condition.status == "True":
                             ready_nodes += 1
                             break
 
@@ -920,18 +1002,20 @@ class K8sFixerAgent:
                 problematic_pods = []
 
                 for pod in pods:
-                    status = pod.get('status', {})
-                    phase = status.get('phase', '')
-                    pod_name = pod.get('metadata', {}).get('name', '')
+                    status = pod.get("status", {})
+                    phase = status.get("phase", "")
+                    pod_name = pod.get("metadata", {}).get("name", "")
 
-                    if phase == 'Running' and self._is_pod_ready(status):
+                    if phase == "Running" and self._is_pod_ready(status):
                         running_pods += 1
-                    elif phase != 'Succeeded':  # 不计算已经成功完成的Job
-                        problematic_pods.append({
-                            'name': pod_name,
-                            'phase': phase,
-                            'restart_count': self._get_restart_count(status)
-                        })
+                    elif phase != "Succeeded":  # 不计算已经成功完成的Job
+                        problematic_pods.append(
+                            {
+                                "name": pod_name,
+                                "phase": phase,
+                                "restart_count": self._get_restart_count(status),
+                            }
+                        )
 
                 pods_status = f"Pod: {running_pods}/{total_pods} 运行中"
                 if problematic_pods:
@@ -940,14 +1024,18 @@ class K8sFixerAgent:
                         pods_status += f"- {pod['name']}: 状态={pod['phase']}, 重启次数={pod['restart_count']}\n"
 
                     if len(problematic_pods) > 5:
-                        pods_status += f"...以及其他 {len(problematic_pods) - 5} 个问题Pod"
+                        pods_status += (
+                            f"...以及其他 {len(problematic_pods) - 5} 个问题Pod"
+                        )
             except Exception as e:
                 logger.error(f"获取Pod状态失败: {str(e)}")
 
             # 3. 获取Deployment状态
             deployments_status = "无法获取部署状态"
             try:
-                deployments = self.k8s_service.apps_v1.list_namespaced_deployment(namespace)
+                deployments = self.k8s_service.apps_v1.list_namespaced_deployment(
+                    namespace
+                )
                 total_deployments = len(deployments.items)
                 healthy_deployments = 0
                 problematic_deployments = []
@@ -959,17 +1047,23 @@ class K8sFixerAgent:
                     if available_replicas == replicas:
                         healthy_deployments += 1
                     else:
-                        problematic_deployments.append({
-                            'name': deployment.metadata.name,
-                            'available': available_replicas,
-                            'desired': replicas
-                        })
+                        problematic_deployments.append(
+                            {
+                                "name": deployment.metadata.name,
+                                "available": available_replicas,
+                                "desired": replicas,
+                            }
+                        )
 
-                deployments_status = f"部署: {healthy_deployments}/{total_deployments} 健康"
+                deployments_status = (
+                    f"部署: {healthy_deployments}/{total_deployments} 健康"
+                )
                 if problematic_deployments:
                     deployments_status += "\n问题部署列表:\n"
                     for d in problematic_deployments:
-                        deployments_status += f"- {d['name']}: {d['available']}/{d['desired']} 副本就绪\n"
+                        deployments_status += (
+                            f"- {d['name']}: {d['available']}/{d['desired']} 副本就绪\n"
+                        )
             except Exception as e:
                 logger.error(f"获取部署状态失败: {str(e)}")
 
@@ -977,19 +1071,24 @@ class K8sFixerAgent:
             events_info = "无法获取事件信息"
             try:
                 events = await self.k8s_service.get_events(
-                    namespace=namespace,
-                    limit=10
+                    namespace=namespace, limit=10
                 )
 
                 if events:
                     warning_events = []
                     for event in events:
-                        if event.get('type') == 'Warning':
-                            warning_events.append({
-                                'reason': event.get('reason', ''),
-                                'message': event.get('message', '')[:100],  # 截取前100个字符
-                                'object': event.get('involved_object', {}).get('name', '')
-                            })
+                        if event.get("type") == "Warning":
+                            warning_events.append(
+                                {
+                                    "reason": event.get("reason", ""),
+                                    "message": event.get("message", "")[
+                                        :100
+                                    ],  # 截取前100个字符
+                                    "object": event.get("involved_object", {}).get(
+                                        "name", ""
+                                    ),
+                                }
+                            )
 
                     if warning_events:
                         events_info = "最近警告事件:\n"
@@ -1012,8 +1111,14 @@ class K8sFixerAgent:
 {events_info}
 =================================
 诊断建议:
-{self._generate_diagnosis_recommendations(problematic_pods if 'problematic_pods' in locals() else [],
-                                          problematic_deployments if 'problematic_deployments' in locals() else [])}
+{
+                self._generate_diagnosis_recommendations(
+                    problematic_pods if "problematic_pods" in locals() else [],
+                    problematic_deployments
+                    if "problematic_deployments" in locals()
+                    else [],
+                )
+            }
 """
 
             return diagnosis
@@ -1022,7 +1127,9 @@ class K8sFixerAgent:
             logger.error(f"诊断集群健康失败: {str(e)}")
             return f"诊断集群健康失败: {str(e)}"
 
-    def _generate_diagnosis_recommendations(self, problematic_pods, problematic_deployments) -> str:
+    def _generate_diagnosis_recommendations(
+        self, problematic_pods, problematic_deployments
+    ) -> str:
         """生成诊断建议"""
         if not problematic_pods and not problematic_deployments:
             return "集群状态良好，无需采取措施。"
@@ -1032,25 +1139,37 @@ class K8sFixerAgent:
         # 针对问题Pod的建议
         if problematic_pods:
             for pod in problematic_pods:
-                if pod.get('restart_count', 0) > 5:
-                    recommendations.append(f"检查Pod {pod['name']} 频繁重启的原因，可能是资源不足或者健康检查配置不当。")
-                elif pod.get('phase') == 'Pending':
-                    recommendations.append(f"Pod {pod['name']} 处于Pending状态，可能是资源不足或者PVC问题。")
-                elif pod.get('phase') == 'Failed':
-                    recommendations.append(f"检查Pod {pod['name']} 失败的原因，查看日志获取更多信息。")
+                if pod.get("restart_count", 0) > 5:
+                    recommendations.append(
+                        f"检查Pod {pod['name']} 频繁重启的原因，可能是资源不足或者健康检查配置不当。"
+                    )
+                elif pod.get("phase") == "Pending":
+                    recommendations.append(
+                        f"Pod {pod['name']} 处于Pending状态，可能是资源不足或者PVC问题。"
+                    )
+                elif pod.get("phase") == "Failed":
+                    recommendations.append(
+                        f"检查Pod {pod['name']} 失败的原因，查看日志获取更多信息。"
+                    )
 
         # 针对问题Deployment的建议
         if problematic_deployments:
             for deployment in problematic_deployments:
-                if deployment.get('available', 0) == 0:
-                    recommendations.append(f"部署 {deployment['name']} 没有可用副本，可能需要检查Pod日志和事件。")
-                elif deployment.get('available', 0) < deployment.get('desired', 0):
-                    recommendations.append(f"部署 {deployment['name']} 的可用副本少于期望副本，建议使用'kubectl describe'和日志查看详情。")
+                if deployment.get("available", 0) == 0:
+                    recommendations.append(
+                        f"部署 {deployment['name']} 没有可用副本，可能需要检查Pod日志和事件。"
+                    )
+                elif deployment.get("available", 0) < deployment.get("desired", 0):
+                    recommendations.append(
+                        f"部署 {deployment['name']} 的可用副本少于期望副本，建议使用'kubectl describe'和日志查看详情。"
+                    )
 
         if not recommendations:
-            recommendations.append("尽管有一些问题，但没有明确的修复建议。请检查集群事件和日志获取更多信息。")
+            recommendations.append(
+                "尽管有一些问题，但没有明确的修复建议。请检查集群事件和日志获取更多信息。"
+            )
 
-        return "\n".join([f"{i+1}. {rec}" for i, rec in enumerate(recommendations)])
+        return "\n".join([f"{i + 1}. {rec}" for i, rec in enumerate(recommendations)])
 
     def get_available_tools(self) -> List[str]:
         """获取可用工具列表"""
@@ -1059,7 +1178,7 @@ class K8sFixerAgent:
             "fix_deployment",
             "restart_deployment",
             "scale_deployment",
-            "diagnose_cluster"
+            "diagnose_cluster",
         ]
 
     async def process_agent_state(self, state) -> Any:
@@ -1078,45 +1197,56 @@ class K8sFixerAgent:
             context = dict(state.context) if state.context else {}
 
             # 获取部署信息
-            deployment = context.get('deployment')
-            namespace = context.get('namespace', 'default')
-            problem = context.get('problem', '')
+            deployment = context.get("deployment")
+            namespace = context.get("namespace", "default")
+            problem = context.get("problem", "")
 
             if not deployment:
                 logger.warning("没有指定部署名称，无法进行修复")
-                context['error'] = "没有指定部署名称，无法进行修复"
+                context["error"] = "没有指定部署名称，无法进行修复"
                 return replace(state, context=context)
 
-            logger.info(f"K8sFixer开始修复: {deployment}/{namespace}, 问题描述: {problem[:50]}...")
+            logger.info(
+                f"K8sFixer开始修复: {deployment}/{namespace}, 问题描述: {problem[:50]}..."
+            )
 
             # 记录LLM提供商状态，便于问题诊断
             is_llm_healthy = self.llm_service.is_healthy()
             logger.info(f"LLM服务状态: {'健康' if is_llm_healthy else '异常'}")
-            logger.info(f"当前LLM提供商: {self.llm_service.provider}, 模型: {self.llm_service.model}")
+            logger.info(
+                f"当前LLM提供商: {self.llm_service.provider}, 模型: {self.llm_service.model}"
+            )
 
             # 执行修复
             try:
                 fix_result = await self.analyze_and_fix_deployment(
-                    deployment,
-                    namespace,
-                    problem
+                    deployment, namespace, problem
                 )
             except Exception as fix_e:
                 logger.error(f"修复过程发生错误: {str(fix_e)}")
                 fix_result = f"修复过程发生错误: {str(fix_e)}"
 
             # 更新上下文
-            context['result'] = fix_result
-            context['success'] = True if any(term in str(fix_result).lower() for term in ["自动修复完成", "成功", "已修复"]) else False
+            context["result"] = fix_result
+            context["success"] = (
+                True
+                if any(
+                    term in str(fix_result).lower()
+                    for term in ["自动修复完成", "成功", "已修复"]
+                )
+                else False
+            )
 
             # 添加操作记录
-            if 'actions_taken' not in context or not isinstance(context['actions_taken'], list):
-                context['actions_taken'] = []
-            context['actions_taken'].append(f"K8sFixer修复: {deployment}/{namespace}")
+            if "actions_taken" not in context or not isinstance(
+                context["actions_taken"], list
+            ):
+                context["actions_taken"] = []
+            context["actions_taken"].append(f"K8sFixer修复: {deployment}/{namespace}")
 
             # 如果修复失败
-            if not context.get('success', False):
-                context['error'] = "修复失败，请查看结果详情"
+            if not context.get("success", False):
+                context["error"] = "修复失败，请查看结果详情"
                 logger.warning(f"修复结果显示失败: {fix_result[:100]}...")
             else:
                 logger.info(f"修复成功: {fix_result[:100]}...")
@@ -1129,9 +1259,10 @@ class K8sFixerAgent:
             # 确保context是一个字典
             try:
                 context = dict(state.context) if state.context else {}
-            except:
+            except Exception:
                 context = {}
 
-            context['error'] = f"K8sFixer处理失败: {str(e)}"
+            context["error"] = f"K8sFixer处理失败: {str(e)}"
             from dataclasses import replace
+
             return replace(state, context=context)

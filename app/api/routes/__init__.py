@@ -20,6 +20,7 @@ api_v1 = APIRouter(prefix="/api/v1", tags=["api_v1"])
 # 注册各个路由模块
 try:
     from .health import router as health_router
+
     api_v1.include_router(health_router)
     logger.info("已注册健康检查路由")
 except Exception as e:
@@ -27,6 +28,7 @@ except Exception as e:
 
 try:
     from .predict import router as predict_router
+
     api_v1.include_router(predict_router)
     logger.info("已注册预测路由")
 except Exception as e:
@@ -34,6 +36,7 @@ except Exception as e:
 
 try:
     from .rca import router as rca_router
+
     api_v1.include_router(rca_router)
     logger.info("已注册根因分析路由")
 except Exception as e:
@@ -41,6 +44,7 @@ except Exception as e:
 
 try:
     from .autofix import router as autofix_router
+
     api_v1.include_router(autofix_router)
     logger.info("已注册自动修复路由")
 except Exception as e:
@@ -48,6 +52,7 @@ except Exception as e:
 
 try:
     from .assistant import router as assistant_router
+
     api_v1.include_router(assistant_router)
     logger.info("已注册智能助手路由")
 except Exception as e:
@@ -55,14 +60,16 @@ except Exception as e:
 
 try:
     from .multi_agent import router as multi_agent_router
+
     api_v1.include_router(multi_agent_router)
     logger.info("已注册多Agent路由")
 except Exception as e:
     logger.warning(f"注册多Agent路由失败: {str(e)}")
 
+
 def register_routes(app):
     """注册所有路由"""
-    
+
     # 注册API v1路由
     app.include_router(api_v1)
 
@@ -76,11 +83,11 @@ def register_routes(app):
             "endpoints": {
                 "health": "/api/v1/health",
                 "prediction": "/api/v1/predict",
-                "rca": "/api/v1/rca", 
+                "rca": "/api/v1/rca",
                 "autofix": "/api/v1/autofix",
                 "assistant": "/api/v1/assistant",
                 "multi_agent": "/api/v1/multi-agent",
                 "docs": "/docs",
-                "redoc": "/redoc"
-            }
+                "redoc": "/redoc",
+            },
         }

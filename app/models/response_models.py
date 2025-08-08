@@ -12,13 +12,16 @@ Description: API响应模型 - 定义所有API端点的标准化响应结构，�
 from typing import List, Dict, Any, Optional, Generic, TypeVar
 from pydantic import BaseModel
 
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 class APIResponse(BaseModel, Generic[T]):
     """统一API响应格式"""
+
     code: int = 0
     message: str = ""
     data: Optional[T] = None
+
 
 class AnomalyInfo(BaseModel):
     count: int
@@ -28,6 +31,7 @@ class AnomalyInfo(BaseModel):
     avg_score: float
     detection_methods: Dict[str, Any]
 
+
 class RootCauseCandidate(BaseModel):
     metric: str
     confidence: float
@@ -35,6 +39,7 @@ class RootCauseCandidate(BaseModel):
     anomaly_count: int
     related_metrics: List[tuple]
     description: Optional[str] = None
+
 
 class RCAResponse(BaseModel):
     status: str
@@ -46,6 +51,7 @@ class RCAResponse(BaseModel):
     metrics_analyzed: List[str]
     summary: Optional[str] = None
 
+
 class PredictionResponse(BaseModel):
     instances: int
     current_qps: float
@@ -54,6 +60,7 @@ class PredictionResponse(BaseModel):
     model_version: Optional[str] = None
     prediction_type: Optional[str] = None
     features: Optional[Dict[str, float]] = None
+
 
 class AutoFixResponse(BaseModel):
     status: str
@@ -65,6 +72,7 @@ class AutoFixResponse(BaseModel):
     success: bool
     error_message: Optional[str] = None
 
+
 class HealthResponse(BaseModel):
     status: str
     components: Dict[str, bool]
@@ -72,8 +80,10 @@ class HealthResponse(BaseModel):
     version: Optional[str] = None
     uptime: Optional[float] = None
 
+
 class AssistantResponse(BaseModel):
     """智能小助手响应模型"""
+
     answer: str
     source_documents: Optional[List[Dict[str, Any]]] = None
     relevance_score: Optional[float] = None

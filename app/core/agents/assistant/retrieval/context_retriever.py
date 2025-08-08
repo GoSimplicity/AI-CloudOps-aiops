@@ -23,8 +23,13 @@ class ContextAwareRetriever:
         self.doc_ranker = doc_ranker
         self.conversation_context = {}
 
-    def retrieve_with_context(self, query: str, session_id: str = None,
-                              history: List[Dict] = None, top_k: int = 8) -> List[Document]:
+    def retrieve_with_context(
+        self,
+        query: str,
+        session_id: str = None,
+        history: List[Dict] = None,
+        top_k: int = 8,
+    ) -> List[Document]:
         """带上下文的智能检索 - 提升召回率优化版"""
         try:
             # 1. 构建增强查询
@@ -62,12 +67,16 @@ class ContextAwareRetriever:
 
             # 5. 智能排序 - 增加返回数量
             if unique_docs:
-                ranked_docs = self.doc_ranker.rank_documents(enhanced_query, unique_docs, top_k * 2)
+                ranked_docs = self.doc_ranker.rank_documents(
+                    enhanced_query, unique_docs, top_k * 2
+                )
             else:
                 ranked_docs = []
 
             # 6. 宽松的上下文过滤
-            filtered_docs = self._context_filter_lenient(ranked_docs, session_id, history)
+            filtered_docs = self._context_filter_lenient(
+                ranked_docs, session_id, history
+            )
 
             return [doc for doc, _ in filtered_docs[:top_k]]
 
@@ -76,7 +85,7 @@ class ContextAwareRetriever:
             # 降级到基础检索
             try:
                 return self.base_retriever.invoke(query)[:top_k]
-            except:
+            except Exception:
                 return []
 
     def _build_enhanced_query(self, query: str, history: List[Dict] = None) -> str:
@@ -87,13 +96,15 @@ class ContextAwareRetriever:
         # 提取历史关键词
         historical_keywords = []
         for msg in history[-2:]:  # 减少历史消息数量
-            if msg.get('role') == 'user':
-                keywords = re.findall(r'\w+', msg.get('content', ''))
+            if msg.get("role") == "user":
+                keywords = re.findall(r"\w+", msg.get("content", ""))
                 historical_keywords.extend([w for w in keywords if len(w) > 2])
 
         # 去重并选择最重要的关键词
         keyword_counts = Counter(historical_keywords)
-        important_keywords = [k for k, _ in keyword_counts.most_common(2)]  # 减少关键词数量
+        important_keywords = [
+            k for k, _ in keyword_counts.most_common(2)
+        ]  # 减少关键词数量
 
         # 构建增强查询
         if important_keywords:
@@ -117,9 +128,12 @@ class ContextAwareRetriever:
 
         return unique_docs
 
-    def _context_filter_lenient(self, ranked_docs: List[Tuple[Document, float]],
-                                session_id: str = None, history: List[Dict] = None) -> List[
-        Tuple[Document, float]]:
+    def _context_filter_lenient(
+        self,
+        ranked_docs: List[Tuple[Document, float]],
+        session_id: str = None,
+        history: List[Dict] = None,
+    ) -> List[Tuple[Document, float]]:
         """宽松的基于上下文的文档过滤 - 提升召回率"""
         if not history or not ranked_docs:
             return ranked_docs
@@ -148,16 +162,16 @@ class ContextAwareRetriever:
         """提取对话主题"""
         topics = []
         for msg in history:
-            if msg.get('role') == 'user':
-                content = msg.get('content', '')
-                if '部署' in content or '安装' in content:
-                    topics.append('deployment')
-                elif '监控' in content or '观察' in content:
-                    topics.append('monitoring')
-                elif '故障' in content or '错误' in content:
-                    topics.append('troubleshooting')
-                elif '性能' in content or '优化' in content:
-                    topics.append('performance')
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                if "部署" in content or "安装" in content:
+                    topics.append("deployment")
+                elif "监控" in content or "观察" in content:
+                    topics.append("monitoring")
+                elif "故障" in content or "错误" in content:
+                    topics.append("troubleshooting")
+                elif "性能" in content or "优化" in content:
+                    topics.append("performance")
 
         return list(set(topics))
 
@@ -170,15 +184,19 @@ class ContextAwareRetriever:
         relevance_scores = []
 
         topic_keywords = {
-            'deployment': ['部署', '安装', '配置', '搭建'],
-            'monitoring': ['监控', '观察', '检测', '巡检'],
-            'troubleshooting': ['故障', '问题', '错误', '异常'],
-            'performance': ['性能', '优化', '效率', '速度']
+            "deployment": ["部署", "安装", "配置", "搭建"],
+            "monitoring": ["监控", "观察", "检测", "巡检"],
+            "troubleshooting": ["故障", "问题", "错误", "异常"],
+            "performance": ["性能", "优化", "效率", "速度"],
         }
 
         for topic in topics:
             if topic in topic_keywords:
-                keyword_count = sum(1 for keyword in topic_keywords[topic] if keyword in content)
-                relevance_scores.append(min(keyword_count / len(topic_keywords[topic]), 1.0))
+                keyword_count = sum(
+                    1 for keyword in topic_keywords[topic] if keyword in content
+                )
+                relevance_scores.append(
+                    min(keyword_count / len(topic_keywords[topic]), 1.0)
+                )
 
         return max(relevance_scores) if relevance_scores else 0.5
