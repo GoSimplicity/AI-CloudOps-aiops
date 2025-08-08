@@ -10,10 +10,11 @@ Description: 研究代理 - 提供问题调查和解决方案分析服务
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 # 移除未使用的工具装饰器依赖，避免不必要的导入
 from langchain_community.tools.tavily_search import TavilySearchResults
+
 from app.config.settings import config
 from app.services.llm import LLMService
 

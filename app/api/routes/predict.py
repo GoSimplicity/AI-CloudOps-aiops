@@ -9,14 +9,16 @@ License: Apache 2.0
 Description: 负载预测API路由 - 提供QPS预测、实例数建议和负载趋势分析接口
 """
 
-from fastapi import APIRouter, HTTPException, Body
-from typing import Optional
+import asyncio
 import datetime
 import logging
-import asyncio
+from typing import Optional
+
+from fastapi import APIRouter, Body, HTTPException
+
 from app.core.prediction.predictor import PredictionService
 from app.models.request_models import PredictionRequest
-from app.models.response_models import PredictionResponse, APIResponse
+from app.models.response_models import APIResponse, PredictionResponse
 from app.utils.validators import validate_qps
 
 logger = logging.getLogger("aiops.predict")
@@ -72,15 +74,22 @@ async def predict_instances(request_data: Optional[PredictionRequest] = Body(Non
         # 构建响应
         response = PredictionResponse(
             instances=prediction_result.get("instances", 0),
-            current_qps=prediction_result.get("current_qps", predict_request.current_qps or 0.0),
-            timestamp=prediction_result.get("timestamp", (predict_request.timestamp or datetime.datetime.utcnow()).isoformat()),
+            current_qps=prediction_result.get(
+                "current_qps", predict_request.current_qps or 0.0
+            ),
+            timestamp=prediction_result.get(
+                "timestamp",
+                (predict_request.timestamp or datetime.datetime.utcnow()).isoformat(),
+            ),
             confidence=prediction_result.get("confidence", 0.0),
             model_version=prediction_result.get("model_version", "1.0"),
             prediction_type=prediction_result.get("prediction_type"),
             features=prediction_result.get("features"),
         )
 
-        return APIResponse(code=0, message="预测成功", data=response.model_dump()).model_dump()
+        return APIResponse(
+            code=0, message="预测成功", data=response.model_dump()
+        ).model_dump()
 
     except HTTPException:
         raise
@@ -175,7 +184,9 @@ async def get_model_info():
         # 获取模型信息
         model_info = await asyncio.to_thread(prediction_service.get_model_info)
 
-        return APIResponse(code=0, message="模型信息获取成功", data=model_info).model_dump()
+        return APIResponse(
+            code=0, message="模型信息获取成功", data=model_info
+        ).model_dump()
 
     except Exception as e:
         logger.error(f"获取模型信息失败: {str(e)}")

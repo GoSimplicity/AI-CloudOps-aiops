@@ -10,34 +10,35 @@ Description: 智能助手代理 - 基于RAG技术提供运维知识问答和决�
 优化重点: 大幅提升精确度和召回率，修复所有错误
 """
 
-import uuid
+import asyncio
 import logging
 import time
-import asyncio
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Any, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_ollama import ChatOllama, OllamaEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from app.config.settings import config
 from app.core.cache.redis_cache_manager import RedisCacheManager
 
-# 导入拆分后的模块
-from .models.base import SessionData, FallbackEmbeddings, FallbackChatModel
-from .models.config import assistant_config
-from .retrieval.vector_store_manager import VectorStoreManager
-from .retrieval.query_rewriter import QueryRewriter
-from .retrieval.document_ranker import DocumentRanker
-from .retrieval.context_retriever import ContextAwareRetriever
 from .answer.reliable_answer_generator import ReliableAnswerGenerator
-from .storage.document_loader import DocumentLoader
+
+# 导入拆分后的模块
+from .models.base import FallbackChatModel, FallbackEmbeddings, SessionData
+from .models.config import assistant_config
+from .retrieval.context_retriever import ContextAwareRetriever
+from .retrieval.document_ranker import DocumentRanker
+from .retrieval.query_rewriter import QueryRewriter
+from .retrieval.vector_store_manager import VectorStoreManager
 from .session.session_manager import SessionManager
-from .utils.task_manager import get_task_manager
+from .storage.document_loader import DocumentLoader
 from .utils.helpers import is_test_environment
+from .utils.task_manager import get_task_manager
 
 logger = logging.getLogger("aiops.assistant")
 
@@ -647,9 +648,11 @@ class AssistantAgent:
                     relevant_docs[:3]
                 ),
                 "relevance_score": confidence,
-                "recall_rate": min(len(relevant_docs) / max_context_docs, 1.0)
-                if relevant_docs
-                else 0.0,
+                "recall_rate": (
+                    min(len(relevant_docs) / max_context_docs, 1.0)
+                    if relevant_docs
+                    else 0.0
+                ),
                 "follow_up_questions": self._get_simple_follow_up_questions(
                     question_type
                 )[:2],
@@ -884,9 +887,11 @@ class AssistantAgent:
             )
             formatted_docs.append(
                 {
-                    "content": doc.page_content[:200] + "..."
-                    if len(doc.page_content) > 200
-                    else doc.page_content,
+                    "content": (
+                        doc.page_content[:200] + "..."
+                        if len(doc.page_content) > 200
+                        else doc.page_content
+                    ),
                     "file_name": filename,
                     "relevance": 0.8,
                 }

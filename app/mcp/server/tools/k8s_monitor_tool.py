@@ -12,6 +12,7 @@ Description: k8s资源监控的MCP工具，提供节点和Pod的资源使用情�
 import asyncio
 from datetime import datetime
 from typing import Any, Dict
+
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
@@ -316,9 +317,11 @@ class K8sMonitorTool(K8sBaseTool):
                     "scopes": quota.spec.scopes or [],
                     "hard": dict(quota.spec.hard) if quota.spec.hard else {},
                     "used": dict(quota.status.used) if quota.status.used else {},
-                    "scope_selector": quota.spec.scope_selector.match_expressions
-                    if quota.spec.scope_selector
-                    else [],
+                    "scope_selector": (
+                        quota.spec.scope_selector.match_expressions
+                        if quota.spec.scope_selector
+                        else []
+                    ),
                 }
                 quotas_data.append(quota_data)
 
@@ -362,12 +365,14 @@ class K8sMonitorTool(K8sBaseTool):
                         "max": dict(limit.max) if limit.max else {},
                         "min": dict(limit.min) if limit.min else {},
                         "default": dict(limit.default) if limit.default else {},
-                        "default_request": dict(limit.default_request)
-                        if limit.default_request
-                        else {},
-                        "max_limit_request_ratio": dict(limit.max_limit_request_ratio)
-                        if limit.max_limit_request_ratio
-                        else {},
+                        "default_request": (
+                            dict(limit.default_request) if limit.default_request else {}
+                        ),
+                        "max_limit_request_ratio": (
+                            dict(limit.max_limit_request_ratio)
+                            if limit.max_limit_request_ratio
+                            else {}
+                        ),
                     }
                     limits.append(limit_data)
 

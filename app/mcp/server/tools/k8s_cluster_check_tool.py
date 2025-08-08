@@ -13,6 +13,7 @@ import asyncio
 import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+
 from kubernetes import client, config
 
 from .k8s_base_tool import K8sBaseTool
@@ -433,9 +434,11 @@ class K8sClusterCheckTool(K8sBaseTool):
                                 cs.restart_count
                                 for cs in pod.status.container_statuses or []
                             ),
-                            "sample_log": log_content.strip()
-                            if log_content.strip()
-                            else "无日志内容",
+                            "sample_log": (
+                                log_content.strip()
+                                if log_content.strip()
+                                else "无日志内容"
+                            ),
                         }
                     )
 

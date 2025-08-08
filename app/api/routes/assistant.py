@@ -11,11 +11,12 @@ Description: AI助手API路由模块，提供智能问答和流式对话功能
 
 import asyncio
 import logging
-import threading
 import re
+import threading
 import time
 from datetime import datetime
 from typing import Any, Dict, Optional, Union
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -154,7 +155,8 @@ def run_sync_in_new_thread(func, *args, **kwargs):
         raise TimeoutError("异步函数执行超时")
 
     if exception[0]:
-        raise exception[0]
+        # 统一抛出标准运行时异常，避免类型歧义
+        raise RuntimeError(str(exception[0]))
 
     return result[0]
 
@@ -508,7 +510,8 @@ async def reinitialize_assistant():
         try:
             _assistant_agent = None
             _is_initializing = False
-            return HTTPException(status_code=500, detail="智能小助手重新初始化失败")
+            # 发生错误时抛出 HTTP 异常，避免返回异常对象
+            raise HTTPException(status_code=500, detail="智能小助手重新初始化失败")
         except Exception:
             pass
         raise HTTPException(

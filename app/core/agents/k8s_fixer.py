@@ -10,13 +10,15 @@ Description: Kubernetes集群问题诊断和自动修复代理
 """
 
 import logging
-import requests
 import os
-from typing import Dict, Any, List
-from app.services.kubernetes import KubernetesService
-from app.services.llm import LLMService
+from typing import Any, Dict, List
+
+import requests
+
 from app.config.settings import config
 from app.core.agents.k8s_fixer_enhanced import EnhancedK8sFixerAgent
+from app.services.kubernetes import KubernetesService
+from app.services.llm import LLMService
 
 logger = logging.getLogger("aiops.k8s_fixer")
 
@@ -257,9 +259,9 @@ class K8sFixerAgent:
                                     container_patch["resources"] = {}
                                 if "requests" not in container_patch["resources"]:
                                     container_patch["resources"]["requests"] = {}
-                                container_patch["resources"]["requests"]["memory"] = (
-                                    "128Mi"
-                                )
+                                container_patch["resources"]["requests"][
+                                    "memory"
+                                ] = "128Mi"
                                 fixes_applied.append(
                                     f"将内存请求从{memory_request}降低到128Mi"
                                 )

@@ -9,11 +9,13 @@ License: Apache 2.0
 Description: 通知服务模块 - 提供多渠道通知功能，支持飞书、邮件等通知方式的集成
 """
 
-import logging
-import requests
 import json
-from typing import Dict, Any, Optional, List
+import logging
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+import requests
+
 from app.config.settings import config
 
 logger = logging.getLogger("aiops.notification")

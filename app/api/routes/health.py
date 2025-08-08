@@ -9,17 +9,19 @@ License: Apache 2.0
 Description: 健康检查API模块，提供AI-CloudOps系统的服务健康监控和状态检查功能
 """
 
-from fastapi import APIRouter, HTTPException
-from datetime import datetime
-import time
-import psutil
 import logging
-from app.services.prometheus import PrometheusService
+import time
+from datetime import datetime
+
+import psutil
+from fastapi import APIRouter, HTTPException
+
+from app.core.prediction.predictor import PredictionService
+from app.models.response_models import APIResponse
 from app.services.kubernetes import KubernetesService
 from app.services.llm import LLMService
 from app.services.notification import NotificationService
-from app.core.prediction.predictor import PredictionService
-from app.models.response_models import APIResponse
+from app.services.prometheus import PrometheusService
 
 logger = logging.getLogger("aiops.health")
 
@@ -86,7 +88,9 @@ async def health_check():
         }
 
         # 返回标准化的API响应格式
-        return APIResponse(code=0, message="健康检查完成", data=health_data).model_dump()
+        return APIResponse(
+            code=0, message="健康检查完成", data=health_data
+        ).model_dump()
 
     except Exception as e:
         # 异常处理：记录错误日志并返回500错误响应
@@ -121,9 +125,11 @@ async def components_health():
             "name": "Prometheus监控服务",  # 组件名称
             "description": "负责收集和存储系统监控数据",  # 组件描述
             "last_check": datetime.utcnow().isoformat(),  # 最后检查时间
-            "endpoint": prometheus_service.get_endpoint()
-            if prometheus_service and hasattr(prometheus_service, "get_endpoint")
-            else "unknown",
+            "endpoint": (
+                prometheus_service.get_endpoint()
+                if prometheus_service and hasattr(prometheus_service, "get_endpoint")
+                else "unknown"
+            ),
         }
 
         # 如果Prometheus不健康，添加错误详情
@@ -138,9 +144,9 @@ async def components_health():
                 )
                 components_detail["prometheus"]["error"] = error_details
             except Exception as detail_error:
-                components_detail["prometheus"]["error"] = (
-                    f"无法获取错误详情: {str(detail_error)}"
-                )
+                components_detail["prometheus"][
+                    "error"
+                ] = f"无法获取错误详情: {str(detail_error)}"
 
         # Kubernetes服务健康检查 - 容器编排服务
         k8s_service = get_service_instance("kubernetes", KubernetesService)
@@ -161,9 +167,9 @@ async def components_health():
                 )
                 components_detail["kubernetes"]["error"] = k8s_status
             except Exception as k8s_error:
-                components_detail["kubernetes"]["error"] = (
-                    f"无法获取K8s状态: {str(k8s_error)}"
-                )
+                components_detail["kubernetes"][
+                    "error"
+                ] = f"无法获取K8s状态: {str(k8s_error)}"
 
         # LLM服务健康检查 - AI推理服务 (使用缓存实例避免重复检查)
         llm_service = get_service_instance("llm", LLMService)
@@ -208,9 +214,9 @@ async def components_health():
                 )
                 components_detail["notification"]["error"] = notification_status
             except Exception as notification_error:
-                components_detail["notification"]["error"] = (
-                    f"无法获取通知服务状态: {str(notification_error)}"
-                )
+                components_detail["notification"][
+                    "error"
+                ] = f"无法获取通知服务状态: {str(notification_error)}"
 
         # 预测服务健康检查 - 负载预测服务
         prediction_service = get_service_instance("prediction", PredictionService)
@@ -234,9 +240,9 @@ async def components_health():
                 )
                 components_detail["prediction"]["error"] = prediction_status
             except Exception as prediction_error:
-                components_detail["prediction"]["error"] = (
-                    f"无法获取预测服务状态: {str(prediction_error)}"
-                )
+                components_detail["prediction"][
+                    "error"
+                ] = f"无法获取预测服务状态: {str(prediction_error)}"
 
         # 返回组件详细健康检查结果
         return APIResponse(

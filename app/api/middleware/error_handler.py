@@ -11,9 +11,11 @@ Description: 错误处理中间件 - 提供统一的HTTP错误响应格式和异
 
 import logging
 import traceback
-from fastapi import Request, HTTPException
-from fastapi.responses import JSONResponse
 from datetime import datetime, timezone
+
+from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
+
 from app.models.response_models import APIResponse
 
 logger = logging.getLogger("aiops.error_handler")
@@ -26,9 +28,9 @@ def _safe_get_request_info(request: Request):
             "url": str(request.url) if request else "unknown",
             "path": request.url.path if request else "unknown",
             "method": request.method if request else "unknown",
-            "content_type": request.headers.get("content-type", "unknown")
-            if request
-            else "unknown",
+            "content_type": (
+                request.headers.get("content-type", "unknown") if request else "unknown"
+            ),
         }
     except Exception as e:
         logger.error(f"无法获取请求信息: {e}")

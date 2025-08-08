@@ -12,6 +12,7 @@ Description: k8s命名空间管理的MCP工具，提供命名空间的创建、�
 import asyncio
 from datetime import datetime
 from typing import Any, Dict
+
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
@@ -173,17 +174,19 @@ class K8sNamespaceTool(K8sBaseTool):
                             "status": cond.status,
                             "reason": cond.reason,
                             "message": cond.message,
-                            "last_transition_time": cond.last_transition_time.isoformat()
-                            if cond.last_transition_time
-                            else None,
+                            "last_transition_time": (
+                                cond.last_transition_time.isoformat()
+                                if cond.last_transition_time
+                                else None
+                            ),
                         }
                         for cond in namespace.status.conditions or []
                     ],
                 },
                 "spec": {
-                    "finalizers": namespace.spec.finalizers or []
-                    if namespace.spec
-                    else []
+                    "finalizers": (
+                        namespace.spec.finalizers or [] if namespace.spec else []
+                    )
                 },
             }
 
@@ -388,26 +391,32 @@ class K8sNamespaceTool(K8sBaseTool):
                     "failed": 0,
                 },
                 "services": {
-                    "total": len(services.items)
-                    if not isinstance(services, Exception)
-                    else 0
+                    "total": (
+                        len(services.items)
+                        if not isinstance(services, Exception)
+                        else 0
+                    )
                 },
                 "deployments": {
-                    "total": len(deployments.items)
-                    if not isinstance(deployments, Exception)
-                    else 0,
+                    "total": (
+                        len(deployments.items)
+                        if not isinstance(deployments, Exception)
+                        else 0
+                    ),
                     "available": 0,
                     "unavailable": 0,
                 },
                 "configmaps": {
-                    "total": len(configmaps.items)
-                    if not isinstance(configmaps, Exception)
-                    else 0
+                    "total": (
+                        len(configmaps.items)
+                        if not isinstance(configmaps, Exception)
+                        else 0
+                    )
                 },
                 "secrets": {
-                    "total": len(secrets.items)
-                    if not isinstance(secrets, Exception)
-                    else 0
+                    "total": (
+                        len(secrets.items) if not isinstance(secrets, Exception) else 0
+                    )
                 },
             }
 

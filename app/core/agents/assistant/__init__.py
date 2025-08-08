@@ -3,7 +3,7 @@
 """
 
 from .core import AssistantAgent
-from .models import SessionData, FallbackEmbeddings, FallbackChatModel
+from .models import FallbackChatModel, FallbackEmbeddings, SessionData
 from .models.config import AssistantConfig, assistant_config
 from .retrieval import VectorStoreManager
 from .storage import DocumentLoader

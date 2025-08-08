@@ -10,8 +10,9 @@ Description: 获取系统信息的MCP工具
 """
 
 import platform
-import psutil
 from typing import Any, Dict
+
+import psutil
 
 from ..mcp_server import BaseTool
 

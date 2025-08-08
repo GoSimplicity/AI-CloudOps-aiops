@@ -5,8 +5,8 @@
 智能查询重写器 - 提升检索召回率
 """
 
-import re
 import logging
+import re
 from typing import List
 
 logger = logging.getLogger("aiops.assistant.query_rewriter")

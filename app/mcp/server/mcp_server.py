@@ -27,12 +27,10 @@ class BaseTool(ABC):
     @abstractmethod
     def get_parameters(self) -> Dict[str, Any]:
         """获取工具参数定义"""
-        pass
 
     @abstractmethod
     async def execute(self, parameters: Dict[str, Any]) -> Any:
         """执行工具"""
-        pass
 
 
 class MCPServer:

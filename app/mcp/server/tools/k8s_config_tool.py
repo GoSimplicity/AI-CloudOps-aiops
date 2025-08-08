@@ -13,6 +13,7 @@ import asyncio
 import base64
 from datetime import datetime
 from typing import Any, Dict
+
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
@@ -181,9 +182,9 @@ class K8sConfigTool(K8sBaseTool):
                     "age": self._calculate_age(cm.metadata.creation_timestamp),
                     "labels": cm.metadata.labels or {},
                     "data_keys": list(cm.data.keys()) if cm.data else [],
-                    "binary_data_keys": list(cm.binary_data.keys())
-                    if cm.binary_data
-                    else [],
+                    "binary_data_keys": (
+                        list(cm.binary_data.keys()) if cm.binary_data else []
+                    ),
                     "immutable": cm.immutable or False,
                     "data_count": len(cm.data or {}) + len(cm.binary_data or {}),
                 }
@@ -239,9 +240,9 @@ class K8sConfigTool(K8sBaseTool):
                     "age": self._calculate_age(secret.metadata.creation_timestamp),
                     "labels": secret.metadata.labels or {},
                     "data_keys": list(secret.data.keys()) if secret.data else [],
-                    "string_data_keys": list(secret.string_data.keys())
-                    if secret.string_data
-                    else [],
+                    "string_data_keys": (
+                        list(secret.string_data.keys()) if secret.string_data else []
+                    ),
                     "immutable": secret.immutable or False,
                     "data_count": len(secret.data or {})
                     + len(secret.string_data or {}),
@@ -363,9 +364,9 @@ class K8sConfigTool(K8sBaseTool):
                 "annotations": secret.metadata.annotations or {},
                 "immutable": secret.immutable or False,
                 "data_keys": list(secret.data.keys()) if secret.data else [],
-                "string_data_keys": list(secret.string_data.keys())
-                if secret.string_data
-                else [],
+                "string_data_keys": (
+                    list(secret.string_data.keys()) if secret.string_data else []
+                ),
                 "data_sizes": {
                     key: f"{len(base64.b64decode(value))} bytes"
                     for key, value in (secret.data or {}).items()

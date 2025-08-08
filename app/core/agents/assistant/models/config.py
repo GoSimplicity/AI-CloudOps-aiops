@@ -6,6 +6,7 @@
 """
 
 from pathlib import Path
+
 from app.config.settings import config
 
 

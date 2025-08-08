@@ -12,6 +12,7 @@ Description: k8sIngress管理的MCP工具，提供Ingress路由的查看、创�
 import asyncio
 from datetime import datetime
 from typing import Any, Dict
+
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
@@ -284,9 +285,11 @@ class K8sIngressTool(K8sBaseTool):
                     ingress_details["spec"]["default_backend"] = {
                         "service": {
                             "name": default_backend.service.name,
-                            "port": default_backend.service.port.number
-                            if default_backend.service.port
-                            else None,
+                            "port": (
+                                default_backend.service.port.number
+                                if default_backend.service.port
+                                else None
+                            ),
                         }
                     }
 
@@ -300,16 +303,20 @@ class K8sIngressTool(K8sBaseTool):
                             path_info = {
                                 "path": path.path,
                                 "path_type": path.path_type,
-                                "backend": {
-                                    "service": {
-                                        "name": path.backend.service.name,
-                                        "port": path.backend.service.port.number
-                                        if path.backend.service.port
-                                        else None,
+                                "backend": (
+                                    {
+                                        "service": {
+                                            "name": path.backend.service.name,
+                                            "port": (
+                                                path.backend.service.port.number
+                                                if path.backend.service.port
+                                                else None
+                                            ),
+                                        }
                                     }
-                                }
-                                if path.backend.service
-                                else None,
+                                    if path.backend.service
+                                    else None
+                                ),
                             }
                             rule_info["http"]["paths"].append(path_info)
 

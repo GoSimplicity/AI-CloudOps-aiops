@@ -23,8 +23,9 @@ from urllib.parse import urlparse
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-import uvicorn
 import importlib
+
+import uvicorn
 
 try:
     fastapi_module = importlib.import_module("fastapi")
@@ -42,9 +43,9 @@ except Exception as e:
 from pydantic import BaseModel, Field
 
 try:
+    from app.config.settings import config
     from app.mcp.server.mcp_server import MCPServer
     from app.mcp.server.tools import tools as mcp_tools
-    from app.config.settings import config
 except ImportError as e:
     logging.error(f"导入模块失败: {e}")
     sys.exit(1)

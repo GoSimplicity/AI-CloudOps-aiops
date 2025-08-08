@@ -5,10 +5,11 @@
 上下文感知检索器 - 提升对话连贯性
 """
 
-import re
 import logging
-from typing import List, Dict, Tuple
+import re
 from collections import Counter
+from typing import Dict, List, Tuple
+
 from langchain_core.documents import Document
 
 logger = logging.getLogger("aiops.assistant.context_retriever")

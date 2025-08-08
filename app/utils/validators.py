@@ -9,9 +9,9 @@ License: Apache 2.0
 Description: 验证器模块 - 提供输入数据验证、格式检查和安全性验证的工具函数
 """
 
+import re
 from datetime import datetime
 from typing import List
-import re
 
 
 def validate_time_range(

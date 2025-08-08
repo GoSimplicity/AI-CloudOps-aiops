@@ -12,6 +12,7 @@ Description: k8s Pod管理的MCP工具，提供Pod的查看、删除、重启等
 import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Dict
+
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
@@ -228,17 +229,21 @@ class K8sPodTool(K8sBaseTool):
                             "status": cond.status,
                             "reason": cond.reason,
                             "message": cond.message,
-                            "last_transition_time": cond.last_transition_time.isoformat()
-                            if cond.last_transition_time
-                            else None,
+                            "last_transition_time": (
+                                cond.last_transition_time.isoformat()
+                                if cond.last_transition_time
+                                else None
+                            ),
                         }
                         for cond in pod.status.conditions or []
                     ],
                     "pod_ip": pod.status.pod_ip,
                     "host_ip": pod.status.host_ip,
-                    "start_time": pod.status.start_time.isoformat()
-                    if pod.status.start_time
-                    else None,
+                    "start_time": (
+                        pod.status.start_time.isoformat()
+                        if pod.status.start_time
+                        else None
+                    ),
                     "qos_class": pod.status.qos_class,
                 },
                 "spec": {
@@ -257,12 +262,14 @@ class K8sPodTool(K8sBaseTool):
                                 }
                                 for port in container.ports or []
                             ],
-                            "resources": {
-                                "requests": container.resources.requests or {},
-                                "limits": container.resources.limits or {},
-                            }
-                            if container.resources
-                            else {},
+                            "resources": (
+                                {
+                                    "requests": container.resources.requests or {},
+                                    "limits": container.resources.limits or {},
+                                }
+                                if container.resources
+                                else {}
+                            ),
                         }
                         for container in pod.spec.containers or []
                     ],
@@ -460,16 +467,20 @@ class K8sPodTool(K8sBaseTool):
                             "type": event.type,
                             "reason": event.reason,
                             "message": event.message,
-                            "source": event.source.component
-                            if event.source
-                            else "Unknown",
+                            "source": (
+                                event.source.component if event.source else "Unknown"
+                            ),
                             "count": event.count or 1,
-                            "first_timestamp": event.first_timestamp.isoformat()
-                            if event.first_timestamp
-                            else None,
-                            "last_timestamp": event.last_timestamp.isoformat()
-                            if event.last_timestamp
-                            else None,
+                            "first_timestamp": (
+                                event.first_timestamp.isoformat()
+                                if event.first_timestamp
+                                else None
+                            ),
+                            "last_timestamp": (
+                                event.last_timestamp.isoformat()
+                                if event.last_timestamp
+                                else None
+                            ),
                             "involved_object": {
                                 "kind": event.involved_object.kind,
                                 "name": event.involved_object.name,
@@ -514,9 +525,11 @@ class K8sPodTool(K8sBaseTool):
         if state.running:
             return {
                 "state": "running",
-                "started_at": state.running.started_at.isoformat()
-                if state.running.started_at
-                else None,
+                "started_at": (
+                    state.running.started_at.isoformat()
+                    if state.running.started_at
+                    else None
+                ),
             }
         elif state.waiting:
             return {
@@ -530,12 +543,16 @@ class K8sPodTool(K8sBaseTool):
                 "reason": state.terminated.reason,
                 "message": state.terminated.message,
                 "exit_code": state.terminated.exit_code,
-                "started_at": state.terminated.started_at.isoformat()
-                if state.terminated.started_at
-                else None,
-                "finished_at": state.terminated.finished_at.isoformat()
-                if state.terminated.finished_at
-                else None,
+                "started_at": (
+                    state.terminated.started_at.isoformat()
+                    if state.terminated.started_at
+                    else None
+                ),
+                "finished_at": (
+                    state.terminated.finished_at.isoformat()
+                    if state.terminated.finished_at
+                    else None
+                ),
             }
         else:
             return {"state": "unknown"}

@@ -5,10 +5,10 @@
 会话管理器
 """
 
-import uuid
 import threading
-from typing import Dict, List, Optional
+import uuid
 from datetime import datetime
+from typing import Dict, List, Optional
 
 from app.core.agents.assistant.models.base import SessionData
 

@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+规则引擎占位：用于匹配 K8s 常见问题模式并产出证据
+"""
+
+from __future__ import annotations
+
+from typing import Dict, List
+
+
+class RuleEngine:
+    """极简规则引擎占位实现。"""
+
+    def __init__(self):
+        self.rules: List[Dict] = []
+
+    def load_builtin(self):
+        """加载内置规则（简版）"""
+        self.rules = [
+            {
+                "name": "CrashLoopBackOff",
+                "event_reasons": ["BackOff", "CrashLoopBackOff"],
+            },
+            {
+                "name": "ImagePullBackOff",
+                "event_reasons": ["ErrImagePull", "ImagePullBackOff"],
+            },
+            {"name": "ProbeFailed", "event_reasons": ["Unhealthy", "ProbeError"]},
+            {"name": "OOMKilled", "event_messages": ["OOMKilled", "out of memory"]},
+        ]
+
+    def evaluate(self, context: Dict) -> List[Dict]:
+        """对上下文执行规则评估，返回命中证据列表。"""
+        evidence: List[Dict] = []
+        events = context.get("events") or []
+        try:
+            for ev in events:
+                reason = str(ev.get("reason") or "").lower()
+                message = str(ev.get("message") or "").lower()
+                for rule in self.rules:
+                    reasons = [r.lower() for r in rule.get("event_reasons", [])]
+                    msgs = [m.lower() for m in rule.get("event_messages", [])]
+                    hit = (reasons and any(r in reason for r in reasons)) or (
+                        msgs and any(m in message for m in msgs)
+                    )
+                    if hit:
+                        evidence.append(
+                            {
+                                "rule": rule["name"],
+                                "reason": ev.get("reason"),
+                                "message": ev.get("message"),
+                                "namespace": ev.get("namespace"),
+                                "firstTimestamp": ev.get("firstTimestamp"),
+                                "lastTimestamp": ev.get("lastTimestamp"),
+                            }
+                        )
+                        break
+        except Exception:
+            pass
+
+        return evidence

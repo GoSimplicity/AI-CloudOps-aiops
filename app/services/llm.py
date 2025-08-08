@@ -9,33 +9,33 @@ License: Apache 2.0
 Description: 大语言模型服务 - 提供LLM服务接口，支持多种LLM提供商
 """
 
-import logging
-
 # ==================== 核心依赖导入 ====================
 import json
+import logging
 import os
 import re
-from typing import Dict, Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
+
+import ollama  # Ollama本地模型客户端
 
 # ==================== LLM客户端库导入 ====================
 from openai import OpenAI  # OpenAI官方客户端
-import ollama  # Ollama本地模型客户端
 
 # ==================== 内部组件导入 ====================
 from app.config.settings import config  # 系统配置
 from app.constants import (
     LLM_MAX_RETRIES,
+    LLM_TEMPERATURE_MAX,  # LLM相关常量
     LLM_TEMPERATURE_MIN,
-    LLM_TEMPERATURE_MAX,
-)  # LLM相关常量
+)
 from app.utils.error_handlers import (
-    ErrorHandler,
+    ErrorHandler,  # 错误处理工具
+    ExternalServiceError,
     ServiceError,
     ValidationError,
-    ExternalServiceError,
     retry_on_exception,
     validate_field_range,
-)  # 错误处理工具
+)
 
 logger = logging.getLogger("aiops.llm")
 

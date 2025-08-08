@@ -9,20 +9,21 @@ License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
 
-import pickle
-import numpy as np
-import threading
-import logging
-from typing import List, Dict, Any, Optional, Tuple
-from pathlib import Path
-from dataclasses import dataclass
 import hashlib
+import logging
+import pickle
+import threading
 import time
-import redis
-from redis.connection import ConnectionPool
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import redis
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
+from redis.connection import ConnectionPool
 
 # 可选依赖
 FAISS_AVAILABLE = False
@@ -1469,6 +1470,7 @@ class VectorStoreManager:
         """初始化Redis连接"""
         try:
             from redis import Redis
+
             from app.config.settings import config
 
             # Redis连接配置

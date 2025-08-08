@@ -10,17 +10,25 @@ Description: 系统根因分析
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
-import pandas as pd
-import time
 
-from app.core.rca.detector import AnomalyDetector  # 异常检测器
-from app.core.rca.correlator import CorrelationAnalyzer  # 相关性分析器
-from app.services.prometheus import PrometheusService  # Prometheus数据服务
-from app.services.llm import LLMService  # 大语言模型服务
-from app.models.response_models import RootCauseCandidate, AnomalyInfo
+import pandas as pd
+
 from app.config.settings import config  # 系统配置
+
+# 预留：PrometheusCollector 可用于更复杂的查询组合
+from app.core.rca.collectors.k8s_events_collector import K8sEventsCollector
+from app.core.rca.collectors.k8s_state_collector import K8sStateCollector
+from app.core.rca.correlator import CorrelationAnalyzer  # 相关性分析器
+from app.core.rca.detector import AnomalyDetector  # 异常检测器
+from app.core.rca.rules.engine import RuleEngine
+from app.core.rca.topology.graph import build_topology_from_state
+from app.models.response_models import AnomalyInfo, RootCauseCandidate
+from app.services.kubernetes import KubernetesService  # Kubernetes数据服务
+from app.services.llm import LLMService  # 大语言模型服务
+from app.services.prometheus import PrometheusService  # Prometheus数据服务
 
 logger = logging.getLogger("aiops.rca")
 
@@ -36,6 +44,7 @@ class RCAAnalyzer:
         """
         # 初始化Prometheus数据服务，用于获取监控指标
         self.prometheus = PrometheusService()
+        self.kubernetes = KubernetesService()
 
         # 初始化异常检测器，使用配置中的阈值
         self.detector = AnomalyDetector(config.rca.anomaly_threshold)
@@ -65,7 +74,7 @@ class RCAAnalyzer:
             if not metrics:
                 metrics = config.rca.default_metrics
 
-            # 收集监控指标数据，这是整个分析的数据基础
+            # 收集监控指标数据（Prometheus）
             metrics_data = await self._collect_metrics_data(
                 start_time, end_time, metrics
             )
@@ -82,10 +91,46 @@ class RCAAnalyzer:
 
             # 相关性分析阶段 - 分析指标间的因果关系
             correlations = await self.correlator.analyze_correlations(metrics_data)
+            # 可选：跨时滞相关（保守启用，避免响应过大）
+            try:
+                lag_result = await self.correlator.analyze_correlations_with_cross_lag(
+                    metrics_data, max_lags=5
+                )
+            except Exception:
+                lag_result = {"correlations": correlations, "cross_correlations": {}}
             logger.info(f"分析了 {len(correlations)} 个指标的相关性")
 
             # 根因候选生成阶段 - 综合异常和相关性信息生成可能的根因
             root_causes = self._generate_root_cause_candidates(anomalies, correlations)
+
+            # 采集上下文（事件/对象状态/拓扑）
+            context_events: List[Dict] = []
+            context_state: Dict = {}
+            context_topology: Dict = {}
+            try:
+                events_collector = K8sEventsCollector(namespace=config.k8s.namespace)
+                state_collector = K8sStateCollector(namespace=config.k8s.namespace)
+                context_events = await events_collector.pull(limit=200)
+                context_state = await state_collector.snapshot()
+                context_topology = build_topology_from_state(context_state).to_dict()
+            except Exception:
+                # 采集失败不影响主流程
+                pass
+
+            # 规则引擎评估（占位）
+            rule_evidence: List[Dict] = []
+            try:
+                engine = RuleEngine()
+                engine.load_builtin()
+                rule_evidence = engine.evaluate(
+                    {
+                        "events": context_events,
+                        "state": context_state,
+                        "metrics": list(metrics_data.keys()),
+                    }
+                )
+            except Exception:
+                pass
 
             # AI摘要生成阶段 - 使用LLM生成人类可读的分析报告
             summary = await self._generate_summary(anomalies, correlations, root_causes)
@@ -103,6 +148,7 @@ class RCAAnalyzer:
                 },
                 # 相关性分析结果
                 "correlations": correlations,
+                "cross_correlations": lag_result.get("cross_correlations", {}),
                 # 根因候选列表：按置信度排序
                 "root_cause_candidates": [
                     RootCauseCandidate(**candidate).__dict__
@@ -125,6 +171,22 @@ class RCAAnalyzer:
                     ),
                     "analysis_duration": analysis_duration,
                 },
+                # 新增上下文字段（占位）
+                "events": context_events,
+                "state": {
+                    "namespace": context_state.get("namespace"),
+                    # 仅返回计数，避免响应过大
+                    "pods": len(context_state.get("pods") or []),
+                    "deployments": len(context_state.get("deployments") or []),
+                    "services": len(context_state.get("services") or []),
+                },
+                "topology": context_topology,
+                "evidence": rule_evidence,
+                "timeline": await self.generate_timeline(
+                    start_time, end_time, context_events
+                ),
+                "impact_scope": [],
+                "suggestions": self._generate_suggestions_from_causes(root_causes),
             }
 
             logger.info("根因分析完成")
@@ -133,6 +195,89 @@ class RCAAnalyzer:
         except Exception as e:
             logger.error(f"根因分析失败: {str(e)}")
             return {"error": f"分析失败: {str(e)}"}
+
+    async def detect_anomalies(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        metrics: Optional[List[str]] = None,
+        sensitivity: Optional[float] = None,
+    ) -> Dict:
+        """包装异常检测：收集指标后调用底层检测器。"""
+        metrics = metrics or config.rca.default_metrics
+        metrics_data = await self._collect_metrics_data(start_time, end_time, metrics)
+        if not metrics_data:
+            return {}
+        return await self.detector.detect_anomalies(metrics_data)
+
+    async def analyze_correlations(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        target_metric: Optional[str] = None,
+        metrics: Optional[List[str]] = None,
+    ) -> Dict:
+        """包装相关性分析：可选target过滤。"""
+        metrics = metrics or config.rca.default_metrics
+        metrics_data = await self._collect_metrics_data(start_time, end_time, metrics)
+        if not metrics_data:
+            return {}
+        all_corr = await self.correlator.analyze_correlations(metrics_data)
+        if target_metric:
+            # 仅返回与目标相关的项
+            return {target_metric: all_corr.get(target_metric, [])}
+        return all_corr
+
+    async def generate_timeline(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        events: Optional[List[Dict]] = None,
+    ) -> List[Dict]:
+        """简单时间线：占位实现，后续融合事件与异常。"""
+        timeline: List[Dict] = []
+        try:
+            # 生成占位条目
+            timeline.append(
+                {
+                    "timestamp": start_time.isoformat(),
+                    "type": "start",
+                    "message": "分析开始",
+                }
+            )
+            if events:
+                for e in events[:50]:
+                    ts = e.get("firstTimestamp") or e.get("lastTimestamp")
+                    timeline.append(
+                        {
+                            "timestamp": str(ts) if ts else None,
+                            "type": "event",
+                            "message": e.get("reason") or e.get("message"),
+                        }
+                    )
+            timeline.append(
+                {
+                    "timestamp": end_time.isoformat(),
+                    "type": "end",
+                    "message": "分析结束",
+                }
+            )
+        except Exception:
+            pass
+        return timeline
+
+    def get_analysis_history(self, limit: int = 50) -> List[Dict]:
+        """占位历史记录：后续可接入持久化存储。"""
+        return []
+
+    def is_healthy(self) -> bool:
+        """综合健康检查：Prometheus 与 Kubernetes。"""
+        try:
+            prom_ok = self.prometheus.is_healthy()
+            k8s_ok = self.kubernetes.is_healthy()
+            return bool(prom_ok and k8s_ok)
+        except Exception:
+            return False
 
     def _calculate_analysis_duration(self, start_time: datetime) -> float:
         """计算分析持续时间，处理时区问题，已废弃暂时保留"""
@@ -450,3 +595,16 @@ class RCAAnalyzer:
             if recommendations
             else "建议进行详细的系统检查和日志分析。"
         )
+
+    def _generate_suggestions_from_causes(self, root_causes: List[Dict]) -> List[str]:
+        """根据根因候选生成简要建议清单（占位）。"""
+        if not root_causes:
+            return ["检查资源限额、就绪/存活探针与重启原因，留意K8s事件和容器日志。"]
+        top = root_causes[0].get("metric", "").lower()
+        if "cpu" in top:
+            return ["提升CPU配额或副本数，或优化CPU热点逻辑。"]
+        if "memory" in top:
+            return ["提升内存配额，排查内存泄漏，关注OOMKill事件。"]
+        if "restart" in top:
+            return ["查看Pod重启原因，核验镜像/探针/配置。"]
+        return ["根据异常指标对应的组件进行定向检查。"]

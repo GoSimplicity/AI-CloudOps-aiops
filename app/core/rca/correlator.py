@@ -10,10 +10,12 @@ Description: 相关性分析器 - 计算监控指标间的相关性关系，识�
 """
 
 import logging
+from typing import Any, Dict, List, Tuple
+
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple
 from scipy.stats import pearsonr
+
 from app.config.settings import config
 
 logger = logging.getLogger("aiops.correlator")
@@ -57,6 +59,41 @@ class CorrelationAnalyzer:
         except Exception as e:
             logger.error(f"相关性分析失败: {str(e)}")
             return {}
+
+    async def analyze_correlations_with_cross_lag(
+        self, metrics_data: Dict[str, pd.DataFrame], max_lags: int = 10
+    ) -> Dict[str, Any]:
+        """返回同时包含零时滞相关与跨时滞最优相关的结果。"""
+        base = await self.analyze_correlations(metrics_data)
+        cross: Dict[str, List[Tuple[str, int, float]]] = {}
+        try:
+            # 预处理合并数据，便于逐列取 series
+            combined_df = self._prepare_correlation_data(metrics_data)
+            metrics = list(combined_df.columns)
+            for i, m1 in enumerate(metrics):
+                vals: List[Tuple[str, int, float]] = []
+                for j, m2 in enumerate(metrics):
+                    if i == j:
+                        continue
+                    # 计算 m1 与 m2 的跨时滞相关（取绝对值最大的lag）
+                    cc = await self.calculate_cross_correlation(
+                        combined_df[m1], combined_df[m2], max_lags=max_lags
+                    )
+                    if cc:
+                        # 选择绝对值最大的相关系数及其lag
+                        best_lag = max(cc.keys(), key=lambda k: abs(cc[k]))
+                        best_corr = float(cc[best_lag])
+                        if abs(best_corr) >= self.correlation_threshold:
+                            vals.append((m2, int(best_lag), round(best_corr, 3)))
+                if vals:
+                    # 按相关性强度排序
+                    vals.sort(key=lambda x: abs(x[2]), reverse=True)
+                    cross[m1] = vals[:5]
+        except Exception as e:
+            logger.error(f"跨时滞相关分析失败: {str(e)}")
+            cross = {}
+
+        return {"correlations": base, "cross_correlations": cross}
 
     def _prepare_correlation_data(
         self, metrics_data: Dict[str, pd.DataFrame]

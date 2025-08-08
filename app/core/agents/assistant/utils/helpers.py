@@ -7,7 +7,8 @@
 
 import re
 import sys
-from typing import List, Tuple, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional, Tuple
+
 from langchain_core.documents import Document
 
 if TYPE_CHECKING:

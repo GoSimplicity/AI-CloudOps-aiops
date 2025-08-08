@@ -9,24 +9,26 @@ License: Apache 2.0
 Description: 自动修复API路由 - 提供Kubernetes问题自动诊断、修复和工作流管理
 """
 
-from fastapi import APIRouter, HTTPException
-from datetime import datetime, timezone
 import asyncio
 import logging
 import time
-from app.core.agents.supervisor import SupervisorAgent
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
 from app.core.agents.k8s_fixer import K8sFixerAgent
 from app.core.agents.notifier import NotifierAgent
+from app.core.agents.supervisor import SupervisorAgent
 from app.models.request_models import AutoFixRequest
-from app.models.response_models import AutoFixResponse, APIResponse
+from app.models.response_models import APIResponse, AutoFixResponse
+from app.services.notification import NotificationService
 from app.utils.validators import (
+    sanitize_input,
     validate_deployment_name,
     validate_namespace,
-    sanitize_input,
 )
-from app.services.notification import NotificationService
-from typing import Optional
-from pydantic import BaseModel
 
 logger = logging.getLogger("aiops.autofix")
 
@@ -109,7 +111,9 @@ async def autofix_k8s(request_data: AutoFixRequest):
             recommendations=fix_result.get("recommendations", []),
         )
 
-        return APIResponse(code=0, message="自动修复完成", data=response.model_dump()).model_dump()
+        return APIResponse(
+            code=0, message="自动修复完成", data=response.model_dump()
+        ).model_dump()
 
     except HTTPException:
         raise
@@ -169,7 +173,9 @@ async def run_diagnosis(request_data: AutoFixRequest):
             k8s_fixer_agent.diagnose_issues, deployment=deployment, namespace=namespace
         )
 
-        return APIResponse(code=0, message="问题诊断完成", data=diagnosis_result).model_dump()
+        return APIResponse(
+            code=0, message="问题诊断完成", data=diagnosis_result
+        ).model_dump()
 
     except HTTPException:
         raise

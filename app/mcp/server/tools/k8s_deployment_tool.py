@@ -12,6 +12,7 @@ Description: k8s Deployment管理的MCP工具，提供Deployment的查看、更�
 import asyncio
 from datetime import datetime
 from typing import Any, Dict
+
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
@@ -163,9 +164,11 @@ class K8sDeploymentTool(K8sBaseTool):
                     "up_to_date": deploy.status.updated_replicas or 0,
                     "available": deploy.status.available_replicas or 0,
                     "age": self._calculate_age(deploy.metadata.creation_timestamp),
-                    "strategy": deploy.spec.strategy.type
-                    if deploy.spec.strategy
-                    else "RollingUpdate",
+                    "strategy": (
+                        deploy.spec.strategy.type
+                        if deploy.spec.strategy
+                        else "RollingUpdate"
+                    ),
                     "labels": deploy.metadata.labels or {},
                     "selector": deploy.spec.selector.match_labels or {},
                     "containers": [
@@ -232,25 +235,33 @@ class K8sDeploymentTool(K8sBaseTool):
                 "spec": {
                     "replicas": deployment.spec.replicas,
                     "selector": deployment.spec.selector.match_labels or {},
-                    "strategy": {
-                        "type": deployment.spec.strategy.type,
-                        "rolling_update": {
-                            "max_unavailable": str(
-                                deployment.spec.strategy.rolling_update.max_unavailable
-                            )
-                            if deployment.spec.strategy.rolling_update
-                            else None,
-                            "max_surge": str(
-                                deployment.spec.strategy.rolling_update.max_surge
-                            )
-                            if deployment.spec.strategy.rolling_update
-                            else None,
+                    "strategy": (
+                        {
+                            "type": deployment.spec.strategy.type,
+                            "rolling_update": (
+                                {
+                                    "max_unavailable": (
+                                        str(
+                                            deployment.spec.strategy.rolling_update.max_unavailable
+                                        )
+                                        if deployment.spec.strategy.rolling_update
+                                        else None
+                                    ),
+                                    "max_surge": (
+                                        str(
+                                            deployment.spec.strategy.rolling_update.max_surge
+                                        )
+                                        if deployment.spec.strategy.rolling_update
+                                        else None
+                                    ),
+                                }
+                                if deployment.spec.strategy.rolling_update
+                                else None
+                            ),
                         }
-                        if deployment.spec.strategy.rolling_update
-                        else None,
-                    }
-                    if deployment.spec.strategy
-                    else {},
+                        if deployment.spec.strategy
+                        else {}
+                    ),
                     "revision_history_limit": deployment.spec.revision_history_limit,
                     "progress_deadline_seconds": deployment.spec.progress_deadline_seconds,
                     "paused": deployment.spec.paused or False,
@@ -268,12 +279,16 @@ class K8sDeploymentTool(K8sBaseTool):
                             "status": cond.status,
                             "reason": cond.reason,
                             "message": cond.message,
-                            "last_transition_time": cond.last_transition_time.isoformat()
-                            if cond.last_transition_time
-                            else None,
-                            "last_update_time": cond.last_update_time.isoformat()
-                            if cond.last_update_time
-                            else None,
+                            "last_transition_time": (
+                                cond.last_transition_time.isoformat()
+                                if cond.last_transition_time
+                                else None
+                            ),
+                            "last_update_time": (
+                                cond.last_update_time.isoformat()
+                                if cond.last_update_time
+                                else None
+                            ),
                         }
                         for cond in deployment.status.conditions or []
                     ],
@@ -291,12 +306,14 @@ class K8sDeploymentTool(K8sBaseTool):
                                 for port in container.ports or []
                             ],
                             "resources": self._format_resources(container.resources),
-                            "env": [
-                                {"name": env.name, "value": env.value}
-                                for env in container.env or []
-                            ]
-                            if container.env
-                            else [],
+                            "env": (
+                                [
+                                    {"name": env.name, "value": env.value}
+                                    for env in container.env or []
+                                ]
+                                if container.env
+                                else []
+                            ),
                         }
                         for container in deployment.spec.template.spec.containers or []
                     ]
@@ -642,7 +659,7 @@ class K8sDeploymentTool(K8sBaseTool):
 
             deployment.spec.template.metadata.annotations[
                 "kubectl.kubernetes.io/restartedAt"
-            ] = datetime.utcnow().isoformat() + "Z"
+            ] = (datetime.utcnow().isoformat() + "Z")
 
             # 更新Deployment
             await loop.run_in_executor(

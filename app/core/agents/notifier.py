@@ -10,10 +10,12 @@ Description: 通知代理 - 发送运维告警和消息通知
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 from langchain_core.tools import tool
-from app.services.notification import NotificationService
+
 from app.config.settings import config
+from app.services.notification import NotificationService
 
 logger = logging.getLogger("aiops.notifier")
 

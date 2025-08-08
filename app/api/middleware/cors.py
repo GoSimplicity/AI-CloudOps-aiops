@@ -9,8 +9,9 @@ License: Apache 2.0
 Description: CORS中间件配置 - 处理跨域资源共享，支持浏览器端API访问
 """
 
-from fastapi.middleware.cors import CORSMiddleware
 import logging
+
+from fastapi.middleware.cors import CORSMiddleware
 
 logger = logging.getLogger("aiops.cors")
 

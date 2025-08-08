@@ -14,7 +14,8 @@ WORKDIR /app
 # 复制依赖文件
 COPY requirements.txt .
 
-# 安装Python依赖
+# 安装Python依赖（关闭版本检查/缓存，加速构建）
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
@@ -30,8 +31,8 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV APP_MODULE=app.main:app
 
-# 安装运行时依赖
-RUN apt-get update && apt-get install -y \
+# 安装运行时依赖（无推荐包，清理缓存）
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     tzdata \
     ca-certificates \
@@ -59,3 +60,6 @@ EXPOSE 8080
 
 # 启动应用（生产）
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+
+# 健康检查：存活（容器内需有 curl）
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD curl -fsS http://127.0.0.1:8080/health/live || exit 1

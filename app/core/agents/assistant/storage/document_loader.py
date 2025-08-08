@@ -5,13 +5,13 @@
 仅支持 txt 和 md 的文档加载器
 """
 
-import re
 import logging
+import re
 from pathlib import Path
 from typing import List
 
-from langchain_core.documents import Document
 from langchain.text_splitter import MarkdownHeaderTextSplitter
+from langchain_core.documents import Document
 
 logger = logging.getLogger("aiops.assistant.document_loader")
 

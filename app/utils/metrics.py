@@ -9,8 +9,9 @@ License: Apache 2.0
 Description: 指标工具模块 - 提供指标数据处理、统计分析和异常检测相关的工具函数
 """
 
+from typing import Dict, List
+
 import pandas as pd
-from typing import List, Dict
 
 
 class MetricsUtils:

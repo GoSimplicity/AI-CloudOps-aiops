@@ -12,6 +12,7 @@ Description: k8s应用伸缩的MCP工具，提供Deployment、ReplicaSet等的�
 import asyncio
 from datetime import datetime
 from typing import Any, Dict, List
+
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
@@ -428,18 +429,22 @@ class K8sScalingTool(K8sBaseTool):
                 "status": {
                     "current_replicas": hpa.status.current_replicas,
                     "desired_replicas": hpa.status.desired_replicas,
-                    "last_scale_time": hpa.status.last_scale_time.isoformat()
-                    if hpa.status.last_scale_time
-                    else None,
+                    "last_scale_time": (
+                        hpa.status.last_scale_time.isoformat()
+                        if hpa.status.last_scale_time
+                        else None
+                    ),
                     "conditions": [
                         {
                             "type": cond.type,
                             "status": cond.status,
                             "reason": cond.reason,
                             "message": cond.message,
-                            "last_transition_time": cond.last_transition_time.isoformat()
-                            if cond.last_transition_time
-                            else None,
+                            "last_transition_time": (
+                                cond.last_transition_time.isoformat()
+                                if cond.last_transition_time
+                                else None
+                            ),
                         }
                         for cond in hpa.status.conditions or []
                     ],
@@ -455,12 +460,12 @@ class K8sScalingTool(K8sBaseTool):
                     self._format_v2_current_metrics(hpa.status.current_metrics or [])
                 )
             else:
-                hpa_status["spec"]["target_cpu_percent"] = (
-                    hpa.spec.target_cpu_utilization_percentage
-                )
-                hpa_status["status"]["current_cpu_percent"] = (
-                    hpa.status.current_cpu_utilization_percentage
-                )
+                hpa_status["spec"][
+                    "target_cpu_percent"
+                ] = hpa.spec.target_cpu_utilization_percentage
+                hpa_status["status"][
+                    "current_cpu_percent"
+                ] = hpa.status.current_cpu_utilization_percentage
 
             return {
                 "success": True,
@@ -610,9 +615,11 @@ class K8sScalingTool(K8sBaseTool):
                         "type": "Resource",
                         "resource": {
                             "name": metric.resource.name,
-                            "target": metric.resource.target.to_dict()
-                            if metric.resource.target
-                            else {},
+                            "target": (
+                                metric.resource.target.to_dict()
+                                if metric.resource.target
+                                else {}
+                            ),
                         },
                     }
                 )
@@ -635,9 +642,11 @@ class K8sScalingTool(K8sBaseTool):
                         "type": "Resource",
                         "resource": {
                             "name": metric.resource.name,
-                            "current": metric.resource.current.to_dict()
-                            if metric.resource.current
-                            else {},
+                            "current": (
+                                metric.resource.current.to_dict()
+                                if metric.resource.current
+                                else {}
+                            ),
                         },
                     }
                 )

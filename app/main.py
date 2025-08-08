@@ -12,11 +12,13 @@ Description: 主应用模块 - 提供FastAPI应用的创建和初始化功能
 import logging
 import time
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
-from app.config.settings import config
-from app.config.logging import setup_logging
-from app.api.routes import register_routes
+
 from app.api.middleware import register_middleware
+from app.api.routes import register_routes
+from app.config.logging import setup_logging
+from app.config.settings import config
 
 start_time = time.time()
 

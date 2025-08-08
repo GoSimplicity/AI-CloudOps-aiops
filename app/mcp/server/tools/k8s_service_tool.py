@@ -12,6 +12,7 @@ Description: k8s Service管理的MCP工具，提供Service的查看、创建、�
 import asyncio
 from datetime import datetime
 from typing import Any, Dict
+
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
@@ -295,16 +296,18 @@ class K8sServiceTool(K8sBaseTool):
                         {
                             "ip": ing.ip,
                             "hostname": ing.hostname,
-                            "ports": [
-                                {
-                                    "port": port.port,
-                                    "protocol": port.protocol,
-                                    "error": port.error,
-                                }
-                                for port in ing.ports or []
-                            ]
-                            if ing.ports
-                            else [],
+                            "ports": (
+                                [
+                                    {
+                                        "port": port.port,
+                                        "protocol": port.protocol,
+                                        "error": port.error,
+                                    }
+                                    for port in ing.ports or []
+                                ]
+                                if ing.ports
+                                else []
+                            ),
                         }
                         for ing in ingress_list
                     ]
@@ -507,13 +510,15 @@ class K8sServiceTool(K8sBaseTool):
                         {
                             "ip": addr.ip,
                             "hostname": addr.hostname,
-                            "target_ref": {
-                                "kind": addr.target_ref.kind,
-                                "name": addr.target_ref.name,
-                                "namespace": addr.target_ref.namespace,
-                            }
-                            if addr.target_ref
-                            else None,
+                            "target_ref": (
+                                {
+                                    "kind": addr.target_ref.kind,
+                                    "name": addr.target_ref.name,
+                                    "namespace": addr.target_ref.namespace,
+                                }
+                                if addr.target_ref
+                                else None
+                            ),
                         }
                         for addr in subset.addresses or []
                     ],
@@ -521,13 +526,15 @@ class K8sServiceTool(K8sBaseTool):
                         {
                             "ip": addr.ip,
                             "hostname": addr.hostname,
-                            "target_ref": {
-                                "kind": addr.target_ref.kind,
-                                "name": addr.target_ref.name,
-                                "namespace": addr.target_ref.namespace,
-                            }
-                            if addr.target_ref
-                            else None,
+                            "target_ref": (
+                                {
+                                    "kind": addr.target_ref.kind,
+                                    "name": addr.target_ref.name,
+                                    "namespace": addr.target_ref.namespace,
+                                }
+                                if addr.target_ref
+                                else None
+                            ),
                         }
                         for addr in subset.not_ready_addresses or []
                     ],

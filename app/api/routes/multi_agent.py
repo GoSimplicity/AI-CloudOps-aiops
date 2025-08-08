@@ -9,19 +9,21 @@ License: Apache 2.0
 Description: 提供多Agent协作的K8s修复API接口
 """
 
-from fastapi import APIRouter, HTTPException
-from datetime import datetime
 import asyncio
 import logging
+from datetime import datetime
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
 from app.core.agents.coordinator import K8sCoordinatorAgent
 from app.models.response_models import APIResponse
 from app.utils.validators import (
+    sanitize_input,
     validate_deployment_name,
     validate_namespace,
-    sanitize_input,
 )
-from pydantic import BaseModel
-from typing import Optional
 
 logger = logging.getLogger("aiops.multi_agent")
 
@@ -134,7 +136,9 @@ async def get_coordinator_status():
         # 获取协调器状态
         status = await asyncio.to_thread(coordinator.get_status)
 
-        return APIResponse(code=0, message="协调器状态获取成功", data=status).model_dump()
+        return APIResponse(
+            code=0, message="协调器状态获取成功", data=status
+        ).model_dump()
 
     except Exception as e:
         logger.error(f"获取协调器状态失败: {str(e)}")
