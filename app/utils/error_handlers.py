@@ -6,12 +6,11 @@ AI-CloudOps-aiops
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 统一错误处理工具 - 提供标准化的错误处理、日志记录和响应格式化功能
+Description: 统一错误处理工具
 """
 
 import asyncio
 import logging
-import traceback
 from datetime import datetime
 from functools import wraps
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
@@ -50,12 +49,12 @@ class ValidationError(AICloudOpsError):
         if field:
             details["field"] = field
         if value is not None:
-            details["invalid_value"] = str(value)
+            details["value"] = str(value)
         super().__init__(message, "VALIDATION_ERROR", details)
 
 
 class ServiceError(AICloudOpsError):
-    """服务层错误"""
+    """服务错误"""
 
     def __init__(self, message: str, service: str, operation: Optional[str] = None):
         details = {"service": service}
@@ -91,13 +90,11 @@ class ErrorHandler:
         self.logger = logger or logging.getLogger(__name__)
 
     def log_and_return_error(
-        self, error: Exception, context: str, include_traceback: bool = True
+        self, error: Exception, context: str
     ) -> Tuple[str, Dict[str, Any]]:
         """记录错误并返回格式化的错误信息"""
-
         error_id = f"error_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
-
-        # 构建错误详情
+        
         error_details = {
             "error_id": error_id,
             "error_type": type(error).__name__,
@@ -113,12 +110,7 @@ class ErrorHandler:
 
         # 记录日志
         log_message = f"[{error_id}] {context}: {str(error)}"
-
-        if include_traceback:
-            self.logger.error(log_message, exc_info=True)
-            error_details["traceback"] = traceback.format_exc()
-        else:
-            self.logger.error(log_message)
+        self.logger.error(log_message)
 
         return str(error), error_details
 
@@ -127,7 +119,7 @@ class ErrorHandler:
     ) -> Tuple[Dict[str, Any], int]:
         """处理验证错误"""
         message, details = self.log_and_return_error(
-            error, f"Validation error: {context}", False
+            error, f"Validation error: {context}"
         )
 
         return {
@@ -151,64 +143,17 @@ class ErrorHandler:
         }, HTTP_STATUS_INTERNAL_ERROR
 
     def handle_not_found_error(
-        self, resource: str, identifier: str = ""
+        self, error: Exception, context: str = ""
     ) -> Tuple[Dict[str, Any], int]:
-        """处理资源未找到错误"""
-        message = f"{resource} not found"
-        if identifier:
-            message += f": {identifier}"
-
-        self.logger.warning(message)
+        """处理未找到错误"""
+        message, details = self.log_and_return_error(error, f"Not found: {context}")
 
         return {
             "code": HTTP_STATUS_NOT_FOUND,
             "message": ERROR_MESSAGES.get("not_found", message),
             "data": {},
-            "error_details": {
-                "resource": resource,
-                "identifier": identifier,
-                "timestamp": datetime.now().isoformat(),
-            },
+            "error_details": details,
         }, HTTP_STATUS_NOT_FOUND
-
-
-def error_handler(
-    logger: Optional[logging.Logger] = None,
-    return_exceptions: bool = False,
-    default_return_value: Any = None,
-):
-    """错误处理装饰器"""
-
-    def decorator(func):
-        @wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            handler = ErrorHandler(logger)
-            try:
-                return await func(*args, **kwargs)
-            except Exception as e:
-                if return_exceptions:
-                    return default_return_value
-                error_msg, _ = handler.log_and_return_error(
-                    e, f"Function {func.__name__}"
-                )
-                raise ServiceError(error_msg, func.__name__)
-
-        @wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            handler = ErrorHandler(logger)
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                if return_exceptions:
-                    return default_return_value
-                error_msg, _ = handler.log_and_return_error(
-                    e, f"Function {func.__name__}"
-                )
-                raise ServiceError(error_msg, func.__name__)
-
-        return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
-
-    return decorator
 
 
 def retry_on_exception(
@@ -216,175 +161,90 @@ def retry_on_exception(
     delay: float = 1.0,
     backoff_factor: float = 2.0,
     exceptions: Tuple[Type[Exception], ...] = (Exception,),
-    logger: Optional[logging.Logger] = None,
 ):
     """重试装饰器"""
-
     def decorator(func):
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
-            _logger = logger or logging.getLogger(func.__module__)
-            last_exception: Optional[BaseException] = None
-
+            last_exception = None
             for attempt in range(max_retries + 1):
                 try:
                     return await func(*args, **kwargs)
                 except exceptions as e:
                     last_exception = e
                     if attempt == max_retries:
-                        _logger.error(
-                            f"Function {func.__name__} failed after {max_retries} retries: {str(e)}"
-                        )
                         raise
-
-                    retry_delay = delay * (backoff_factor**attempt)
-                    _logger.warning(
-                        f"Function {func.__name__} failed (attempt {attempt + 1}/{max_retries + 1}), retrying in {retry_delay}s: {str(e)}"
-                    )
-                    await asyncio.sleep(retry_delay)
-
-            if last_exception is not None:
+                    
+                    wait_time = delay * (backoff_factor ** attempt)
+                    await asyncio.sleep(wait_time)
+            
+            if last_exception:
                 raise last_exception
-            raise RuntimeError("Unknown error in async retry handler")
-
+        
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
-            import time
-
-            _logger = logger or logging.getLogger(func.__module__)
-            last_exception: Optional[BaseException] = None
-
+            last_exception = None
             for attempt in range(max_retries + 1):
                 try:
                     return func(*args, **kwargs)
                 except exceptions as e:
                     last_exception = e
                     if attempt == max_retries:
-                        _logger.error(
-                            f"Function {func.__name__} failed after {max_retries} retries: {str(e)}"
-                        )
                         raise
-
-                    retry_delay = delay * (backoff_factor**attempt)
-                    _logger.warning(
-                        f"Function {func.__name__} failed (attempt {attempt + 1}/{max_retries + 1}), retrying in {retry_delay}s: {str(e)}"
-                    )
-                    time.sleep(retry_delay)
-
-            if last_exception is not None:
+                    
+                    wait_time = delay * (backoff_factor ** attempt)
+                    import time
+                    time.sleep(wait_time)
+            
+            if last_exception:
                 raise last_exception
-            raise RuntimeError("Unknown error in retry handler")
-
+        
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
-
+    
     return decorator
 
 
 def validate_required_fields(data: Dict[str, Any], required_fields: List[str]) -> None:
     """验证必需字段"""
     missing_fields = []
-
     for field in required_fields:
-        if field not in data or data[field] is None:
+        if field not in data or data[field] is None or data[field] == "":
             missing_fields.append(field)
-        elif isinstance(data[field], str) and not data[field].strip():
-            missing_fields.append(field)
-
+    
     if missing_fields:
-        raise ValidationError(
-            f"Missing required fields: {', '.join(missing_fields)}",
-            field=missing_fields[0] if len(missing_fields) == 1 else None,
-        )
+        raise ValidationError(f"缺少必需字段: {', '.join(missing_fields)}")
 
 
 def validate_field_type(
-    data: Dict[str, Any], field: str, expected_type: Type, required: bool = True
+    value: Any, field_name: str, expected_type: Type, allow_none: bool = False
 ) -> None:
     """验证字段类型"""
-    if field not in data:
-        if required:
-            raise ValidationError(f"Missing required field: {field}", field=field)
+    if allow_none and value is None:
         return
-
-    value = data[field]
-    if value is None and not required:
-        return
-
+    
     if not isinstance(value, expected_type):
         raise ValidationError(
-            f"Field '{field}' must be of type {expected_type.__name__}, got {type(value).__name__}",
-            field=field,
-            value=value,
+            f"字段 {field_name} 类型错误，期望 {expected_type.__name__}，实际 {type(value).__name__}"
         )
 
 
 def validate_field_range(
-    data: Dict[str, Any],
-    field: str,
+    value: Union[int, float],
+    field_name: str,
     min_value: Optional[Union[int, float]] = None,
     max_value: Optional[Union[int, float]] = None,
 ) -> None:
     """验证字段范围"""
-    if field not in data:
-        return
-
-    value = data[field]
-    if value is None:
-        return
-
     if min_value is not None and value < min_value:
-        raise ValidationError(
-            f"Field '{field}' must be >= {min_value}, got {value}",
-            field=field,
-            value=value,
-        )
-
+        raise ValidationError(f"字段 {field_name} 值 {value} 小于最小值 {min_value}")
+    
     if max_value is not None and value > max_value:
-        raise ValidationError(
-            f"Field '{field}' must be <= {max_value}, got {value}",
-            field=field,
-            value=value,
-        )
+        raise ValidationError(f"字段 {field_name} 值 {value} 大于最大值 {max_value}")
 
 
 def safe_cast(value: Any, target_type: Type, default: Any = None) -> Any:
     """安全类型转换"""
     try:
-        if target_type is bool and isinstance(value, str):
-            return value.lower() in ("true", "1", "yes", "on")
         return target_type(value)
     except (ValueError, TypeError):
         return default
-
-
-class ContextualLogger:
-    """带上下文的日志记录器"""
-
-    def __init__(self, logger: logging.Logger, context: Dict[str, Any]):
-        self.logger = logger
-        self.context = context
-
-    def _format_message(self, message: str) -> str:
-        """格式化消息，添加上下文信息"""
-        context_str = " | ".join([f"{k}={v}" for k, v in self.context.items()])
-        return f"[{context_str}] {message}"
-
-    def debug(self, message: str, **kwargs):
-        self.logger.debug(self._format_message(message), **kwargs)
-
-    def info(self, message: str, **kwargs):
-        self.logger.info(self._format_message(message), **kwargs)
-
-    def warning(self, message: str, **kwargs):
-        self.logger.warning(self._format_message(message), **kwargs)
-
-    def error(self, message: str, **kwargs):
-        self.logger.error(self._format_message(message), **kwargs)
-
-    def critical(self, message: str, **kwargs):
-        self.logger.critical(self._format_message(message), **kwargs)
-
-
-def create_contextual_logger(logger: logging.Logger, **context) -> ContextualLogger:
-    """创建带上下文的日志记录器"""
-    return ContextualLogger(logger, context)

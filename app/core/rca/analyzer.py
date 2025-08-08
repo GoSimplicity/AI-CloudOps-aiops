@@ -2,59 +2,41 @@
 # -*- coding: utf-8 -*-
 
 """
-AI-CloudOps-aiops
-Author: Bamboo
-Email: bamboocloudops@gmail.com
-License: Apache 2.0
-Description: 系统根因分析
+根因分析器 - 核心故障诊断引擎
 """
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, List, Optional
 
 import pandas as pd
 
-from app.config.settings import config  # 系统配置
-
-# 预留：PrometheusCollector 可用于更复杂的查询组合
+from app.config.settings import config
 from app.core.rca.collectors.k8s_events_collector import K8sEventsCollector
 from app.core.rca.collectors.k8s_state_collector import K8sStateCollector
-from app.core.rca.correlator import CorrelationAnalyzer  # 相关性分析器
-from app.core.rca.detector import AnomalyDetector  # 异常检测器
+from app.core.rca.correlator import CorrelationAnalyzer
+from app.core.rca.detector import AnomalyDetector
 from app.core.rca.rules.engine import RuleEngine
 from app.core.rca.topology.graph import build_topology_from_state
 from app.models.response_models import AnomalyInfo, RootCauseCandidate
-from app.services.kubernetes import KubernetesService  # Kubernetes数据服务
-from app.services.llm import LLMService  # 大语言模型服务
-from app.services.prometheus import PrometheusService  # Prometheus数据服务
+from app.services.kubernetes import KubernetesService
+from app.services.llm import LLMService
+from app.services.prometheus import PrometheusService
 
 logger = logging.getLogger("aiops.rca")
 
 
 class RCAAnalyzer:
-    """
-    根因分析器 - AI-CloudOps系统的核心故障诊断引擎
-    """
+    """根因分析器 - 核心故障诊断引擎"""
 
     def __init__(self):
-        """
-        初始化根因分析器，初始化Prometheus数据服务，异常检测器，相关性分析器，大语言模型服务
-        """
-        # 初始化Prometheus数据服务，用于获取监控指标
+        """初始化根因分析器"""
         self.prometheus = PrometheusService()
         self.kubernetes = KubernetesService()
-
-        # 初始化异常检测器，使用配置中的阈值
         self.detector = AnomalyDetector(config.rca.anomaly_threshold)
-
-        # 初始化相关性分析器，使用配置中的相关性阈值
         self.correlator = CorrelationAnalyzer(config.rca.correlation_threshold)
-
-        # 初始化大语言模型服务，用于生成AI摘要
         self.llm = LLMService()
-
         logger.info("根因分析器初始化完成")
 
     async def analyze(
@@ -63,35 +45,27 @@ class RCAAnalyzer:
         end_time: datetime,
         metrics: Optional[List[str]] = None,
     ) -> Dict:
-        """
-        执行全面的根因分析
-        """
+        """执行全面的根因分析"""
         analysis_start_ts = time.time()
         try:
             logger.info(f"开始根因分析: {start_time} - {end_time}")
 
-            # 准备分析指标列表 - 使用默认指标如果未提供
             if not metrics:
                 metrics = config.rca.default_metrics
 
-            # 收集监控指标数据（Prometheus）
             metrics_data = await self._collect_metrics_data(
                 start_time, end_time, metrics
             )
 
-            # 数据有效性检查 - 确保有足够的数据进行分析
             if not metrics_data:
                 return {"error": "未获取到有效的监控数据"}
 
             logger.info(f"收集到 {len(metrics_data)} 个指标的数据")
 
-            # 异常检测阶段 - 识别所有异常指标和时间点
             anomalies = await self.detector.detect_anomalies(metrics_data)
             logger.info(f"检测到 {len(anomalies)} 个指标存在异常")
 
-            # 相关性分析阶段 - 分析指标间的因果关系
             correlations = await self.correlator.analyze_correlations(metrics_data)
-            # 可选：跨时滞相关（保守启用，避免响应过大）
             try:
                 lag_result = await self.correlator.analyze_correlations_with_cross_lag(
                     metrics_data, max_lags=5
@@ -100,10 +74,8 @@ class RCAAnalyzer:
                 lag_result = {"correlations": correlations, "cross_correlations": {}}
             logger.info(f"分析了 {len(correlations)} 个指标的相关性")
 
-            # 根因候选生成阶段 - 综合异常和相关性信息生成可能的根因
             root_causes = self._generate_root_cause_candidates(anomalies, correlations)
 
-            # 采集上下文（事件/对象状态/拓扑）
             context_events: List[Dict] = []
             context_state: Dict = {}
             context_topology: Dict = {}
@@ -114,10 +86,8 @@ class RCAAnalyzer:
                 context_state = await state_collector.snapshot()
                 context_topology = build_topology_from_state(context_state).to_dict()
             except Exception:
-                # 采集失败不影响主流程
                 pass
 
-            # 规则引擎评估（占位）
             rule_evidence: List[Dict] = []
             try:
                 engine = RuleEngine()
@@ -132,29 +102,21 @@ class RCAAnalyzer:
             except Exception:
                 pass
 
-            # AI摘要生成阶段 - 使用LLM生成人类可读的分析报告
             summary = await self._generate_summary(anomalies, correlations, root_causes)
-
-            # 计算分析时长（秒）
             analysis_duration = time.time() - analysis_start_ts
 
-            # 构建综合分析结果响应
             response = {
                 "status": "success",
-                # 异常信息：将内部数据结构转换为响应格式
                 "anomalies": {
                     metric: AnomalyInfo(**info).__dict__
                     for metric, info in anomalies.items()
                 },
-                # 相关性分析结果
                 "correlations": correlations,
                 "cross_correlations": lag_result.get("cross_correlations", {}),
-                # 根因候选列表：按置信度排序
                 "root_cause_candidates": [
                     RootCauseCandidate(**candidate).__dict__
                     for candidate in root_causes
                 ],
-                # 分析时间和统计信息
                 "analysis_time": datetime.utcnow().isoformat(),
                 "time_range": {
                     "start": start_time.isoformat(),
@@ -162,7 +124,6 @@ class RCAAnalyzer:
                 },
                 "metrics_analyzed": list(metrics_data.keys()),
                 "summary": summary,
-                # 详细的分析统计信息
                 "statistics": {
                     "total_metrics": len(metrics_data),
                     "anomalous_metrics": len(anomalies),
@@ -171,11 +132,9 @@ class RCAAnalyzer:
                     ),
                     "analysis_duration": analysis_duration,
                 },
-                # 新增上下文字段（占位）
                 "events": context_events,
                 "state": {
                     "namespace": context_state.get("namespace"),
-                    # 仅返回计数，避免响应过大
                     "pods": len(context_state.get("pods") or []),
                     "deployments": len(context_state.get("deployments") or []),
                     "services": len(context_state.get("services") or []),
@@ -203,7 +162,7 @@ class RCAAnalyzer:
         metrics: Optional[List[str]] = None,
         sensitivity: Optional[float] = None,
     ) -> Dict:
-        """包装异常检测：收集指标后调用底层检测器。"""
+        """异常检测包装方法"""
         metrics = metrics or config.rca.default_metrics
         metrics_data = await self._collect_metrics_data(start_time, end_time, metrics)
         if not metrics_data:
@@ -217,14 +176,13 @@ class RCAAnalyzer:
         target_metric: Optional[str] = None,
         metrics: Optional[List[str]] = None,
     ) -> Dict:
-        """包装相关性分析：可选target过滤。"""
+        """相关性分析包装方法"""
         metrics = metrics or config.rca.default_metrics
         metrics_data = await self._collect_metrics_data(start_time, end_time, metrics)
         if not metrics_data:
             return {}
         all_corr = await self.correlator.analyze_correlations(metrics_data)
         if target_metric:
-            # 仅返回与目标相关的项
             return {target_metric: all_corr.get(target_metric, [])}
         return all_corr
 
@@ -234,10 +192,9 @@ class RCAAnalyzer:
         end_time: datetime,
         events: Optional[List[Dict]] = None,
     ) -> List[Dict]:
-        """简单时间线：占位实现，后续融合事件与异常。"""
+        """生成时间线"""
         timeline: List[Dict] = []
         try:
-            # 生成占位条目
             timeline.append(
                 {
                     "timestamp": start_time.isoformat(),
@@ -267,11 +224,11 @@ class RCAAnalyzer:
         return timeline
 
     def get_analysis_history(self, limit: int = 50) -> List[Dict]:
-        """占位历史记录：后续可接入持久化存储。"""
+        """获取分析历史记录"""
         return []
 
     def is_healthy(self) -> bool:
-        """综合健康检查：Prometheus 与 Kubernetes。"""
+        """检查分析器健康状态"""
         try:
             prom_ok = self.prometheus.is_healthy()
             k8s_ok = self.kubernetes.is_healthy()
@@ -279,74 +236,54 @@ class RCAAnalyzer:
         except Exception:
             return False
 
-    def _calculate_analysis_duration(self, start_time: datetime) -> float:
-        """计算分析持续时间，处理时区问题，已废弃暂时保留"""
-        try:
-            now_utc = datetime.now(timezone.utc)
-            if start_time.tzinfo is None:
-                start_time_utc = start_time.replace(tzinfo=timezone.utc)
-            else:
-                start_time_utc = start_time
-            return (now_utc - start_time_utc).total_seconds()
-        except Exception:
-            return 0.0
+
 
     async def _collect_metrics_data(
         self, start_time: datetime, end_time: datetime, metrics: List[str]
     ) -> Dict[str, pd.DataFrame]:
         """收集指标数据"""
         metrics_data = {}
-
         logger.info(
-            f"开始收集指标数据，时间范围: {start_time} - {end_time}, 指标数: {len(metrics)}"
+            f"开始收集指标数据: {start_time} - {end_time}, 指标数: {len(metrics)}"
         )
 
         for metric in metrics:
             try:
-                logger.debug(f"正在查询指标: {metric}")
+                logger.debug(f"查询指标: {metric}")
                 data = await self.prometheus.query_range(
                     metric, start_time, end_time, "1m"
                 )
 
-                if data is not None and not data.empty:
-                    logger.debug(f"指标 {metric} 查询成功，数据点: {len(data)}")
+                if data is not None and not data.empty and len(data) > 0:
+                    label_columns = [
+                        col for col in data.columns if col.startswith("label_")
+                    ]
 
-                    # 处理多个时间序列
-                    if len(data) > 0:
-                        # 检查是否有标签列用于分组
-                        label_columns = [
-                            col for col in data.columns if col.startswith("label_")
-                        ]
-
-                        if label_columns:
-                            # 按标签分组
-                            for _, group in data.groupby(label_columns[0]):
-                                if len(group) > 0:
-                                    label_value = group[label_columns[0]].iloc[0]
-                                    if (
-                                        pd.notna(label_value)
-                                        and str(label_value).strip()
-                                    ):
-                                        metric_name = f"{metric}|{label_columns[0].replace('label_', '')}:{label_value}"
-                                        metrics_data[metric_name] = group[
-                                            ["value"]
-                                        ].copy()
-                        else:
-                            # 单个序列或聚合数据
-                            metrics_data[metric] = data[["value"]].copy()
+                    if label_columns:
+                        for _, group in data.groupby(label_columns[0]):
+                            if len(group) > 0:
+                                label_value = group[label_columns[0]].iloc[0]
+                                if (
+                                    pd.notna(label_value)
+                                    and str(label_value).strip()
+                                ):
+                                    metric_name = f"{metric}|{label_columns[0].replace('label_', '')}:{label_value}"
+                                    metrics_data[metric_name] = group[
+                                        ["value"]
+                                    ].copy()
+                    else:
+                        metrics_data[metric] = data[["value"]].copy()
                 else:
-                    logger.warning(f"指标 {metric} 无数据返回")
+                    logger.warning(f"指标 {metric} 无数据")
 
             except Exception as e:
                 logger.error(f"获取指标 {metric} 失败: {str(e)}")
                 continue
 
-        # 过滤掉空数据
         metrics_data = {
             k: v for k, v in metrics_data.items() if not v.empty and len(v) > 0
         }
-
-        logger.info(f"成功收集 {len(metrics_data)} 个时间序列数据")
+        logger.info(f"成功收集 {len(metrics_data)} 个时间序列")
         return metrics_data
 
     def _generate_root_cause_candidates(
@@ -354,17 +291,12 @@ class RCAAnalyzer:
     ) -> List[Dict]:
         """生成根因候选列表"""
         candidates = []
-
         try:
-            # 基于异常分数生成候选
             for metric, anomaly_info in anomalies.items():
                 if anomaly_info.get("count", 0) > 0:
-                    # 计算置信度
                     confidence = self._calculate_confidence(
                         anomaly_info, correlations.get(metric, [])
                     )
-
-                    # 生成描述
                     description = self._generate_description(metric, anomaly_info)
 
                     candidate = {
@@ -377,10 +309,7 @@ class RCAAnalyzer:
                     }
                     candidates.append(candidate)
 
-            # 按置信度排序
             candidates.sort(key=lambda x: x["confidence"], reverse=True)
-
-            # 返回前5个候选
             return candidates[:5]
 
         except Exception as e:
@@ -388,39 +317,26 @@ class RCAAnalyzer:
             return []
 
     def _calculate_confidence(self, anomaly_info: Dict, related_metrics: List) -> float:
-        """
-        计算根因候选的置信度评分
-        """
+        """计算根因候选的置信度"""
         try:
-            # 基础置信度：基于异常的最高分数，反映异常的严重程度
             base_confidence = min(anomaly_info.get("max_score", 0), 1.0)
-
-            # 持续性加权：异常持续时间越长，越可能是根因
-            count = anomaly_info.get("count", 0)
-            count_factor = min(count / 20, 0.3)  # 最多加 0.3 分
-
-            # 相关性加权：相关指标越多，越可能是根因
-            correlation_factor = min(len(related_metrics) * 0.05, 0.2)  # 最多加 0.2 分
-
-            # 检测方法一致性加权：多种检测方法都检测到异常
+            count_factor = min(anomaly_info.get("count", 0) / 20, 0.3)
+            correlation_factor = min(len(related_metrics) * 0.05, 0.2)
+            
             detection_methods = anomaly_info.get("detection_methods", {})
             method_consistency = sum(
                 1
                 for v in detection_methods.values()
                 if isinstance(v, (int, float)) and v > 0
             )
-            consistency_factor = min(method_consistency * 0.05, 0.15)  # 最多加 0.15 分
+            consistency_factor = min(method_consistency * 0.05, 0.15)
 
-            # 综合置信度计算
             confidence = (
                 base_confidence + count_factor + correlation_factor + consistency_factor
             )
-
-            # 确保置信度不超过 1.0
             return min(confidence, 1.0)
 
         except Exception:
-            # 异常情况下返回中等置信度
             return 0.0
 
     def _generate_description(self, metric: str, anomaly_info: Dict) -> str:
@@ -429,28 +345,26 @@ class RCAAnalyzer:
             count = anomaly_info.get("count", 0)
             max_score = anomaly_info.get("max_score", 0)
             avg_score = anomaly_info.get("avg_score", 0)
-
-            # 基于指标名称生成描述
             metric_lower = metric.lower()
 
+            base_desc = f"检测到 {count} 个异常点，最高分数 {max_score:.2f}，平均分数 {avg_score:.2f}"
+            
             if "cpu" in metric_lower:
-                return f"CPU使用率异常，检测到 {count} 个异常点，最高异常分数 {max_score:.2f}，平均异常分数 {avg_score:.2f}"
+                return f"CPU使用率异常，{base_desc}"
             elif "memory" in metric_lower:
-                return f"内存使用异常，检测到 {count} 个异常点，最高异常分数 {max_score:.2f}，平均异常分数 {avg_score:.2f}"
+                return f"内存使用异常，{base_desc}"
             elif "restart" in metric_lower:
-                return f"容器重启异常，检测到 {count} 个异常点，最高异常分数 {max_score:.2f}，平均异常分数 {avg_score:.2f}"
-            elif any(
-                keyword in metric_lower for keyword in ["network", "http", "request"]
-            ):
-                return f"网络/HTTP请求异常，检测到 {count} 个异常点，最高异常分数 {max_score:.2f}，平均异常分数 {avg_score:.2f}"
+                return f"容器重启异常，{base_desc}"
+            elif any(kw in metric_lower for kw in ["network", "http", "request"]):
+                return f"网络/HTTP请求异常，{base_desc}"
             elif "disk" in metric_lower or "storage" in metric_lower:
-                return f"磁盘/存储异常，检测到 {count} 个异常点，最高异常分数 {max_score:.2f}，平均异常分数 {avg_score:.2f}"
+                return f"磁盘/存储异常，{base_desc}"
             elif "node" in metric_lower:
-                return f"节点指标异常，检测到 {count} 个异常点，最高异常分数 {max_score:.2f}，平均异常分数 {avg_score:.2f}"
+                return f"节点指标异常，{base_desc}"
             elif "pod" in metric_lower:
-                return f"Pod状态异常，检测到 {count} 个异常点，最高异常分数 {max_score:.2f}，平均异常分数 {avg_score:.2f}"
+                return f"Pod状态异常，{base_desc}"
             else:
-                return f"指标 {metric} 异常，检测到 {count} 个异常点，最高异常分数 {max_score:.2f}，平均异常分数 {avg_score:.2f}"
+                return f"指标 {metric} 异常，{base_desc}"
 
         except Exception:
             return f"指标 {metric} 存在异常"
@@ -461,14 +375,12 @@ class RCAAnalyzer:
         """生成AI摘要"""
         try:
             if not candidates:
-                return "未发现明显的异常模式，系统运行正常。"
+                return "未发现异常模式，系统运行正常。"
 
-            # 调用LLM生成摘要
             summary = await self.llm.generate_rca_summary(
                 anomalies, correlations, candidates
             )
-
-            return summary or "无法生成分析摘要，但检测到异常模式。"
+            return summary or "无法生成分析摘要，但检测到异常。"
 
         except Exception as e:
             logger.error(f"生成摘要失败: {str(e)}")
@@ -481,23 +393,17 @@ class RCAAnalyzer:
         affected_services: List[str],
         symptoms: List[str],
     ) -> Dict:
-        """
-        分析特定事件的根因 - 针对具体故障事件的定制化分析
-        """
+        """分析特定事件的根因"""
         try:
-            logger.info(f"分析特定事件: 服务={affected_services}, 症状={symptoms}")
+            logger.info(f"分析事件: 服务={affected_services}, 症状={symptoms}")
 
-            # 基于受影响的服务和症状，智能选择相关指标进行分析
             relevant_metrics = self._select_relevant_metrics(
                 affected_services, symptoms
             )
 
-            # 执行针对性的根因分析，使用筛选后的指标集
             result = await self.analyze(start_time, end_time, relevant_metrics)
 
-            # 如果基础分析成功，添加事件特定的分析结果
             if "error" not in result:
-                # 构建事件特定的分析信息
                 result["incident_analysis"] = {
                     "affected_services": affected_services,
                     "reported_symptoms": symptoms,
@@ -512,23 +418,18 @@ class RCAAnalyzer:
             return result
 
         except Exception as e:
-            logger.error(f"特定事件分析失败: {str(e)}")
+            logger.error(f"事件分析失败: {str(e)}")
             return {"error": f"事件分析失败: {str(e)}"}
 
     def _select_relevant_metrics(
         self, services: List[str], symptoms: List[str]
     ) -> List[str]:
-        """
-        基于服务和症状选择相关指标 - 智能指标选择算法
-        """
-        # 从配置的默认指标开始，确保基础监控覆盖
+        """选择相关指标"""
         relevant_metrics = set(config.rca.default_metrics)
 
-        # 基于症状关键词添加特定的监控指标
         for symptom in symptoms:
             symptom_lower = symptom.lower()
             if "slow" in symptom_lower or "latency" in symptom_lower:
-                # 响应慢或延迟问题 - 添加延迟相关指标
                 relevant_metrics.update(
                     [
                         "kubelet_http_requests_duration_seconds_sum",
@@ -536,20 +437,16 @@ class RCAAnalyzer:
                     ]
                 )
             elif "error" in symptom_lower or "fail" in symptom_lower:
-                # 错误或失败问题 - 添加错误率和重启相关指标
                 relevant_metrics.update(["kube_pod_container_status_restarts_total"])
             elif "cpu" in symptom_lower:
-                # CPU相关问题 - 添加CPU使用率指标
                 relevant_metrics.update(
                     ["container_cpu_usage_seconds_total", "node_cpu_seconds_total"]
                 )
             elif "memory" in symptom_lower:
-                # 内存相关问题 - 添加内存使用指标
                 relevant_metrics.update(
                     ["container_memory_working_set_bytes", "node_memory_MemFree_bytes"]
                 )
 
-        # 返回去重后的指标列表
         return list(relevant_metrics)
 
     def _generate_incident_recommendation(
