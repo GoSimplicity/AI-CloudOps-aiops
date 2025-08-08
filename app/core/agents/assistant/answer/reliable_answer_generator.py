@@ -2,7 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-可靠的答案生成器 - 注重稳定性和回答质量
+AI-CloudOps-aiops
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: 可靠答案生成器 - 基于RAG技术提供高质量运维问答服务
 """
 
 import asyncio

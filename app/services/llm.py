@@ -2,7 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-LLM服务 - 大语言模型统一接口
+AI-CloudOps-aiops
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: LLM服务 - 大语言模型统一接口
 """
 
 import json

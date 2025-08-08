@@ -32,12 +32,29 @@ rca:
   max_time_range: 1440
   anomaly_threshold: 0.7
   correlation_threshold: 0.75
+  request_override: true
   default_metrics:
     - container_cpu_usage_seconds_total
     - container_memory_working_set_bytes
     - kube_pod_container_status_restarts_total
     - node_cpu_seconds_total
     - node_memory_MemFree_bytes
+
+# 日志采集配置
+logs:
+  enabled: true
+  tail_lines: 200
+  max_pods: 5
+  include_previous: true
+
+# Trace/OTel/Jaeger 配置
+tracing:
+  enabled: true
+  provider: jaeger
+  jaeger_query_url: http://jaeger-query:16686
+  timeout: 20
+  service_name: ""
+  max_traces: 50
 
 # 预测配置
 prediction:

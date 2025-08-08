@@ -9,14 +9,29 @@ metadata:
   name: aiops-config
   namespace: aiops
 data:
+  # 环境配置
   ENV: "production"
-  LOG_LEVEL: "INFO"
+  
+  # 外部服务连接信息（环境相关）
   PROMETHEUS_HOST: "prometheus:9090"
   REDIS_HOST: "redis"
   REDIS_PORT: "6379"
-  LLM_PROVIDER: "ollama"
   OLLAMA_BASE_URL: "http://ollama:11434/v1"
-  OLLAMA_MODEL: "qwen2.5:3b"
+  RCA_JAEGER_QUERY_URL: "http://jaeger-query:16686"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aiops-secrets
+  namespace: aiops
+type: Opaque
+data:
+  # Base64 编码的敏感信息（使用时需要实际填入）
+  LLM_API_KEY: ""  # echo -n "your-api-key" | base64
+  LLM_BASE_URL: "aHR0cHM6Ly9hcGkuc2lsaWNvbmZsb3cuY24vdjE="  # https://api.siliconflow.cn/v1
+  FEISHU_WEBHOOK: ""  # echo -n "your-webhook-url" | base64  
+  TAVILY_API_KEY: ""  # echo -n "your-tavily-key" | base64
+  REDIS_PASSWORD: ""  # echo -n "your-redis-password" | base64
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -44,6 +59,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: aiops-config
+            - secretRef:
+                name: aiops-secrets
           readinessProbe:
             httpGet:
               path: /api/v1/health/ready

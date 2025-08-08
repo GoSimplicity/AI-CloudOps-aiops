@@ -2,7 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-任务管理模块 - 管理异步任务
+AI-CloudOps-aiops
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: 任务管理模块 - 管理异步任务的创建、执行和清理
 """
 
 import asyncio

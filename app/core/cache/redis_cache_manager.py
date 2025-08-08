@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-Redis缓存管理器
+AI-CloudOps-aiops
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 基于Redis的智能缓存管理系统，支持自动过期、LRU清理和数据压缩
+Description: Redis缓存管理器 - 基于Redis的智能缓存管理系统，支持自动过期、LRU清理和数据压缩
 """
 
 import gzip

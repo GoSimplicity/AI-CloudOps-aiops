@@ -2,7 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-根因分析器 - 核心故障诊断引擎
+AI-CloudOps-aiops
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: 根因分析器 - 核心故障诊断引擎
 """
 
 import logging
@@ -15,6 +19,8 @@ import pandas as pd
 from app.config.settings import config
 from app.core.rca.collectors.k8s_events_collector import K8sEventsCollector
 from app.core.rca.collectors.k8s_state_collector import K8sStateCollector
+from app.core.rca.collectors.logs_collector import LogsCollector
+from app.core.rca.collectors.tracing_collector import TracingCollector
 from app.core.rca.correlator import CorrelationAnalyzer
 from app.core.rca.detector import AnomalyDetector
 from app.core.rca.rules.engine import RuleEngine
@@ -44,6 +50,10 @@ class RCAAnalyzer:
         start_time: datetime,
         end_time: datetime,
         metrics: Optional[List[str]] = None,
+        include_logs: Optional[bool] = None,
+        include_traces: Optional[bool] = None,
+        namespace: Optional[str] = None,
+        service_name: Optional[str] = None,
     ) -> Dict:
         """执行全面的根因分析"""
         analysis_start_ts = time.time()
@@ -52,6 +62,21 @@ class RCAAnalyzer:
 
             if not metrics:
                 metrics = config.rca.default_metrics
+
+            # 解析可选采集开关（支持请求级覆盖：rca.request_override=true）
+            ns = namespace or config.k8s.namespace
+            if config.rca.request_override:
+                # 请求级优先：只要请求显式为 True 即启用（前提是全局功能开启）
+                should_collect_logs = bool(include_logs) and config.logs.enabled
+                should_collect_traces = bool(include_traces) and config.tracing.enabled
+            else:
+                # 全局优先：仅当全局开启时生效，请求仅在为 None 时跟随全局
+                should_collect_logs = (
+                    config.logs.enabled if include_logs is None else (include_logs and config.logs.enabled)
+                )
+                should_collect_traces = (
+                    config.tracing.enabled if include_traces is None else (include_traces and config.tracing.enabled)
+                )
 
             metrics_data = await self._collect_metrics_data(
                 start_time, end_time, metrics
@@ -79,12 +104,27 @@ class RCAAnalyzer:
             context_events: List[Dict] = []
             context_state: Dict = {}
             context_topology: Dict = {}
+            context_logs: List[Dict] = []
+            context_traces: List[Dict] = []
             try:
-                events_collector = K8sEventsCollector(namespace=config.k8s.namespace)
-                state_collector = K8sStateCollector(namespace=config.k8s.namespace)
+                events_collector = K8sEventsCollector(namespace=ns)
+                state_collector = K8sStateCollector(namespace=ns)
                 context_events = await events_collector.pull(limit=200)
                 context_state = await state_collector.snapshot()
                 context_topology = build_topology_from_state(context_state).to_dict()
+                # 日志与Trace为可选能力，失败不影响主流程
+                if should_collect_logs:
+                    try:
+                        context_logs = await LogsCollector(namespace=ns).pull()
+                    except Exception:
+                        context_logs = []
+                if should_collect_traces:
+                    try:
+                        context_traces = await TracingCollector().pull(
+                            start_time, end_time, service=service_name
+                        )
+                    except Exception:
+                        context_traces = []
             except Exception:
                 pass
 
@@ -97,6 +137,8 @@ class RCAAnalyzer:
                         "events": context_events,
                         "state": context_state,
                         "metrics": list(metrics_data.keys()),
+                        "logs": context_logs,
+                        "traces": context_traces,
                     }
                 )
             except Exception:
@@ -104,6 +146,9 @@ class RCAAnalyzer:
 
             summary = await self._generate_summary(anomalies, correlations, root_causes)
             analysis_duration = time.time() - analysis_start_ts
+
+            # 计算生效参数（用于回传给前端展示）
+            service_name_effective = service_name or getattr(config.tracing, "service_name", None)
 
             response = {
                 "status": "success",
@@ -132,6 +177,8 @@ class RCAAnalyzer:
                     ),
                     "analysis_duration": analysis_duration,
                 },
+                "logs_enabled_effective": bool(should_collect_logs),
+                "traces_enabled_effective": bool(should_collect_traces),
                 "events": context_events,
                 "state": {
                     "namespace": context_state.get("namespace"),
@@ -140,12 +187,16 @@ class RCAAnalyzer:
                     "services": len(context_state.get("services") or []),
                 },
                 "topology": context_topology,
+                "logs": context_logs[:10] if context_logs else [],
+                "traces": context_traces[:20] if context_traces else [],
                 "evidence": rule_evidence,
                 "timeline": await self.generate_timeline(
                     start_time, end_time, context_events
                 ),
                 "impact_scope": [],
                 "suggestions": self._generate_suggestions_from_causes(root_causes),
+                "namespace_effective": ns,
+                "service_name_effective": service_name_effective,
             }
 
             logger.info("根因分析完成")

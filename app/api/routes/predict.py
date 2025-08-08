@@ -48,9 +48,8 @@ async def predict_instances(request_data: Optional[PredictionRequest] = Body(Non
             if not validate_qps(predict_request.current_qps):
                 raise HTTPException(status_code=400, detail="QPS参数无效")
 
-        logger.info(
-            f"收到预测请求: QPS={predict_request.current_qps}, 时间={predict_request.timestamp}"
-        )
+        logger.info(f"收到预测请求: QPS={predict_request.current_qps}, "
+                    f"时间={predict_request.timestamp}")
 
         # 调用预测服务
         try:
@@ -116,9 +115,8 @@ async def predict_trend(
         if current_qps is not None and not validate_qps(current_qps):
             raise HTTPException(status_code=400, detail="QPS参数无效")
 
-        logger.info(
-            f"收到趋势预测请求: hours_ahead={hours_ahead}, current_qps={current_qps}"
-        )
+        logger.info(f"收到趋势预测请求: hours_ahead={hours_ahead}, "
+                    f"current_qps={current_qps}")
 
         # 调用趋势预测服务
         try:

@@ -2,7 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-助手工具函数模块
+AI-CloudOps-aiops
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: 助手工具函数模块 - 提供智能助手相关的辅助工具和函数
 """
 
 import re

@@ -2,7 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-助手配置模块
+AI-CloudOps-aiops
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: 助手配置模块 - 智能助手的配置管理和参数设置
 """
 
 from pathlib import Path

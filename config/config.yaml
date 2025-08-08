@@ -19,7 +19,7 @@ llm:
   max_tokens: 2048
   request_timeout: 15
   ollama_model: qwen2.5:3b
-  ollama_base_url: http://127.0.0.1:11434
+  ollama_base_url: http://127.0.0.1:11434/v1
 
 # Kubernetes配置
 kubernetes:
@@ -33,12 +33,29 @@ rca:
   max_time_range: 1440
   anomaly_threshold: 0.65
   correlation_threshold: 0.7
+  request_override: false
   default_metrics:
     - container_cpu_usage_seconds_total
     - container_memory_working_set_bytes
     - kube_pod_container_status_restarts_total
     - node_cpu_seconds_total
     - node_memory_MemFree_bytes
+
+# 日志采集配置
+logs:
+  enabled: false
+  tail_lines: 200
+  max_pods: 5
+  include_previous: false
+
+# Trace/OTel/Jaeger 配置
+tracing:
+  enabled: false
+  provider: jaeger
+  jaeger_query_url: http://127.0.0.1:16686
+  timeout: 15
+  service_name: ""
+  max_traces: 30
 
 # 预测配置
 prediction:
@@ -59,6 +76,7 @@ redis:
   password: "v6SxhWHyZC7S"
   connection_timeout: 5
   max_connections: 10
+  socket_timeout: 5
 
 # RAG助手配置
 rag:

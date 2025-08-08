@@ -66,7 +66,7 @@ async def root_cause_analysis(request_data: RCARequest):
         time_diff = (
             request_data.end_time - request_data.start_time
         ).total_seconds() / 60
-        max_minutes = getattr(config, "rca_max_time_range_minutes", 1440)  # 默认24小时
+        max_minutes = config.rca.max_time_range
 
         if time_diff > max_minutes:
             raise HTTPException(
@@ -87,6 +87,10 @@ async def root_cause_analysis(request_data: RCARequest):
                 request_data.start_time,
                 request_data.end_time,
                 request_data.metrics,
+                include_logs=request_data.include_logs,
+                include_traces=request_data.include_traces,
+                namespace=request_data.namespace,
+                service_name=request_data.service_name,
             )
         except Exception as analysis_error:
             logger.error(f"根因分析执行失败: {str(analysis_error)}")
@@ -127,7 +131,16 @@ async def submit_rca_job(request_data: RCAJobRequest):
         )
 
         return APIResponse(
-            code=0, message="任务已提交", data={"job_id": job_id}
+            code=0,
+            message="任务已提交",
+            data={
+                "job_id": job_id,
+                "flags": {
+                    "request_override": config.rca.request_override,
+                    "logs_enabled": getattr(config, "logs").enabled,
+                    "tracing_enabled": getattr(config, "tracing").enabled,
+                },
+            },
         ).model_dump()
     except HTTPException:
         raise
@@ -146,7 +159,14 @@ async def get_rca_job(job_id: str):
         doc = job_manager.get_job(job_id)
         if not doc:
             raise HTTPException(status_code=404, detail="未找到该任务")
-        return APIResponse(code=0, message="ok", data=doc).model_dump()
+        # 附带平台flags，便于前端渲染
+        payload = dict(doc)
+        payload["flags"] = {
+            "request_override": config.rca.request_override,
+            "logs_enabled": getattr(config, "logs").enabled,
+            "tracing_enabled": getattr(config, "tracing").enabled,
+        }
+        return APIResponse(code=0, message="ok", data=payload).model_dump()
     except HTTPException:
         raise
     except Exception as e:
@@ -166,6 +186,11 @@ async def get_available_metrics():
             data={
                 "default_metrics": config.rca.default_metrics,
                 "available_metrics": metrics,
+                "flags": {
+                    "request_override": config.rca.request_override,
+                    "logs_enabled": getattr(config, "logs").enabled,
+                    "tracing_enabled": getattr(config, "tracing").enabled,
+                },
             },
         ).model_dump()
     except Exception as e:
@@ -206,6 +231,11 @@ async def get_topology(
                 },
                 "topology": topo,
                 "impact_scope": impact,
+                "flags": {
+                    "request_override": config.rca.request_override,
+                    "logs_enabled": getattr(config, "logs").enabled,
+                    "tracing_enabled": getattr(config, "tracing").enabled,
+                },
             },
         ).model_dump()
     except Exception as e:
@@ -446,6 +476,11 @@ async def rca_health():
                 "healthy": health_status,
                 "timestamp": datetime.utcnow().isoformat(),
                 "service": "rca",
+                "flags": {
+                    "request_override": config.rca.request_override,
+                    "logs_enabled": getattr(config, "logs").enabled,
+                    "tracing_enabled": getattr(config, "tracing").enabled,
+                },
             },
         ).model_dump()
 

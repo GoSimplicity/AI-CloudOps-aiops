@@ -2,7 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-基础模型定义
+AI-CloudOps-aiops
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: 助手基础模型定义 - 提供会话数据结构和备用模型
 """
 
 from dataclasses import dataclass

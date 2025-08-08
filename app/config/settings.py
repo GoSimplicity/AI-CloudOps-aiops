@@ -39,7 +39,7 @@ def load_config() -> Dict[str, Any]:
             with open(default_config_file, "r", encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         else:
-            print(f"警告: 未找到配置文件，将使用环境变量默认值")
+            print("警告: 未找到配置文件，将使用环境变量默认值")
             return {}
     except Exception as e:
         print(f"加载配置文件出错: {e}")
@@ -172,6 +172,9 @@ class RCAConfig:
     correlation_threshold: float = field(
         default_factory=lambda: get_env_or_config("RCA_CORRELATION_THRESHOLD", "rca.correlation_threshold", 0.7, float)
     )
+    request_override: bool = field(
+        default_factory=lambda: get_env_or_config("RCA_REQUEST_OVERRIDE", "rca.request_override", False, bool)
+    )
     default_metrics: List[str] = field(
         default_factory=lambda: get_env_or_config("", "rca.default_metrics", [
             "container_cpu_usage_seconds_total",
@@ -180,6 +183,46 @@ class RCAConfig:
             "node_cpu_seconds_total",
             "node_memory_MemFree_bytes"
         ])
+    )
+
+
+@dataclass
+class LogsConfig:
+    """容器/Pod 日志采集配置"""
+    enabled: bool = field(
+        default_factory=lambda: get_env_or_config("RCA_LOGS_ENABLED", "logs.enabled", False, bool)
+    )
+    tail_lines: int = field(
+        default_factory=lambda: get_env_or_config("RCA_LOGS_TAIL_LINES", "logs.tail_lines", 200, int)
+    )
+    max_pods: int = field(
+        default_factory=lambda: get_env_or_config("RCA_LOGS_MAX_PODS", "logs.max_pods", 5, int)
+    )
+    include_previous: bool = field(
+        default_factory=lambda: get_env_or_config("RCA_LOGS_INCLUDE_PREVIOUS", "logs.include_previous", False, bool)
+    )
+
+
+@dataclass
+class TracingConfig:
+    """Trace/OTel/Jaeger 采集配置"""
+    enabled: bool = field(
+        default_factory=lambda: get_env_or_config("RCA_TRACING_ENABLED", "tracing.enabled", False, bool)
+    )
+    provider: str = field(
+        default_factory=lambda: get_env_or_config("RCA_TRACING_PROVIDER", "tracing.provider", "jaeger")
+    )
+    jaeger_query_url: str = field(
+        default_factory=lambda: get_env_or_config("RCA_JAEGER_QUERY_URL", "tracing.jaeger_query_url", "http://127.0.0.1:16686")
+    )
+    timeout: int = field(
+        default_factory=lambda: get_env_or_config("RCA_TRACING_TIMEOUT", "tracing.timeout", 15, int)
+    )
+    service_name: Optional[str] = field(
+        default_factory=lambda: get_env_or_config("RCA_TRACING_SERVICE", "tracing.service_name", None)
+    )
+    max_traces: int = field(
+        default_factory=lambda: get_env_or_config("RCA_TRACING_MAX_TRACES", "tracing.max_traces", 30, int)
     )
 
 
@@ -231,6 +274,9 @@ class RedisConfig:
     )
     max_connections: int = field(
         default_factory=lambda: get_env_or_config("REDIS_MAX_CONNECTIONS", "redis.max_connections", 10, int)
+    )
+    socket_timeout: int = field(
+        default_factory=lambda: get_env_or_config("REDIS_SOCKET_TIMEOUT", "redis.socket_timeout", 5, int)
     )
 
 
@@ -321,6 +367,8 @@ class AppConfig:
     rag: RAGConfig = field(default_factory=RAGConfig)
     tavily: TavilyConfig = field(default_factory=TavilyConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
+    logs: LogsConfig = field(default_factory=LogsConfig)
+    tracing: TracingConfig = field(default_factory=TracingConfig)
 
 
 # 全局配置实例

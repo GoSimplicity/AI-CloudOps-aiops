@@ -430,7 +430,7 @@ verify_installation() {
 
     # 检查Python导入
     python3 -c "
-import flask
+import fastapi
 import pandas
 import numpy
 import sklearn
@@ -444,9 +444,8 @@ print('✅ 主要Python包导入成功')
 import sys
 sys.path.append('.')
 try:
-    from app.main import create_app
-    app = create_app()
-    import flask
+    from app.main import app
+    import fastapi
     print('✅ 应用代码语法检查通过')
 except Exception as e:
     print(f'❌ 应用代码检查失败: {str(e)}')

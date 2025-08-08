@@ -22,6 +22,10 @@ class RCARequest(BaseModel):
     end_time: Optional[datetime] = None
     metrics: Optional[List[str]] = None
     time_range_minutes: Optional[int] = Field(None, ge=1, le=config.rca.max_time_range)
+    include_logs: bool = Field(default=False, description="是否包含容器日志证据")
+    include_traces: bool = Field(default=False, description="是否包含Trace/OTel/Jaeger证据")
+    namespace: Optional[str] = Field(default=None, description="目标命名空间，缺省为配置默认")
+    service_name: Optional[str] = Field(default=None, description="Trace服务名过滤")
 
     @field_validator("start_time", "end_time", mode="before")
     def parse_datetime(cls, v):

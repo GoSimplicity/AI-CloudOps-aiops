@@ -339,6 +339,7 @@ def test_rca_health():
         "success": response.status_code == 200,
         "status_code": response.status_code,
         "response": result,
+        "flags": (result.get("data") or {}).get("flags"),
     }
 
 
@@ -363,8 +364,96 @@ def test_get_available_metrics():
         and "default_metrics" in result["data"]
     )
 
-    return {"success": success, "status_code": response.status_code, "response": result}
+    return {
+        "success": success,
+        "status_code": response.status_code,
+        "response": result,
+        "flags": (result.get("data") or {}).get("flags"),
+    }
 
+
+def test_topology_flags():
+    """测试拓扑端点flags返回"""
+    print_header("测试RCA拓扑端点 flags")
+
+    url = f"{API_BASE_URL}/rca/topology"
+    response = make_request("get", url)
+
+    if not response:
+        logger.error("拓扑端点请求失败")
+        return {"success": False, "message": "API请求失败"}
+
+    print(f"状态码: {response.status_code}")
+    result = response.json()
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    flags = (result.get("data") or {}).get("flags")
+    return {
+        "success": response.status_code == 200,
+        "status_code": response.status_code,
+        "response": result,
+        "flags": flags,
+    }
+
+
+def test_rca_jobs_flags():
+    """测试RCA异步任务端点flags返回（如任务服务未启用则容错）"""
+    print_header("测试RCA Jobs端点 flags")
+
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(minutes=10)
+
+    # 提交任务
+    submit_url = f"{API_BASE_URL}/rca/jobs"
+    data = {
+        "start_time": start_time.isoformat() + "Z",
+        "end_time": end_time.isoformat() + "Z",
+        "metrics": [
+            "container_cpu_usage_seconds_total",
+            "container_memory_working_set_bytes",
+        ],
+    }
+    submit_resp = make_request("post", submit_url, data, timeout=60)
+
+    if not submit_resp:
+        logger.error("提交RCA任务失败")
+        return {"success": False, "message": "提交失败"}
+
+    submit_json = submit_resp.json()
+    flags_submit = (submit_json.get("data") or {}).get("flags")
+
+    # 如果任务提交失败（如503未启用），也返回flags（若有）
+    if submit_resp.status_code != 200:
+        return {
+            "success": False,
+            "status_code": submit_resp.status_code,
+            "response": submit_json,
+            "flags": flags_submit,
+        }
+
+    job_id = (submit_json.get("data") or {}).get("job_id")
+    if not job_id:
+        return {
+            "success": False,
+            "status_code": submit_resp.status_code,
+            "response": submit_json,
+            "flags": flags_submit,
+        }
+
+    # 查询任务
+    get_url = f"{API_BASE_URL}/rca/jobs/{job_id}"
+    get_resp = make_request("get", get_url)
+    if not get_resp:
+        return {"success": False, "message": "查询失败"}
+
+    get_json = get_resp.json()
+    flags_get = (get_json.get("data") or {}).get("flags")
+    return {
+        "success": get_resp.status_code == 200,
+        "status_code": get_resp.status_code,
+        "response": get_json,
+        "flags": flags_get,
+    }
 
 def test_anomaly_detection():
     """测试异常检测API"""
@@ -723,6 +812,13 @@ def main():
 
         metrics_result = test_get_available_metrics()
         results["results"]["available_metrics"] = metrics_result
+
+        # 补充平台flags校验
+        topology_flags_result = test_topology_flags()
+        results["results"]["topology_flags"] = topology_flags_result
+
+        jobs_flags_result = test_rca_jobs_flags()
+        results["results"]["jobs_flags"] = jobs_flags_result
 
         if setup_success:
             # 需要测试环境的测试

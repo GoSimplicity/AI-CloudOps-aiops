@@ -11,6 +11,7 @@ Description: 统一错误处理工具
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from functools import wraps
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
@@ -193,7 +194,6 @@ def retry_on_exception(
                         raise
                     
                     wait_time = delay * (backoff_factor ** attempt)
-                    import time
                     time.sleep(wait_time)
             
             if last_exception:

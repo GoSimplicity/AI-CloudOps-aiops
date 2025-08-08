@@ -221,6 +221,91 @@ class KubernetesService:
             logger.warning("Kubernetes未初始化，无法获取事件列表")
             return []
 
+    async def get_pod_logs(
+        self,
+        pod_name: str,
+        namespace: Optional[str] = None,
+        container: Optional[str] = None,
+        tail_lines: int = 200,
+        previous: bool = False,
+    ) -> Optional[str]:
+        """获取指定 Pod（可选容器）的最近日志。
+
+        说明：
+        - 为RCA日志采集提供最小必要能力，避免一次性返回过多内容。
+        """
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法获取Pod日志")
+            return None
+
+        try:
+            namespace = namespace or config.k8s.namespace
+            logs = self.core_v1.read_namespaced_pod_log(
+                name=pod_name,
+                namespace=namespace,
+                container=container,
+                previous=previous,
+                tail_lines=tail_lines if tail_lines and tail_lines > 0 else None,
+                timestamps=True,
+            )
+            return logs
+        except ApiException as e:
+            logger.error(f"获取Pod日志失败: pod={pod_name}, ns={namespace}, err={str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"获取Pod日志异常: pod={pod_name}, ns={namespace}, err={str(e)}")
+            return None
+
+    async def get_recent_pod_logs(
+        self,
+        namespace: Optional[str] = None,
+        label_selector: Optional[str] = None,
+        max_pods: int = 5,
+        tail_lines: int = 200,
+        include_previous: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """获取命名空间内若干Pod的最近日志（每个Pod仅取一个容器）。"""
+        pods = await self.get_pods(namespace=namespace, label_selector=label_selector)
+        results: List[Dict[str, Any]] = []
+        if not pods:
+            return results
+
+        ns = namespace or config.k8s.namespace
+        for pod in pods[: max(1, int(max_pods))]:
+            pod_name = ((pod or {}).get("metadata", {}) or {}).get("name")
+            spec = (pod or {}).get("spec", {}) or {}
+            containers = (spec.get("containers") or [])
+            container_name = containers[0].get("name") if containers else None
+
+            current_logs = await self.get_pod_logs(
+                pod_name=pod_name,
+                namespace=ns,
+                container=container_name,
+                tail_lines=tail_lines,
+                previous=False,
+            )
+            prev_logs = None
+            if include_previous:
+                prev_logs = await self.get_pod_logs(
+                    pod_name=pod_name,
+                    namespace=ns,
+                    container=container_name,
+                    tail_lines=tail_lines,
+                    previous=True,
+                )
+
+            results.append(
+                {
+                    "pod": pod_name,
+                    "namespace": ns,
+                    "container": container_name,
+                    "logs": current_logs or "",
+                    "previous_logs": prev_logs or "",
+                }
+            )
+
+        return results
+
         try:
             namespace = namespace or config.k8s.namespace
             events = self.core_v1.list_namespaced_event(

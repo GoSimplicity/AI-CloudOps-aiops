@@ -60,6 +60,3 @@ EXPOSE 8080
 
 # 启动应用（生产）
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
-
-# 健康检查：存活（容器内需有 curl）
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD curl -fsS http://127.0.0.1:8080/health/live || exit 1
