@@ -10,7 +10,7 @@ Description: 通知代理 - 发送运维告警和消息通知
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from langchain_core.tools import tool
 from app.services.notification import NotificationService
 from app.config.settings import config

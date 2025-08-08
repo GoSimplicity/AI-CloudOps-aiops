@@ -45,12 +45,10 @@ class KubernetesService:
       # 测试连接
       try:
         api = client.VersionApi()
-        version = api.get_code()
-        logger.info(f"Kubernetes连接成功: {version.git_version}")
+        api.get_code()
 
         # 尝试列出命名空间，再次确认连接
-        namespaces = self.core_v1.list_namespace(limit=1)
-        logger.info(f"成功获取命名空间列表，确认连接正常")
+        self.core_v1.list_namespace(limit=1)
 
         self.initialized = True
         logger.info("Kubernetes服务初始化完成")
@@ -315,12 +313,9 @@ class KubernetesService:
       return False
 
     try:
-      # 尝试获取API版本
-      api = client.VersionApi()
-      version = api.get_code()
-
-      # 尝试列出命名空间
-      namespaces = self.core_v1.list_namespace(limit=1)
+      # 尝试获取API版本并列出命名空间以确认连接
+      client.VersionApi().get_code()
+      self.core_v1.list_namespace(limit=1)
 
       return True
     except Exception as e:

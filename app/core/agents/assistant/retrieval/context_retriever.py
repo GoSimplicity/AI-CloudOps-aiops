@@ -5,9 +5,7 @@
 上下文感知检索器 - 提升对话连贯性
 """
 
-import asyncio
 import re
-import time
 import logging
 from typing import List, Dict, Tuple
 from collections import Counter
@@ -71,7 +69,7 @@ class ContextAwareRetriever:
             # 6. 宽松的上下文过滤
             filtered_docs = self._context_filter_lenient(ranked_docs, session_id, history)
 
-            return [doc for doc, score in filtered_docs[:top_k]]
+            return [doc for doc, _ in filtered_docs[:top_k]]
 
         except Exception as e:
             logger.error(f"上下文感知检索失败: {e}")
@@ -95,7 +93,7 @@ class ContextAwareRetriever:
 
         # 去重并选择最重要的关键词
         keyword_counts = Counter(historical_keywords)
-        important_keywords = [k for k, c in keyword_counts.most_common(2)]  # 减少关键词数量
+        important_keywords = [k for k, _ in keyword_counts.most_common(2)]  # 减少关键词数量
 
         # 构建增强查询
         if important_keywords:

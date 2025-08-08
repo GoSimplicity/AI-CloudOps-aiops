@@ -7,10 +7,11 @@
 
 import re
 import sys
-import asyncio
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Tuple, Optional, TYPE_CHECKING
 from langchain_core.documents import Document
 
+if TYPE_CHECKING:
+    from app.core.agents.assistant.session.session_manager import SessionData
 
 def is_test_environment() -> bool:
     """检查是否为测试环境"""

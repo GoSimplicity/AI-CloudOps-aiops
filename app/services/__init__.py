@@ -9,13 +9,10 @@ License: Apache 2.0
 Description: 服务模块初始化文件，集成Prometheus、Kubernetes等外部服务
 """
 
-from .prometheus import PrometheusService
-from .llm import LLMService
-from .notification import NotificationService
-
 try:
     from .kubernetes import KubernetesService
-    __all__ = ["PrometheusService", "KubernetesService", "LLMService", "NotificationService"]
-except ImportError:
+except Exception:
     KubernetesService = None
-    __all__ = ["PrometheusService", "LLMService", "NotificationService"]
+
+# 仅导出可用的服务，避免未使用导入
+__all__ = [name for name in ["KubernetesService"] if name != "KubernetesService" or KubernetesService is not None]

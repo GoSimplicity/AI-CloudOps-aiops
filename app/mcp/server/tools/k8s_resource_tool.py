@@ -238,10 +238,9 @@ class K8sResourceTool(K8sBaseTool):
             if not resource.metadata.labels:
                 resource.metadata.labels = {}
             
-            old_labels = resource.metadata.labels.copy()
             resource.metadata.labels.update(labels)
             
-            # 应用更新
+            # 应用更新并返回新资源
             updated_resource = await self._patch_resource_by_type(
                 clients, resource_type, resource_name, namespace, resource, loop
             )
@@ -254,7 +253,6 @@ class K8sResourceTool(K8sBaseTool):
                 "resource_name": resource_name,
                 "namespace": namespace,
                 "added_labels": labels,
-                "old_labels": old_labels,
                 "new_labels": updated_resource.metadata.labels or {},
                 "timestamp": datetime.utcnow().isoformat() + "Z"
             }
@@ -296,7 +294,6 @@ class K8sResourceTool(K8sBaseTool):
                 }
             
             # 删除标签
-            old_labels = resource.metadata.labels.copy() if resource.metadata.labels else {}
             removed_labels = {}
             
             if resource.metadata.labels:
@@ -304,7 +301,7 @@ class K8sResourceTool(K8sBaseTool):
                     if key in resource.metadata.labels:
                         removed_labels[key] = resource.metadata.labels.pop(key)
             
-            # 应用更新
+            # 应用更新并返回新标签集合
             updated_resource = await self._patch_resource_by_type(
                 clients, resource_type, resource_name, namespace, resource, loop
             )
@@ -317,7 +314,7 @@ class K8sResourceTool(K8sBaseTool):
                 "resource_name": resource_name,
                 "namespace": namespace,
                 "removed_labels": removed_labels,
-                "remaining_labels": updated_resource.metadata.labels or {},
+                "new_labels": updated_resource.metadata.labels or {},
                 "timestamp": datetime.utcnow().isoformat() + "Z"
             }
             
@@ -361,10 +358,9 @@ class K8sResourceTool(K8sBaseTool):
             if not resource.metadata.annotations:
                 resource.metadata.annotations = {}
             
-            old_annotations = resource.metadata.annotations.copy()
             resource.metadata.annotations.update(annotations)
             
-            # 应用更新
+            # 应用更新并返回新注解集合
             updated_resource = await self._patch_resource_by_type(
                 clients, resource_type, resource_name, namespace, resource, loop
             )
@@ -377,6 +373,7 @@ class K8sResourceTool(K8sBaseTool):
                 "resource_name": resource_name,
                 "namespace": namespace,
                 "added_annotations": annotations,
+                "new_annotations": updated_resource.metadata.annotations or {},
                 "timestamp": datetime.utcnow().isoformat() + "Z"
             }
             
@@ -423,7 +420,7 @@ class K8sResourceTool(K8sBaseTool):
                     if key in resource.metadata.annotations:
                         removed_annotations[key] = resource.metadata.annotations.pop(key)
             
-            # 应用更新
+            # 应用更新并返回新注解集合
             updated_resource = await self._patch_resource_by_type(
                 clients, resource_type, resource_name, namespace, resource, loop
             )
@@ -436,6 +433,7 @@ class K8sResourceTool(K8sBaseTool):
                 "resource_name": resource_name,
                 "namespace": namespace,
                 "removed_annotations": removed_annotations,
+                "new_annotations": updated_resource.metadata.annotations or {},
                 "timestamp": datetime.utcnow().isoformat() + "Z"
             }
             

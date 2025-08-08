@@ -25,8 +25,8 @@ durationpy==0.10
 emoji==2.14.1
 filelock==3.18.0
 filetype==1.2.0
-Flask==3.1.1
-flask-cors==6.0.1
+fastapi==0.115.6
+python-multipart==0.0.18
 flatbuffers==25.2.10
 frozenlist==1.7.0
 fsspec==2025.5.1

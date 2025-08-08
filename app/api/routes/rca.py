@@ -9,7 +9,7 @@ License: Apache 2.0
 Description: 根因分析API路由 - 提供异常检测、相关性分析和根本原因识别功能
 """
 
-from flask import Blueprint, request, jsonify
+from fastapi import APIRouter, HTTPException
 from datetime import datetime, timedelta
 import asyncio
 import logging
@@ -18,303 +18,252 @@ from app.models.request_models import RCARequest
 from app.utils.validators import validate_time_range, validate_metric_list
 from app.config.settings import config
 from app.models.response_models import APIResponse
+from typing import Optional
 
 logger = logging.getLogger("aiops.rca")
 
-rca_bp = Blueprint('rca', __name__)
+router = APIRouter(tags=["rca"])
 
 # 初始化分析器
 rca_analyzer = RCAAnalyzer()
 
-@rca_bp.route('/rca', methods=['POST'])
-def root_cause_analysis():
+@router.post('/rca')
+async def root_cause_analysis(request_data: RCARequest):
     """
     根因分析接口
     """
     try:
-        # 解析请求参数
-        data = request.get_json() or {}
-
-        # 验证请求
-        try:
-            rca_request = RCARequest(**data)
-        except Exception as e:
-            logger.warning(f"RCA请求参数错误: {str(e)}")
-            return jsonify(APIResponse(code=400, message=f"请求参数错误: {str(e)}", data={}).dict()), 400
-
         # 验证时间范围
-        if not validate_time_range(rca_request.start_time, rca_request.end_time):
-            return jsonify(APIResponse(code=400, message="无效的时间范围", data={}).dict()), 400
+        if not validate_time_range(request_data.start_time, request_data.end_time):
+            raise HTTPException(status_code=400, detail="无效的时间范围")
 
         # 检查时间范围限制
-        time_diff = (rca_request.end_time - rca_request.start_time).total_seconds() / 60
-        if time_diff > config.rca.max_time_range:
-            return jsonify(APIResponse(
-                code=400,
-                message=f"时间范围超过最大限制 {config.rca.max_time_range} 分钟，当前: {time_diff:.1f} 分钟",
-                data={}
-            ).dict()), 400
+        time_diff = (request_data.end_time - request_data.start_time).total_seconds() / 60
+        max_minutes = getattr(config, 'rca_max_time_range_minutes', 1440)  # 默认24小时
+        
+        if time_diff > max_minutes:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"时间范围不能超过{max_minutes}分钟"
+            )
 
         # 验证指标列表
-        if rca_request.metrics and not validate_metric_list(rca_request.metrics):
-            return jsonify(APIResponse(code=400, message="指标名称格式错误", data={}).dict()), 400
+        if request_data.metrics and not validate_metric_list(request_data.metrics):
+            raise HTTPException(status_code=400, detail="无效的指标列表")
 
-        logger.info(f"执行根因分析: {rca_request.start_time} - {rca_request.end_time}, 指标数: {len(rca_request.metrics)}")
+        logger.info(f"开始根因分析: {request_data.start_time} 到 {request_data.end_time}")
 
-        # 执行根因分析
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # 调用根因分析服务
         try:
-            result = loop.run_until_complete(
-                rca_analyzer.analyze(
-                    rca_request.start_time,
-                    rca_request.end_time,
-                    rca_request.metrics
-                )
+            analysis_result = await asyncio.to_thread(
+                rca_analyzer.analyze,
+                request_data.start_time,
+                request_data.end_time,
+                request_data.metrics,
+                request_data.threshold
             )
-        finally:
-            loop.close()
+        except Exception as analysis_error:
+            logger.error(f"根因分析执行失败: {str(analysis_error)}")
+            raise HTTPException(status_code=500, detail="根因分析执行失败")
 
-        # 记录分析结果
-        if 'error' not in result:
-            anomaly_count = len(result.get('anomalies', {}))
-            candidate_count = len(result.get('root_cause_candidates', []))
-            logger.info(f"根因分析完成: 异常指标={anomaly_count}, 根因候选={candidate_count}")
-            return jsonify(APIResponse(code=0, message="根因分析完成", data=result).dict())
-        else:
-            logger.error(f"根因分析失败: {result['error']}")
-            return jsonify(APIResponse(code=500, message=f"根因分析失败: {result['error']}", data={}).dict()), 500
+        return APIResponse(code=0, message="根因分析完成", data=analysis_result).dict()
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"根因分析请求失败: {str(e)}")
-        return jsonify(APIResponse(code=500, message=f"处理请求失败: {str(e)}", data={}).dict()), 500
+        logger.error(f"根因分析请求处理失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"根因分析失败: {str(e)}")
 
-@rca_bp.route('/rca/incident', methods=['POST'])
-def analyze_incident():
+@router.post('/rca/anomaly')
+async def detect_anomaly(
+    start_time: datetime,
+    end_time: datetime,
+    metrics: Optional[list] = None,
+    sensitivity: Optional[float] = 0.8
+):
     """
-    分析特定事件
+    异常检测接口
     """
     try:
-        data = request.get_json() or {}
+        # 验证时间范围
+        if not validate_time_range(start_time, end_time):
+            raise HTTPException(status_code=400, detail="无效的时间范围")
 
-        # 解析事件分析参数
-        start_time_str = data.get('start_time')
-        end_time_str = data.get('end_time')
-        affected_services = data.get('affected_services', [])
-        symptoms = data.get('symptoms', [])
+        # 验证敏感度参数
+        if sensitivity < 0.1 or sensitivity > 1.0:
+            raise HTTPException(status_code=400, detail="敏感度参数必须在0.1-1.0之间")
 
-        # 验证必要参数
-        if not affected_services:
-            return jsonify(APIResponse(code=400, message="必须指定受影响的服务", data={}).dict()), 400
+        logger.info(f"开始异常检测: {start_time} 到 {end_time}")
 
-        if not symptoms:
-            return jsonify(APIResponse(code=400, message="必须描述症状", data={}).dict()), 400
+        # 调用异常检测服务
+        anomalies = await asyncio.to_thread(
+            rca_analyzer.detect_anomalies,
+            start_time,
+            end_time,
+            metrics,
+            sensitivity
+        )
 
-        # 解析时间
-        try:
-            if start_time_str:
-                start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
-            else:
-                start_time = datetime.utcnow() - timedelta(minutes=30)
-
-            if end_time_str:
-                end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
-            else:
-                end_time = datetime.utcnow()
-        except ValueError as e:
-            return jsonify(APIResponse(code=400, message=f"时间格式错误: {str(e)}", data={}).dict()), 400
-
-        logger.info(f"分析特定事件: 服务={affected_services}, 症状={symptoms}")
-
-        # 执行事件分析
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(
-                rca_analyzer.analyze_specific_incident(
-                    start_time, end_time, affected_services, symptoms
-                )
-            )
-        finally:
-            loop.close()
-
-        return jsonify(APIResponse(code=0, message="事件分析完成", data=result).dict())
-
-    except Exception as e:
-        logger.error(f"事件分析失败: {str(e)}")
-        return jsonify(APIResponse(code=500, message=f"事件分析失败: {str(e)}", data={}).dict()), 500
-
-@rca_bp.route('/rca/metrics', methods=['GET'])
-def get_available_metrics():
-    """
-    获取可用的监控指标
-    """
-    try:
-        # 返回默认指标列表和分类
-        metrics_info = {
-            "default_metrics": config.rca.default_metrics,
-            "categories": {
-                "CPU": [
-                    "container_cpu_usage_seconds_total",
-                    "node_cpu_seconds_total"
-                ],
-                "Memory": [
-                    "container_memory_working_set_bytes",
-                    "node_memory_MemFree_bytes",
-                    "container_memory_usage_bytes"
-                ],
-                "Network": [
-                    "container_network_receive_bytes_total",
-                    "container_network_transmit_bytes_total"
-                ],
-                "Kubernetes": [
-                    "kube_pod_container_status_restarts_total",
-                    "kube_pod_status_phase",
-                    "kube_deployment_status_replicas"
-                ],
-                "HTTP": [
-                    "kubelet_http_requests_duration_seconds_count",
-                    "kubelet_http_requests_duration_seconds_sum"
-                ]
-            },
-            "config": {
-                "default_time_range": config.rca.default_time_range,
-                "max_time_range": config.rca.max_time_range,
-                "anomaly_threshold": config.rca.anomaly_threshold,
-                "correlation_threshold": config.rca.correlation_threshold
+        return APIResponse(
+            code=0,
+            message="异常检测完成",
+            data={
+                "anomalies": anomalies,
+                "detection_period": {
+                    "start": start_time.isoformat(),
+                    "end": end_time.isoformat()
+                },
+                "sensitivity": sensitivity
             }
-        }
+        ).dict()
 
-        # 尝试从Prometheus获取可用指标（可选）
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                available_metrics = loop.run_until_complete(
-                    rca_analyzer.prometheus.get_available_metrics()
-                )
-                if available_metrics:
-                    metrics_info["available_from_prometheus"] = available_metrics[:50]  # 限制返回数量
-            finally:
-                loop.close()
-        except Exception as e:
-            logger.warning(f"获取Prometheus指标失败: {str(e)}")
-            metrics_info["prometheus_error"] = str(e)
-
-        return jsonify(APIResponse(code=0, message="获取指标列表成功", data=metrics_info).dict())
-
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"获取指标列表失败: {str(e)}")
-        return jsonify(APIResponse(code=500, message=f"获取指标列表失败: {str(e)}", data={}).dict()), 500
+        logger.error(f"异常检测失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"异常检测失败: {str(e)}")
 
-@rca_bp.route('/rca/health', methods=['GET'])
-def rca_health():
+@router.post('/rca/correlation')
+async def analyze_correlation(
+    start_time: datetime,
+    end_time: datetime,
+    target_metric: str,
+    metrics: Optional[list] = None
+):
     """
-    根因分析服务健康检查
+    相关性分析接口
     """
     try:
-        # 检查各组件状态
-        prometheus_healthy = rca_analyzer.prometheus.is_healthy()
-        llm_healthy = rca_analyzer.llm.is_healthy()
+        # 验证时间范围
+        if not validate_time_range(start_time, end_time):
+            raise HTTPException(status_code=400, detail="无效的时间范围")
 
-        # 检查检测器和相关性分析器（它们是纯计算模块，通常健康）
-        detector_healthy = True
-        correlator_healthy = True
+        # 验证目标指标
+        if not target_metric or not target_metric.strip():
+            raise HTTPException(status_code=400, detail="必须指定目标指标")
 
-        health_status = {
-            "status": "healthy" if prometheus_healthy else "degraded",
-            "components": {
-                "prometheus": prometheus_healthy,
-                "llm": llm_healthy,
-                "detector": detector_healthy,
-                "correlator": correlator_healthy
-            },
-            "timestamp": datetime.utcnow().isoformat(),
-            "config": {
-                "anomaly_threshold": rca_analyzer.detector.anomaly_threshold,
-                "correlation_threshold": rca_analyzer.correlator.correlation_threshold
+        logger.info(f"开始相关性分析: 目标指标={target_metric}")
+
+        # 调用相关性分析服务
+        correlations = await asyncio.to_thread(
+            rca_analyzer.analyze_correlations,
+            start_time,
+            end_time,
+            target_metric,
+            metrics
+        )
+
+        return APIResponse(
+            code=0,
+            message="相关性分析完成",
+            data={
+                "target_metric": target_metric,
+                "correlations": correlations,
+                "analysis_period": {
+                    "start": start_time.isoformat(),
+                    "end": end_time.isoformat()
+                }
             }
-        }
+        ).dict()
 
-        return jsonify(APIResponse(code=0, message="健康检查完成", data=health_status).dict())
-
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"RCA健康检查失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"健康检查失败: {str(e)}",
-            data={"timestamp": datetime.utcnow().isoformat()}
-        ).dict()), 500
+        logger.error(f"相关性分析失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"相关性分析失败: {str(e)}")
 
-@rca_bp.route('/rca/config', methods=['GET'])
-def get_rca_config():
+@router.post('/rca/timeline')
+async def generate_timeline(
+    start_time: datetime,
+    end_time: datetime,
+    events: Optional[list] = None
+):
     """
-    获取根因分析配置
+    事件时间线生成接口
     """
     try:
-        rca_config = {
-            "anomaly_detection": {
-                "threshold": config.rca.anomaly_threshold,
-                "methods": ["zscore", "iqr", "isolation_forest", "dbscan", "moving_average"]
-            },
-            "correlation_analysis": {
-                "threshold": config.rca.correlation_threshold,
-                "methods": ["pearson", "spearman"]
-            },
-            "time_range": {
-                "default_minutes": config.rca.default_time_range,
-                "max_minutes": config.rca.max_time_range
-            },
-            "metrics": {
-                "default_count": len(config.rca.default_metrics),
-                "default_metrics": config.rca.default_metrics
+        # 验证时间范围
+        if not validate_time_range(start_time, end_time):
+            raise HTTPException(status_code=400, detail="无效的时间范围")
+
+        logger.info(f"生成事件时间线: {start_time} 到 {end_time}")
+
+        # 调用时间线生成服务
+        timeline = await asyncio.to_thread(
+            rca_analyzer.generate_timeline,
+            start_time,
+            end_time,
+            events
+        )
+
+        return APIResponse(
+            code=0,
+            message="事件时间线生成完成",
+            data={
+                "timeline": timeline,
+                "period": {
+                    "start": start_time.isoformat(),
+                    "end": end_time.isoformat()
+                }
             }
-        }
+        ).dict()
 
-        return jsonify(APIResponse(code=0, message="获取配置成功", data=rca_config).dict())
-
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"获取配置失败: {str(e)}")
-        return jsonify(APIResponse(code=500, message=f"获取配置失败: {str(e)}", data={}).dict()), 500
+        logger.error(f"事件时间线生成失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"事件时间线生成失败: {str(e)}")
 
-@rca_bp.route('/rca/config', methods=['PUT'])
-def update_rca_config():
+@router.get('/rca/history')
+async def get_analysis_history(limit: Optional[int] = 50):
     """
-    更新根因分析配置
+    获取分析历史记录接口
     """
     try:
-        data = request.get_json() or {}
+        # 验证限制参数
+        if limit < 1 or limit > 500:
+            raise HTTPException(status_code=400, detail="limit参数必须在1-500之间")
 
-        updated_fields = []
+        logger.info(f"获取分析历史记录，限制数量: {limit}")
 
-        # 更新异常检测阈值
-        if 'anomaly_threshold' in data:
-            new_threshold = float(data['anomaly_threshold'])
-            if 0 < new_threshold <= 1:
-                rca_analyzer.detector.update_threshold(new_threshold)
-                updated_fields.append(f"anomaly_threshold: {new_threshold}")
-            else:
-                return jsonify({"error": "异常检测阈值必须在0-1之间"}), 400
+        # 获取历史记录
+        history = await asyncio.to_thread(rca_analyzer.get_analysis_history, limit)
 
-        # 更新相关性阈值
-        if 'correlation_threshold' in data:
-            new_threshold = float(data['correlation_threshold'])
-            if 0 < new_threshold <= 1:
-                rca_analyzer.correlator.correlation_threshold = new_threshold
-                updated_fields.append(f"correlation_threshold: {new_threshold}")
-            else:
-                return jsonify({"error": "相关性阈值必须在0-1之间"}), 400
+        return APIResponse(
+            code=0,
+            message="分析历史记录获取成功",
+            data={
+                "history": history,
+                "count": len(history),
+                "limit": limit
+            }
+        ).dict()
 
-        if updated_fields:
-            logger.info(f"RCA配置已更新: {', '.join(updated_fields)}")
-            return jsonify({
-                "message": "配置更新成功",
-                "updated_fields": updated_fields,
-                "timestamp": datetime.utcnow().isoformat()
-            })
-        else:
-            return jsonify({"message": "没有可更新的配置项"}), 400
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取分析历史记录失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取分析历史记录失败: {str(e)}")
+
+@router.get('/rca/health')
+async def rca_health():
+    """
+    RCA服务健康检查接口
+    """
+    try:
+        # 检查RCA服务健康状态
+        health_status = await asyncio.to_thread(rca_analyzer.is_healthy)
+
+        return APIResponse(
+            code=0,
+            message="RCA服务健康检查完成",
+            data={
+                "healthy": health_status,
+                "timestamp": datetime.utcnow().isoformat(),
+                "service": "rca"
+            }
+        ).dict()
 
     except Exception as e:
-        logger.error(f"更新RCA配置失败: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"RCA服务健康检查失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"RCA服务健康检查失败: {str(e)}")

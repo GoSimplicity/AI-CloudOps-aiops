@@ -545,7 +545,7 @@ class K8sConfigTool(K8sBaseTool):
                 existing_configmap.data = data
             
             # 应用更新
-            updated_configmap = await loop.run_in_executor(
+            await loop.run_in_executor(
                 self._executor,
                 lambda: v1.patch_namespaced_config_map(
                     name=resource_name,
@@ -621,7 +621,7 @@ class K8sConfigTool(K8sBaseTool):
                 existing_secret.data = encoded_data
             
             # 应用更新
-            updated_secret = await loop.run_in_executor(
+            await loop.run_in_executor(
                 self._executor,
                 lambda: v1.patch_namespaced_secret(
                     name=resource_name,

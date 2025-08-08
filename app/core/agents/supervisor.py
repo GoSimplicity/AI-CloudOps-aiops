@@ -10,12 +10,10 @@ Description: 主管代理 - 协调多个智能代理进行问题解决
 """
 
 import logging
-from typing import Dict, Any, List, Optional
-from langchain_core.messages import HumanMessage, BaseMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from typing import Dict, Any, Optional
+from langchain_core.messages import BaseMessage
 from pydantic import BaseModel
 from typing_extensions import Literal
-from app.config.settings import config
 from app.services.llm import LLMService
 from app.models.data_models import AgentState
 

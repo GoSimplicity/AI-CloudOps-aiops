@@ -8,7 +8,6 @@
 import re
 import logging
 from typing import List
-from collections import Counter
 
 logger = logging.getLogger("aiops.assistant.query_rewriter")
 

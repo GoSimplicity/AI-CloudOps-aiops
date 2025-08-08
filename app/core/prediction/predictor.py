@@ -471,8 +471,6 @@ class PredictionService:
         # 计算未来时间点
         future_time = now + datetime.timedelta(hours=hour)
 
-        # 提取未来时间点的时间特征
-        time_features = TimeUtils.extract_time_features(future_time)
 
         # 应用时间模式因子 - 根据小时和星期几调整预测值
         hour_factor = self._get_hour_factor(future_time.hour)

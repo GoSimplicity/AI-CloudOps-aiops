@@ -16,7 +16,8 @@ import re
 import time
 from datetime import datetime
 from typing import Any, Dict, Optional, Union
-from flask import Blueprint, request, jsonify, Response
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 # 创建日志器
 logger = logging.getLogger("aiops.api.assistant")
@@ -52,8 +53,8 @@ def sanitize_result_data(data: Any) -> Any:
     return data
 
 
-# 创建蓝图
-assistant_bp = Blueprint('assistant', __name__)
+# 创建路由器
+router = APIRouter(tags=["assistant"])
 
 # 创建助手代理全局实例
 _assistant_agent = None
@@ -79,7 +80,7 @@ def get_assistant_agent():
     if _is_initializing:
       # 如果正在初始化中，等待一小段时间后再检查
       logger.info("另一个线程正在初始化小助手，等待...")
-      for i in range(20):  # 最多等待10秒
+      for _ in range(20):  # 最多等待10秒
         time.sleep(0.5)
         if _assistant_agent is not None:
           return _assistant_agent
@@ -174,8 +175,9 @@ def safe_async_run(coroutine, timeout: int = 300):
         logger.error("异步任务执行超时")
         raise TimeoutError("异步任务执行超时")
 
-      if exception:
-        raise exception
+      if exception is not None:
+        logger.error(f"异步任务执行失败: {exception}")
+        raise RuntimeError("异步任务执行失败")
       return result
 
     except RuntimeError:
@@ -195,7 +197,7 @@ def safe_async_run(coroutine, timeout: int = 300):
 
   except Exception as ex:
     logger.error(f"执行异步函数失败: {str(ex)}")
-    raise ex
+    raise
 
 
 def create_error_response(code: int, message: str, data: Optional[Dict] = None) -> tuple:
@@ -470,7 +472,7 @@ def reinitialize_assistant():
       # 如果正在初始化，等待初始化完成
       if _is_initializing:
         logger.info("检测到正在进行初始化，等待初始化完成...")
-        for i in range(40):  # 等待20秒
+        for _ in range(40):  # 等待20秒
           time.sleep(0.5)
           if not _is_initializing:
             break

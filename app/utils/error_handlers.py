@@ -19,8 +19,7 @@ import asyncio
 
 from app.constants import (
     HTTP_STATUS_BAD_REQUEST, HTTP_STATUS_INTERNAL_ERROR,
-    HTTP_STATUS_NOT_FOUND, HTTP_STATUS_UNAUTHORIZED,
-    ERROR_MESSAGES, SUCCESS_MESSAGES
+    HTTP_STATUS_NOT_FOUND, ERROR_MESSAGES
 )
 
 
@@ -177,7 +176,7 @@ def error_handler(
             except Exception as e:
                 if return_exceptions:
                     return default_return_value
-                error_msg, details = handler.log_and_return_error(e, f"Function {func.__name__}")
+                error_msg, _ = handler.log_and_return_error(e, f"Function {func.__name__}")
                 raise ServiceError(error_msg, func.__name__)
 
         @wraps(func)
@@ -188,7 +187,7 @@ def error_handler(
             except Exception as e:
                 if return_exceptions:
                     return default_return_value
-                error_msg, details = handler.log_and_return_error(e, f"Function {func.__name__}")
+                error_msg, _ = handler.log_and_return_error(e, f"Function {func.__name__}")
                 raise ServiceError(error_msg, func.__name__)
 
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
@@ -209,7 +208,7 @@ def retry_on_exception(
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
             _logger = logger or logging.getLogger(func.__module__)
-            last_exception = None
+            last_exception: Optional[BaseException] = None
 
             for attempt in range(max_retries + 1):
                 try:
@@ -224,13 +223,15 @@ def retry_on_exception(
                     _logger.warning(f"Function {func.__name__} failed (attempt {attempt + 1}/{max_retries + 1}), retrying in {retry_delay}s: {str(e)}")
                     await asyncio.sleep(retry_delay)
 
-            raise last_exception
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError("Unknown error in async retry handler")
 
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
             import time
             _logger = logger or logging.getLogger(func.__module__)
-            last_exception = None
+            last_exception: Optional[BaseException] = None
 
             for attempt in range(max_retries + 1):
                 try:
@@ -245,7 +246,9 @@ def retry_on_exception(
                     _logger.warning(f"Function {func.__name__} failed (attempt {attempt + 1}/{max_retries + 1}), retrying in {retry_delay}s: {str(e)}")
                     time.sleep(retry_delay)
 
-            raise last_exception
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError("Unknown error in retry handler")
 
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
 

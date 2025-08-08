@@ -10,7 +10,6 @@ Description: AIOps平台全量测试脚本，运行所有测试模块
 """
 
 
-import os
 import sys
 import pytest
 import logging

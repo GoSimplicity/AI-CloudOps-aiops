@@ -4,9 +4,7 @@
 """
 助手配置模块
 """
-import logging
 from pathlib import Path
-from typing import Optional
 from app.config.settings import config
 
 

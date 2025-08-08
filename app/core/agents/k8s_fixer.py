@@ -12,7 +12,7 @@ Description: Kubernetes集群问题诊断和自动修复代理
 import logging
 import requests
 import os
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from app.services.kubernetes import KubernetesService
 from app.services.llm import LLMService
 from app.config.settings import config
@@ -1081,8 +1081,6 @@ class K8sFixerAgent:
             deployment = context.get('deployment')
             namespace = context.get('namespace', 'default')
             problem = context.get('problem', '')
-            # 强制修复标志，默认为False
-            force = context.get('force', False)
 
             if not deployment:
                 logger.warning("没有指定部署名称，无法进行修复")

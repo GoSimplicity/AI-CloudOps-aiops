@@ -9,16 +9,13 @@ License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
 
-import os
-import json
 import pickle
 import numpy as np
 import threading
 import logging
-from typing import List, Dict, Any, Optional, Tuple, Set
+from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
-from dataclasses import dataclass, field
-from collections import defaultdict
+from dataclasses import dataclass
 import hashlib
 import time
 import redis
@@ -26,11 +23,7 @@ from redis.connection import ConnectionPool
 from concurrent.futures import ThreadPoolExecutor
 
 # 可选依赖
-try:
-    import faiss  # FAISS支持（可选）
-    FAISS_AVAILABLE = True
-except ImportError:
-    FAISS_AVAILABLE = False
+FAISS_AVAILABLE = False
 
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -539,7 +532,8 @@ class OptimizedRedisVectorStore(RedisVectorStore):
             # 尝试加载现有索引
             if self.faiss_index_path.exists() and self.faiss_mapping_path.exists():
                 try:
-                    import faiss
+                    import importlib
+                    faiss = importlib.import_module('faiss')
                     self.faiss_index = faiss.read_index(str(self.faiss_index_path))
                     with open(self.faiss_mapping_path, 'rb') as f:
                         mapping_data = pickle.load(f)
@@ -565,7 +559,8 @@ class OptimizedRedisVectorStore(RedisVectorStore):
             return
             
         try:
-            import faiss
+            import importlib
+            faiss = importlib.import_module('faiss')
             if self.faiss_index_type == "Flat":
                 self.faiss_index = faiss.IndexFlatIP(self.vector_dim)  # 内积相似度
             elif self.faiss_index_type == "IVF":
@@ -592,7 +587,8 @@ class OptimizedRedisVectorStore(RedisVectorStore):
         """保存FAISS索引"""
         try:
             if self.faiss_index is not None:
-                import faiss
+                import importlib
+                faiss = importlib.import_module('faiss')
                 faiss.write_index(self.faiss_index, str(self.faiss_index_path))
                 
                 mapping_data = {
@@ -642,7 +638,6 @@ class OptimizedRedisVectorStore(RedisVectorStore):
             return
             
         try:
-            import faiss
             vectors = np.array(embeddings, dtype=np.float32)
             
             # 检查向量维度是否匹配
@@ -866,7 +861,6 @@ class OptimizedRedisVectorStore(RedisVectorStore):
     def _faiss_search(self, query: str, k: int) -> List[Tuple[Document, float]]:
         """使用FAISS进行快速语义搜索"""
         try:
-            import faiss
             # 生成查询向量
             query_embedding = self.embedding_model.embed_query(query)
             query_vector = np.array([query_embedding], dtype=np.float32)
@@ -1145,7 +1139,7 @@ class RedisVectorStoreManager:
                 
             def get_relevant_documents(self, query: str, **search_kwargs) -> List[Document]:
                 results = self.vector_store.similarity_search(query, **search_kwargs)
-                return [doc for doc, score in results]
+                return [doc for doc, _ in results]
                 
             def invoke(self, query) -> List[Document]:
                 # 兼容字符串查询和字典输入
@@ -1334,10 +1328,8 @@ class VectorStoreManager:
                 'decode_responses': config.redis.decode_responses
             }
             
-            # 测试连接
-            redis_client = Redis(**redis_config)
-            redis_info = redis_client.info()
-            
+            # 测试连接（仅用于验证）
+            Redis(**redis_config).ping()
             # 创建Redis管理器
             redis_config['decode_responses'] = False  # 向量存储需要设为False
             

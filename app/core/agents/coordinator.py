@@ -13,7 +13,7 @@ import logging
 import asyncio
 from typing import Dict, Any, List
 from datetime import datetime
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from app.core.agents.detector import K8sDetectorAgent
 from app.core.agents.strategist import K8sStrategistAgent
 from app.core.agents.executor import K8sExecutorAgent

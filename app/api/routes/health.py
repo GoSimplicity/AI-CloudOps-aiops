@@ -9,7 +9,7 @@ License: Apache 2.0
 Description: 健康检查API模块，提供AI-CloudOps系统的服务健康监控和状态检查功能
 """
 
-from flask import Blueprint, jsonify
+from fastapi import APIRouter, HTTPException
 from datetime import datetime
 import time
 import psutil
@@ -23,14 +23,14 @@ from app.models.response_models import APIResponse
 
 logger = logging.getLogger("aiops.health")
 
-# 创建健康检查蓝图，用于组织相关的路由和视图函数
-health_bp = Blueprint('health', __name__)
+# 创建健康检查路由器
+router = APIRouter(tags=["health"])
 
 # 应用启动时间戳，用于计算系统运行时间（uptime）
 start_time = time.time()
 
-@health_bp.route('/health', methods=['GET'])
-def health_check():
+@router.get('/health')
+async def health_check():
     """
     系统综合健康检查API - 主要的健康状态检查接口
     """
@@ -61,23 +61,22 @@ def health_check():
         }
 
         # 返回标准化的API响应格式
-        return jsonify(APIResponse(
+        return APIResponse(
             code=0,
             message="健康检查完成",
             data=health_data
-        ).dict())
+        ).dict()
 
     except Exception as e:
         # 异常处理：记录错误日志并返回500错误响应
         logger.error(f"健康检查失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"健康检查失败: {str(e)}",
-            data={"timestamp": datetime.utcnow().isoformat()}
-        ).dict()), 500
+        raise HTTPException(
+            status_code=500,
+            detail=f"健康检查失败: {str(e)}"
+        )
 
-@health_bp.route('/health/components', methods=['GET'])
-def components_health():
+@router.get('/health/components')
+async def components_health():
     """
     组件详细健康检查API - 深度组件状态分析接口
 
@@ -98,295 +97,309 @@ def components_health():
         prometheus_healthy = prometheus_service.is_healthy()
         components_detail["prometheus"] = {
             "healthy": prometheus_healthy,  # 健康状态
-            "url": prometheus_service.base_url,  # 服务URL
-            "timeout": prometheus_service.timeout  # 超时配置
+            "name": "Prometheus监控服务",  # 组件名称
+            "description": "负责收集和存储系统监控数据",  # 组件描述
+            "last_check": datetime.utcnow().isoformat(),  # 最后检查时间
+            "endpoint": prometheus_service.get_endpoint() if hasattr(prometheus_service, 'get_endpoint') else "unknown"
         }
 
-        # Kubernetes服务健康检查 - 容器编排平台服务
-        try:
-            k8s_service = KubernetesService()
-            k8s_healthy = k8s_service.is_healthy()
-            components_detail["kubernetes"] = {
-                "healthy": k8s_healthy,  # 健康状态
-                # 集群内部部署标识，判断是否在K8s集群内运行
-                "in_cluster": k8s_service.k8s_config.in_cluster if hasattr(k8s_service, 'k8s_config') else False
-            }
-        except Exception as e:
-            # Kubernetes服务异常时记录错误信息
-            components_detail["kubernetes"] = {
-                "healthy": False,
-                "error": str(e)  # 详细错误信息
-            }
+        # 如果Prometheus不健康，添加错误详情
+        if not prometheus_healthy:
+            try:
+                # 尝试获取具体的错误信息
+                error_details = prometheus_service.get_health_details() if hasattr(prometheus_service, 'get_health_details') else "连接失败"
+                components_detail["prometheus"]["error"] = error_details
+            except Exception as detail_error:
+                components_detail["prometheus"]["error"] = f"无法获取错误详情: {str(detail_error)}"
 
-        # LLM服务健康检查 - 大语言模型服务
-        try:
-            llm_service = LLMService()
-            llm_healthy = llm_service.is_healthy()
-            components_detail["llm"] = {
-                "healthy": llm_healthy,  # 健康状态
-                "model": llm_service.model,  # 当前使用的模型名称
-                "base_url": llm_service.client.base_url  # 模型服务的基础URL
-            }
-        except Exception as e:
-            # LLM服务异常时记录错误信息
-            components_detail["llm"] = {
-                "healthy": False,
-                "error": str(e)  # 详细错误信息
-            }
+        # Kubernetes服务健康检查 - 容器编排服务
+        k8s_service = KubernetesService()
+        k8s_healthy = k8s_service.is_healthy()
+        components_detail["kubernetes"] = {
+            "healthy": k8s_healthy,
+            "name": "Kubernetes集群服务",
+            "description": "负责容器编排和集群资源管理",
+            "last_check": datetime.utcnow().isoformat()
+        }
 
-        # 通知服务健康检查 - 告警和消息推送服务
-        try:
-            notification_service = NotificationService()
-            notification_healthy = notification_service.is_healthy()
-            components_detail["notification"] = {
-                "healthy": notification_healthy,  # 健康状态
-                "enabled": notification_service.enabled  # 服务是否启用
-            }
-        except Exception as e:
-            # 通知服务异常时记录错误信息
-            components_detail["notification"] = {
-                "healthy": False,
-                "error": str(e)  # 详细错误信息
-            }
+        if not k8s_healthy:
+            try:
+                k8s_status = k8s_service.get_cluster_status() if hasattr(k8s_service, 'get_cluster_status') else "集群连接异常"
+                components_detail["kubernetes"]["error"] = k8s_status
+            except Exception as k8s_error:
+                components_detail["kubernetes"]["error"] = f"无法获取K8s状态: {str(k8s_error)}"
 
-        # 预测服务健康检查 - 负载预测和容量规划服务
-        try:
-            prediction_service = PredictionService()
-            prediction_healthy = prediction_service.is_healthy()
-            components_detail["prediction"] = {
-                "healthy": prediction_healthy,  # 健康状态
-                "model_loaded": prediction_service.model_loaded,  # ML模型加载状态
-                "scaler_loaded": prediction_service.scaler_loaded  # 特征缩放器加载状态
-            }
-        except Exception as e:
-            # 预测服务异常时记录错误信息
-            components_detail["prediction"] = {
-                "healthy": False,
-                "error": str(e)  # 详细错误信息
-            }
+        # LLM服务健康检查 - AI推理服务
+        llm_service = LLMService()
+        llm_healthy = llm_service.is_healthy()
+        components_detail["llm"] = {
+            "healthy": llm_healthy,
+            "name": "大语言模型服务",
+            "description": "负责AI推理和智能分析",
+            "last_check": datetime.utcnow().isoformat()
+        }
+
+        if not llm_healthy:
+            try:
+                llm_status = llm_service.get_model_status() if hasattr(llm_service, 'get_model_status') else "模型服务异常"
+                components_detail["llm"]["error"] = llm_status
+            except Exception as llm_error:
+                components_detail["llm"]["error"] = f"无法获取LLM状态: {str(llm_error)}"
+
+        # 通知服务健康检查 - 告警推送服务
+        notification_service = NotificationService()
+        notification_healthy = notification_service.is_healthy()
+        components_detail["notification"] = {
+            "healthy": notification_healthy,
+            "name": "通知服务",
+            "description": "负责告警通知和消息推送",
+            "last_check": datetime.utcnow().isoformat()
+        }
+
+        if not notification_healthy:
+            try:
+                notification_status = notification_service.get_service_status() if hasattr(notification_service, 'get_service_status') else "通知服务异常"
+                components_detail["notification"]["error"] = notification_status
+            except Exception as notification_error:
+                components_detail["notification"]["error"] = f"无法获取通知服务状态: {str(notification_error)}"
+
+        # 预测服务健康检查 - 负载预测服务
+        prediction_service = PredictionService()
+        prediction_healthy = prediction_service.is_healthy()
+        components_detail["prediction"] = {
+            "healthy": prediction_healthy,
+            "name": "预测服务",
+            "description": "负责负载预测和容量规划",
+            "last_check": datetime.utcnow().isoformat()
+        }
+
+        if not prediction_healthy:
+            try:
+                prediction_status = prediction_service.get_model_status() if hasattr(prediction_service, 'get_model_status') else "预测模型异常"
+                components_detail["prediction"]["error"] = prediction_status
+            except Exception as prediction_error:
+                components_detail["prediction"]["error"] = f"无法获取预测服务状态: {str(prediction_error)}"
 
         # 返回组件详细健康检查结果
-        return jsonify(APIResponse(
+        return APIResponse(
             code=0,
             message="组件健康检查完成",
             data={
                 "timestamp": datetime.utcnow().isoformat(),  # 检查时间戳
                 "components": components_detail  # 所有组件的详细状态
             }
-        ).dict())
+        ).dict()
 
     except Exception as e:
         # 异常处理：记录错误日志并返回500错误响应
         logger.error(f"组件健康检查失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"组件健康检查失败: {str(e)}",
-            data={"timestamp": datetime.utcnow().isoformat()}
-        ).dict()), 500
+        raise HTTPException(
+            status_code=500,
+            detail=f"组件健康检查失败: {str(e)}"
+        )
 
-@health_bp.route('/health/metrics', methods=['GET'])
-def health_metrics():
+@router.get('/health/metrics')
+async def health_metrics():
     """
     系统健康指标API - 详细的系统资源监控接口
     """
 
     try:
-        # 系统级指标收集 - 获取CPU、内存、磁盘使用情况
-        cpu_percent = psutil.cpu_percent(interval=1)  # CPU使用率，1秒采样间隔
-        memory = psutil.virtual_memory()  # 内存使用情况
-        disk = psutil.disk_usage('/')  # 根目录磁盘使用情况
+        # 获取系统资源使用情况
+        system_metrics = get_system_status()
 
-        # 网络指标收集 - 获取网络I/O统计信息
-        network = psutil.net_io_counters()
+        # 获取进程特定的监控指标
+        process_metrics = get_process_metrics()
 
-        # 当前进程指标收集 - 获取AI-CloudOps进程的资源使用情况
-        process = psutil.Process()  # 当前进程
-        process_memory = process.memory_info()  # 进程内存信息
-
-        # 构建完整的指标数据结构
-        metrics = {
-            "timestamp": datetime.utcnow().isoformat(),  # 指标收集时间戳
-            # 系统级指标
-            "system": {
-                "cpu_percent": cpu_percent,  # CPU使用率百分比
-                "memory_percent": memory.percent,  # 内存使用率百分比
-                "memory_available": memory.available,  # 可用内存字节数
-                "memory_total": memory.total,  # 总内存字节数
-                "disk_percent": (disk.used / disk.total) * 100,  # 磁盘使用率百分比
-                "disk_free": disk.free,  # 可用磁盘空间字节数
-                "disk_total": disk.total  # 总磁盘空间字节数
-            },
-            # 网络I/O指标
-            "network": {
-                "bytes_sent": network.bytes_sent,  # 总发送字节数
-                "bytes_recv": network.bytes_recv,  # 总接收字节数
-                "packets_sent": network.packets_sent,  # 总发送包数
-                "packets_recv": network.packets_recv  # 总接收包数
-            },
-            # 进程级指标
-            "process": {
-                "memory_rss": process_memory.rss,  # 常驻内存大小（字节）
-                "memory_vms": process_memory.vms,  # 虚拟内存大小（字节）
-                "cpu_percent": process.cpu_percent(),  # 进程CPU使用率
-                "num_threads": process.num_threads(),  # 线程数量
-                "create_time": process.create_time()  # 进程创建时间戳
-            },
-            # 运行时指标
-            "uptime": time.time() - start_time  # 系统运行时间（秒）
+        # 合并所有健康指标
+        health_metrics = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "system": system_metrics,
+            "process": process_metrics,
+            "uptime": time.time() - start_time
         }
 
-        # 返回成功的指标数据响应
-        return jsonify(APIResponse(
+        # 返回健康指标数据
+        return APIResponse(
             code=0,
-            message="健康指标获取成功",
-            data=metrics
-        ).dict())
+            message="系统健康指标获取成功",
+            data=health_metrics
+        ).dict()
 
     except Exception as e:
         # 异常处理：记录错误日志并返回500错误响应
         logger.error(f"获取健康指标失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"获取健康指标失败: {str(e)}",
-            data={"timestamp": datetime.utcnow().isoformat()}
-        ).dict()), 500
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取健康指标失败: {str(e)}"
+        )
 
-@health_bp.route('/health/ready', methods=['GET'])
-def readiness_probe():
+@router.get('/health/ready')
+async def readiness_probe():
     """
     Kubernetes就绪性探针API - 服务就绪状态检查接口
     """
 
     try:
-        # 检查所有组件的健康状态
+        # 检查关键组件是否就绪
         components_status = check_components_health()
 
-        # 定义核心组件列表 - 这些组件必须健康才能认为服务就绪
-        # Prometheus: 监控数据收集，是所有分析功能的基础
-        # Prediction: 负载预测服务，核心AI功能之一
-        required_components = ["prometheus", "prediction"]
+        # 定义关键组件列表（服务就绪必须的组件）
+        critical_components = ["prometheus", "kubernetes", "llm"]
 
-        # 检查所有必需组件是否都处于健康状态
-        ready = all(components_status.get(comp, False) for comp in required_components)
+        # 检查关键组件状态
+        for component in critical_components:
+            if component in components_status and not components_status[component]:
+                reason = f"{component}组件未就绪"
+                logger.warning(f"就绪性检查失败: {reason}")
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"服务未就绪: {reason}"
+                )
 
-        if ready:
-            # 服务就绪：所有核心组件都健康
-            return jsonify(APIResponse(
-                code=0,
-                message="服务就绪",
-                data={
-                    "status": "ready",
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            ).dict())
-        else:
-            # 服务未就绪：至少有一个核心组件不健康
-            return jsonify(APIResponse(
-                code=503,
-                message="服务未就绪",
-                data={
-                    "status": "not ready",
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "components": components_status  # 提供详细的组件状态信息
-                }
-            ).dict()), 503
-
-    except Exception as e:
-        # 异常处理：就绪性检查过程本身出现错误
-        logger.error(f"就绪性检查失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"就绪性检查失败: {str(e)}",
+        # 所有关键组件都就绪
+        return APIResponse(
+            code=0,
+            message="就绪性检查通过",
             data={
-                "status": "error",
+                "ready": True,
                 "timestamp": datetime.utcnow().isoformat()
             }
-        ).dict()), 500
+        ).dict()
 
-@health_bp.route('/health/live', methods=['GET'])
-def liveness_probe():
+    except HTTPException:
+        # 重新抛出HTTP异常
+        raise
+    except Exception as e:
+        # 异常处理：记录错误日志并返回500错误响应
+        logger.error(f"就绪性检查失败: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"就绪性检查失败: {str(e)}"
+        )
+
+@router.get('/health/live')
+async def liveness_probe():
     """
     存活性探针
     """
+    return APIResponse(
+        code=0,
+        message="存活性检查通过",
+        data={
+            "alive": True,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    ).dict()
 
-    try:
-        # 简单的存活性检查
-        return jsonify(APIResponse(
-            code=0,
-            message="服务存活",
-            data={
-                "status": "alive",
-                "timestamp": datetime.utcnow().isoformat(),
-                "uptime": time.time() - start_time
-            }
-        ).dict())
-
-    except Exception as e:
-        logger.error(f"存活性检查失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"存活性检查失败: {str(e)}",
-            data={
-                "status": "error",
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        ).dict()), 500
 
 def check_components_health():
-    """
-    检查各组件健康状态
-    """
+    """检查各组件健康状态"""
     components_status = {}
 
-    # Prometheus
     try:
+        # Prometheus服务检查
         prometheus_service = PrometheusService()
         components_status["prometheus"] = prometheus_service.is_healthy()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Prometheus健康检查异常: {str(e)}")
         components_status["prometheus"] = False
 
-    # Kubernetes
     try:
+        # Kubernetes服务检查
         k8s_service = KubernetesService()
         components_status["kubernetes"] = k8s_service.is_healthy()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Kubernetes健康检查异常: {str(e)}")
         components_status["kubernetes"] = False
 
-    # LLM
     try:
+        # LLM服务检查
         llm_service = LLMService()
         components_status["llm"] = llm_service.is_healthy()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"LLM健康检查异常: {str(e)}")
         components_status["llm"] = False
 
-    # 通知服务
     try:
+        # 通知服务检查
         notification_service = NotificationService()
         components_status["notification"] = notification_service.is_healthy()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"通知服务健康检查异常: {str(e)}")
         components_status["notification"] = False
 
-    # 预测服务
     try:
+        # 预测服务检查
         prediction_service = PredictionService()
         components_status["prediction"] = prediction_service.is_healthy()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"预测服务健康检查异常: {str(e)}")
         components_status["prediction"] = False
 
     return components_status
 
+
 def get_system_status():
     """获取系统资源状态"""
-    cpu_percent = psutil.cpu_percent(interval=1)
-    memory = psutil.virtual_memory()
-    disk = psutil.disk_usage('/')
+    try:
+        # 获取CPU使用率
+        cpu_percent = psutil.cpu_percent(interval=1)
 
-    system_status = {
-        "cpu_usage_percent": cpu_percent,
-        "memory_usage_percent": memory.percent,
-        "disk_usage_percent": (disk.used / disk.total) * 100,
-        "memory_available_mb": memory.available / (1024 * 1024),
-        "disk_free_gb": disk.free / (1024 * 1024 * 1024)
-    }
+        # 获取内存使用情况
+        memory = psutil.virtual_memory()
+        memory_percent = memory.percent
 
-    return system_status
+        # 获取磁盘使用情况
+        disk = psutil.disk_usage('/')
+        disk_percent = (disk.used / disk.total) * 100
+
+        return {
+            "cpu": {
+                "usage_percent": round(cpu_percent, 2),
+                "count": psutil.cpu_count()
+            },
+            "memory": {
+                "usage_percent": round(memory_percent, 2),
+                "total_gb": round(memory.total / (1024**3), 2),
+                "used_gb": round(memory.used / (1024**3), 2),
+                "available_gb": round(memory.available / (1024**3), 2)
+            },
+            "disk": {
+                "usage_percent": round(disk_percent, 2),
+                "total_gb": round(disk.total / (1024**3), 2),
+                "used_gb": round(disk.used / (1024**3), 2),
+                "free_gb": round(disk.free / (1024**3), 2)
+            }
+        }
+    except Exception as e:
+        logger.error(f"获取系统状态失败: {str(e)}")
+        return {
+            "cpu": {"usage_percent": 0, "count": 0},
+            "memory": {"usage_percent": 0, "total_gb": 0, "used_gb": 0, "available_gb": 0},
+            "disk": {"usage_percent": 0, "total_gb": 0, "used_gb": 0, "free_gb": 0}
+        }
+
+
+def get_process_metrics():
+    """获取当前进程的监控指标"""
+    try:
+        process = psutil.Process()
+        return {
+            "pid": process.pid,
+            "cpu_percent": round(process.cpu_percent(), 2),
+            "memory_mb": round(process.memory_info().rss / (1024**2), 2),
+            "threads": process.num_threads(),
+            "open_files": len(process.open_files()),
+            "connections": len(process.connections())
+        }
+    except Exception as e:
+        logger.error(f"获取进程指标失败: {str(e)}")
+        return {
+            "pid": 0,
+            "cpu_percent": 0,
+            "memory_mb": 0,
+            "threads": 0,
+            "open_files": 0,
+            "connections": 0
+        }

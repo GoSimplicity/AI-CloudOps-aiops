@@ -10,8 +10,8 @@ Description: 研究代理 - 提供问题调查和解决方案分析服务
 """
 
 import logging
-from typing import Dict, Any, List, Optional
-from langchain_core.tools import tool
+from typing import Dict, Any, List
+# 移除未使用的工具装饰器依赖，避免不必要的导入
 from langchain_community.tools.tavily_search import TavilySearchResults
 from app.config.settings import config
 from app.services.llm import LLMService
@@ -42,7 +42,6 @@ class ResearcherAgent:
             self.search_tool = None
             self.search_enabled = False
     
-    @tool
     async def search_kubernetes_solutions(self, query: str) -> str:
         """Search Kubernetes problem solutions"""
         try:
@@ -253,7 +252,6 @@ class ResearcherAgent:
 - 检查权限设置
 """
     
-    @tool
     async def search_error_solutions(self, error_message: str) -> str:
         """搜索特定错误消息的解决方案"""
         try:

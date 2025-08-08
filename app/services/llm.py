@@ -14,7 +14,7 @@ import logging
 import json
 import os
 import re
-from typing import Dict, Any, List, Optional, Union, Tuple
+from typing import Dict, Any, List, Optional, Union
 
 # ==================== LLM客户端库导入 ====================
 from openai import OpenAI  # OpenAI官方客户端
@@ -23,12 +23,11 @@ import ollama  # Ollama本地模型客户端
 # ==================== 内部组件导入 ====================
 from app.config.settings import config  # 系统配置
 from app.constants import (
-    LLM_TIMEOUT_SECONDS, LLM_MAX_RETRIES, OPENAI_TEST_MAX_TOKENS,
-    LLM_CONFIDENCE_THRESHOLD, LLM_TEMPERATURE_MIN, LLM_TEMPERATURE_MAX
+    LLM_MAX_RETRIES, LLM_TEMPERATURE_MIN, LLM_TEMPERATURE_MAX
 )  # LLM相关常量
 from app.utils.error_handlers import (
     ErrorHandler, ServiceError, ValidationError, ExternalServiceError,
-    retry_on_exception, validate_field_type, validate_field_range
+    retry_on_exception, validate_field_range
 )  # 错误处理工具
 
 logger = logging.getLogger("aiops.llm")

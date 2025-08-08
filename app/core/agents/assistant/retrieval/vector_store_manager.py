@@ -145,7 +145,7 @@ class VectorStoreManager:
 
                             if results:
                                 logger.debug(f"混合搜索找到 {len(results)} 个结果")
-                                return [doc for doc, score in results]
+                                return [doc for doc, _ in results]
                             else:
                                 logger.debug("混合搜索无结果，尝试纯语义搜索")
 
@@ -162,7 +162,7 @@ class VectorStoreManager:
 
                             if results:
                                 logger.debug(f"语义搜索找到 {len(results)} 个结果")
-                                return [doc for doc, score in results]
+                                return [doc for doc, _ in results]
                             else:
                                 logger.debug("语义搜索无结果，尝试关键词搜索")
 
@@ -182,7 +182,7 @@ class VectorStoreManager:
                                         k=max(2, k//2),
                                         similarity_threshold=0.01  # 最低阈值
                                     )
-                                    all_results.extend([doc for doc, score in word_results])
+                                    all_results.extend([doc for doc, _ in word_results])
                                 except:
                                     continue
 

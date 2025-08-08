@@ -17,16 +17,27 @@ import signal
 import sys
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional, AsyncGenerator
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+import importlib
+try:
+  fastapi_module = importlib.import_module("fastapi")
+  responses_module = importlib.import_module("fastapi.responses")
+  cors_module = importlib.import_module("fastapi.middleware.cors")
+
+  FastAPI = getattr(fastapi_module, "FastAPI")
+  HTTPException = getattr(fastapi_module, "HTTPException")
+  Request = getattr(fastapi_module, "Request")
+  StreamingResponse = getattr(responses_module, "StreamingResponse")
+  CORSMiddleware = getattr(cors_module, "CORSMiddleware")
+except Exception as e:
+  logging.error(f"缺少FastAPI依赖: {e}. 请安装 'fastapi' 和 'uvicorn' 包。")
+  raise
 from pydantic import BaseModel, Field
 
 try:
@@ -76,7 +87,7 @@ class ToolResponse(BaseModel):
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app):
   """应用生命周期管理"""
   global mcp_server
 
@@ -151,12 +162,12 @@ async def health_check() -> Dict[str, Any]:
 
 
 @app.get("/sse")
-async def sse_endpoint(request: Request) -> StreamingResponse:
+async def sse_endpoint(request):
   """SSE端点，提供实时数据流"""
   if not mcp_server:
     raise HTTPException(status_code=503, detail="MCP服务器未初始化")
 
-  async def event_generator() -> AsyncGenerator[str, None]:
+  async def event_generator():
     """事件生成器"""
     connection_id = id(request)
     active_sse_connections.add(connection_id)

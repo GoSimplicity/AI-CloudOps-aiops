@@ -9,353 +9,185 @@ License: Apache 2.0
 Description: 提供多Agent协作的K8s修复API接口
 """
 
-from flask import Blueprint, request, jsonify
+from fastapi import APIRouter, HTTPException
 from datetime import datetime, timezone
 import asyncio
 import logging
 from app.core.agents.coordinator import K8sCoordinatorAgent
 from app.models.response_models import APIResponse
 from app.utils.validators import validate_deployment_name, validate_namespace, sanitize_input
+from pydantic import BaseModel
+from typing import Optional
 
 logger = logging.getLogger("aiops.multi_agent")
 
-multi_agent_bp = Blueprint('multi_agent', __name__)
+router = APIRouter(tags=["multi_agent"])
+
+class RepairRequest(BaseModel):
+    deployment: str
+    namespace: Optional[str] = "default"
+
+class RepairAllRequest(BaseModel):
+    namespace: Optional[str] = "default"
+
+class ClusterRequest(BaseModel):
+    cluster_name: Optional[str] = "default"
 
 # 初始化协调器
 coordinator = K8sCoordinatorAgent()
 
-@multi_agent_bp.route('/multi-agent/repair', methods=['POST'])
-def repair_deployment():
+@router.post('/multi-agent/repair')
+async def repair_deployment(request_data: RepairRequest):
     """修复单个部署"""
     try:
-        data = request.get_json() or {}
-        
-        deployment = data.get('deployment')
-        namespace = data.get('namespace', 'default')
+        deployment = sanitize_input(request_data.deployment)
+        namespace = sanitize_input(request_data.namespace)
         
         # 验证参数
         if not deployment:
-            return jsonify(APIResponse(
-                code=400,
-                message="必须提供部署名称",
-                data={}
-            ).model_dump()), 400
+            raise HTTPException(status_code=400, detail="必须提供部署名称")
             
         if not validate_deployment_name(deployment):
-            return jsonify(APIResponse(
-                code=400,
-                message="无效的部署名称",
-                data={}
-            ).model_dump()), 400
+            raise HTTPException(status_code=400, detail="无效的部署名称")
             
         if not validate_namespace(namespace):
-            return jsonify(APIResponse(
-                code=400,
-                message="无效的命名空间名称",
-                data={}
-            ).model_dump()), 400
-        
-        deployment = sanitize_input(deployment)
-        namespace = sanitize_input(namespace)
-        
-        logger.info(f"开始多Agent修复: {deployment}/{namespace}")
-        
-        # 执行修复工作流
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(
-                coordinator.run_full_workflow(deployment, namespace)
-            )
-        finally:
-            loop.close()
-        
-        # 构建响应
-        if result.get('success'):
-            message = "多Agent修复完成"
-            code = 0
-        else:
-            message = f"修复失败: {result.get('error', '未知错误')}"
-            code = 500
-        
-        return jsonify(APIResponse(
-            code=code,
-            message=message,
-            data=result
-        ).model_dump())
-        
-    except Exception as e:
-        logger.error(f"修复请求失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"修复请求失败: {str(e)}",
-            data={"timestamp": datetime.now(timezone.utc).isoformat()}
-        ).model_dump()), 500
+            raise HTTPException(status_code=400, detail="无效的命名空间名称")
 
-@multi_agent_bp.route('/multi-agent/repair/batch', methods=['POST'])
-def repair_namespace():
-    """批量修复命名空间"""
+        logger.info(f"开始多Agent修复部署: {deployment} in {namespace}")
+        
+        # 执行修复
+        result = await asyncio.to_thread(
+            coordinator.repair_deployment,
+            deployment=deployment,
+            namespace=namespace
+        )
+        
+        return APIResponse(
+            code=0,
+            message="部署修复完成",
+            data=result
+        ).dict()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"修复部署失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"修复部署失败: {str(e)}")
+
+@router.post('/multi-agent/repair-all')
+async def repair_all_deployments(request_data: RepairAllRequest):
+    """修复命名空间下所有部署"""
     try:
-        data = request.get_json() or {}
-        namespace = data.get('namespace', 'default')
+        namespace = sanitize_input(request_data.namespace)
         
         if not validate_namespace(namespace):
-            return jsonify(APIResponse(
-                code=400,
-                message="无效的命名空间名称",
-                data={}
-            ).model_dump()), 400
-        
-        namespace = sanitize_input(namespace)
-        
-        logger.info(f"开始批量修复: {namespace}")
-        
-        # 执行批量工作流
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(
-                coordinator.run_batch_workflow(namespace)
-            )
-        finally:
-            loop.close()
-        
-        if result.get('success'):
-            message = "批量修复完成"
-            code = 0
-        else:
-            message = f"批量修复失败: {result.get('error', '未知错误')}"
-            code = 500
-        
-        return jsonify(APIResponse(
-            code=code,
-            message=message,
-            data=result
-        ).model_dump())
-        
-    except Exception as e:
-        logger.error(f"批量修复请求失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"批量修复请求失败: {str(e)}",
-            data={"timestamp": datetime.now(timezone.utc).isoformat()}
-        ).model_dump()), 500
+            raise HTTPException(status_code=400, detail="无效的命名空间名称")
 
-@multi_agent_bp.route('/multi-agent/detect', methods=['POST'])
-def detect_issues():
-    """检测问题"""
-    try:
-        data = request.get_json() or {}
-        namespace = data.get('namespace', 'default')
-        deployment = data.get('deployment')
+        logger.info(f"开始修复命名空间 {namespace} 下的所有部署")
         
-        if not validate_namespace(namespace):
-            return jsonify(APIResponse(
-                code=400,
-                message="无效的命名空间名称",
-                data={}
-            ).model_dump()), 400
+        # 执行批量修复
+        result = await asyncio.to_thread(
+            coordinator.repair_all_deployments,
+            namespace=namespace
+        )
         
-        namespace = sanitize_input(namespace)
-        
-        logger.info(f"开始检测问题: {namespace}")
-        
-        # 执行检测
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            if deployment:
-                result = loop.run_until_complete(
-                    coordinator.detector.detect_deployment_issues(deployment, namespace)
-                )
-            else:
-                result = loop.run_until_complete(
-                    coordinator.detector.detect_all_issues(namespace)
-                )
-        finally:
-            loop.close()
-        
-        return jsonify(APIResponse(
+        return APIResponse(
             code=0,
-            message="问题检测完成",
+            message="批量修复完成",
             data=result
-        ).model_dump())
+        ).dict()
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"检测请求失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"检测请求失败: {str(e)}",
-            data={"timestamp": datetime.now(timezone.utc).isoformat()}
-        ).model_dump()), 500
+        logger.error(f"批量修复失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"批量修复失败: {str(e)}")
 
-@multi_agent_bp.route('/multi-agent/strategy', methods=['POST'])
-def create_strategy():
-    """创建修复策略"""
+@router.post('/multi-agent/analyze')
+async def analyze_cluster(request_data: ClusterRequest):
+    """分析集群健康状态"""
     try:
-        data = request.get_json() or {}
-        issues = data.get('issues')
+        cluster_name = sanitize_input(request_data.cluster_name)
+
+        logger.info(f"开始分析集群: {cluster_name}")
         
-        if not issues:
-            return jsonify(APIResponse(
-                code=400,
-                message="必须提供问题数据",
-                data={}
-            ).model_dump()), 400
+        # 执行集群分析
+        result = await asyncio.to_thread(
+            coordinator.analyze_cluster,
+            cluster_name=cluster_name
+        )
         
-        logger.info("开始制定修复策略")
-        
-        # 制定策略
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(
-                coordinator.strategist.analyze_issues(issues)
-            )
-        finally:
-            loop.close()
-        
-        if 'error' in result:
-            return jsonify(APIResponse(
-                code=500,
-                message=f"策略制定失败: {result['error']}",
-                data={}
-            ).model_dump()), 500
-        
-        return jsonify(APIResponse(
+        return APIResponse(
             code=0,
-            message="策略制定完成",
+            message="集群分析完成",
             data=result
-        ).model_dump())
+        ).dict()
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"策略制定请求失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"策略制定请求失败: {str(e)}",
-            data={"timestamp": datetime.now(timezone.utc).isoformat()}
-        ).model_dump()), 500
+        logger.error(f"集群分析失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"集群分析失败: {str(e)}")
 
-@multi_agent_bp.route('/multi-agent/execute', methods=['POST'])
-def execute_strategy():
-    """执行修复策略"""
+@router.get('/multi-agent/status')
+async def get_coordinator_status():
+    """获取协调器状态"""
     try:
-        data = request.get_json() or {}
-        strategy = data.get('strategy')
+        logger.info("获取多Agent协调器状态")
         
-        if not strategy:
-            return jsonify(APIResponse(
-                code=400,
-                message="必须提供策略数据",
-                data={}
-            ).model_dump()), 400
+        # 获取协调器状态
+        status = await asyncio.to_thread(coordinator.get_status)
         
-        logger.info("开始执行修复策略")
-        
-        # 执行策略
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(
-                coordinator.executor.execute_strategy(strategy)
-            )
-        finally:
-            loop.close()
-        
-        return jsonify(APIResponse(
-            code=0 if result.get('success') else 500,
-            message="策略执行完成" if result.get('success') else "策略执行失败",
-            data=result
-        ).model_dump())
-        
-    except Exception as e:
-        logger.error(f"策略执行请求失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"策略执行请求失败: {str(e)}",
-            data={"timestamp": datetime.now(timezone.utc).isoformat()}
-        ).model_dump()), 500
-
-@multi_agent_bp.route('/multi-agent/history', methods=['GET'])
-def get_history():
-    """获取工作流历史"""
-    try:
-        history = coordinator.get_workflow_history()
-        return jsonify(APIResponse(
+        return APIResponse(
             code=0,
-            message="获取历史成功",
-            data={'history': history}
-        ).model_dump())
+            message="协调器状态获取成功",
+            data=status
+        ).dict()
         
     except Exception as e:
-        logger.error(f"获取历史失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"获取历史失败: {str(e)}",
-            data={"timestamp": datetime.now(timezone.utc).isoformat()}
-        ).model_dump()), 500
+        logger.error(f"获取协调器状态失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取协调器状态失败: {str(e)}")
 
-@multi_agent_bp.route('/multi-agent/health', methods=['GET'])
-def health_check():
-    """健康检查"""
+@router.get('/multi-agent/agents')
+async def list_agents():
+    """列出所有Agent"""
     try:
-        # 执行健康检查
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            health = loop.run_until_complete(coordinator.health_check())
-        finally:
-            loop.close()
+        logger.info("获取Agent列表")
         
-        return jsonify(APIResponse(
+        # 获取Agent列表
+        agents = await asyncio.to_thread(coordinator.list_agents)
+        
+        return APIResponse(
             code=0,
-            message="健康检查完成",
-            data=health
-        ).model_dump())
+            message="Agent列表获取成功",
+            data={
+                "agents": agents,
+                "count": len(agents),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        ).dict()
         
     except Exception as e:
-        logger.error(f"健康检查失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"健康检查失败: {str(e)}",
-            data={"timestamp": datetime.now(timezone.utc).isoformat()}
-        ).model_dump()), 500
+        logger.error(f"获取Agent列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取Agent列表失败: {str(e)}")
 
-@multi_agent_bp.route('/multi-agent/reset', methods=['POST'])
-def reset_workflow():
-    """重置工作流"""
+@router.get('/multi-agent/health')
+async def multi_agent_health():
+    """多Agent服务健康检查"""
     try:
-        data = request.get_json() or {}
-        deployment = data.get('deployment')
-        namespace = data.get('namespace', 'default')
+        # 检查协调器健康状态
+        health_status = await asyncio.to_thread(coordinator.is_healthy)
         
-        if not deployment:
-            return jsonify(APIResponse(
-                code=400,
-                message="必须提供部署名称",
-                data={}
-            ).model_dump()), 400
-        
-        # 重置工作流
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(
-                coordinator.reset_workflow(deployment, namespace)
-            )
-        finally:
-            loop.close()
-        
-        return jsonify(APIResponse(
-            code=0 if result.get('success') else 500,
-            message=result.get('message', '重置完成'),
-            data=result
-        ).model_dump())
+        return APIResponse(
+            code=0,
+            message="多Agent服务健康检查完成",
+            data={
+                "healthy": health_status,
+                "timestamp": datetime.utcnow().isoformat(),
+                "service": "multi_agent"
+            }
+        ).dict()
         
     except Exception as e:
-        logger.error(f"重置请求失败: {str(e)}")
-        return jsonify(APIResponse(
-            code=500,
-            message=f"重置请求失败: {str(e)}",
-            data={"timestamp": datetime.now(timezone.utc).isoformat()}
-        ).model_dump()), 500
+        logger.error(f"多Agent服务健康检查失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"多Agent服务健康检查失败: {str(e)}")

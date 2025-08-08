@@ -14,7 +14,6 @@ import sys
 import pytest
 import json
 import logging
-from pathlib import Path
 
 # 添加项目路径到sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -43,7 +42,6 @@ def test_health_endpoint(client):
     
     # 检查组件状态
     assert 'components' in data['data']
-    components = data['data']['components']
     
     # 服务启动时间
     assert 'timestamp' in data['data']
