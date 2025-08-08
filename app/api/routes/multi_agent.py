@@ -18,12 +18,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.agents.coordinator import K8sCoordinatorAgent
-from app.models.response_models import APIResponse
+from app.models.response_models import APIResponse, PaginatedListAPIResponse
 from app.utils.validators import (
     sanitize_input,
     validate_deployment_name,
     validate_namespace,
 )
+from app.utils.pagination import process_list_with_pagination_and_search
 
 logger = logging.getLogger("aiops.multi_agent")
 
@@ -146,24 +147,57 @@ async def get_coordinator_status():
 
 
 @router.get("/multi-agent/agents")
-async def list_agents():
-    """列出所有Agent"""
+async def list_agents(
+    page: Optional[int] = 1,
+    size: Optional[int] = 20,
+    search: Optional[str] = None
+):
+    """列出所有Agent（支持分页和搜索）"""
     try:
-        logger.info("获取Agent列表")
+        logger.info(f"获取Agent列表: page={page}, size={size}, search={search}")
 
-        # 获取Agent列表
+        # 获取所有Agent列表
         agents = await asyncio.to_thread(coordinator.list_agents)
+        
+        # 确保agents是字典列表格式，如果不是则转换
+        if agents and not isinstance(agents[0], dict):
+            # 如果agents是其他格式，尝试转换为字典
+            agents_dict = []
+            for i, agent in enumerate(agents):
+                if hasattr(agent, '__dict__'):
+                    agent_dict = agent.__dict__
+                elif hasattr(agent, 'model_dump'):
+                    agent_dict = agent.model_dump()
+                else:
+                    # 简单转换
+                    agent_dict = {
+                        "id": getattr(agent, 'id', f"agent_{i}"),
+                        "name": getattr(agent, 'name', f"Agent {i+1}"),
+                        "status": getattr(agent, 'status', 'unknown'),
+                        "type": getattr(agent, 'type', 'unknown')
+                    }
+                agents_dict.append(agent_dict)
+            agents = agents_dict
 
-        return APIResponse(
+        # 应用分页和搜索（在name字段中搜索）
+        paginated_agents, pagination_info = process_list_with_pagination_and_search(
+            items=agents,
+            page=page,
+            size=size,
+            search=search,
+            search_fields=["name", "type", "status"]
+        )
+
+        return PaginatedListAPIResponse(
             code=0,
             message="Agent列表获取成功",
-            data={
-                "agents": agents,
-                "count": len(agents),
-                "timestamp": datetime.utcnow().isoformat(),
-            },
+            items=paginated_agents,
+            pagination=pagination_info
         ).model_dump()
 
+    except ValueError as e:
+        logger.error(f"参数验证失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"获取Agent列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取Agent列表失败: {str(e)}")

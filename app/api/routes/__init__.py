@@ -13,6 +13,8 @@ import logging
 
 from fastapi import APIRouter
 
+from app.models.response_models import APIResponse
+
 logger = logging.getLogger("aiops.routes")
 
 # 创建API v1路由器
@@ -77,18 +79,22 @@ def register_routes(app):
     # 根路径
     @app.get("/", tags=["root"])
     async def root():
-        return {
-            "service": "AIOps Platform",
-            "version": "1.0.0",
-            "status": "running",
-            "endpoints": {
-                "health": "/api/v1/health",
-                "prediction": "/api/v1/predict",
-                "rca": "/api/v1/rca",
-                "autofix": "/api/v1/autofix",
-                "assistant": "/api/v1/assistant",
-                "multi_agent": "/api/v1/multi-agent",
-                "docs": "/docs",
-                "redoc": "/redoc",
+        return APIResponse(
+            code=0,
+            message="AIOps Platform API",
+            data={
+                "service": "AIOps Platform",
+                "version": "1.0.0",
+                "status": "running",
+                "endpoints": {
+                    "health": "/api/v1/health",
+                    "prediction": "/api/v1/predict",
+                    "rca": "/api/v1/rca",
+                    "autofix": "/api/v1/autofix",
+                    "assistant": "/api/v1/assistant",
+                    "multi_agent": "/api/v1/multi-agent",
+                    "docs": "/docs",
+                    "redoc": "/redoc",
+                },
             },
-        }
+        ).model_dump()

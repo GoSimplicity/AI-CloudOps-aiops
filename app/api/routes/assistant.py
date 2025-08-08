@@ -20,6 +20,8 @@ from typing import Any, Dict, Optional, Union
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.models.response_models import APIResponse
+
 # 创建日志器
 logger = logging.getLogger("aiops.api.assistant")
 
@@ -194,12 +196,12 @@ async def run_async_func_safely(func, *args, **kwargs):
 
 def create_error_response(code: int, message: str, data: Optional[Dict] = None) -> Dict:
     """创建统一格式的错误响应"""
-    return {"code": code, "message": message, "data": data or {}}
+    return APIResponse(code=code, message=message, data=data or {}).model_dump()
 
 
 def create_success_response(message: str, data: Optional[Dict] = None) -> Dict:
     """创建统一格式的成功响应"""
-    return {"code": 0, "message": message, "data": data or {}}
+    return APIResponse(code=0, message=message, data=data or {}).model_dump()
 
 
 @router.post("/assistant/query")

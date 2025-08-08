@@ -22,13 +22,14 @@ from app.core.agents.k8s_fixer import K8sFixerAgent
 from app.core.agents.notifier import NotifierAgent
 from app.core.agents.supervisor import SupervisorAgent
 from app.models.request_models import AutoFixRequest
-from app.models.response_models import APIResponse, AutoFixResponse
+from app.models.response_models import APIResponse, AutoFixResponse, ListAPIResponse, PaginatedListAPIResponse
 from app.services.notification import NotificationService
 from app.utils.validators import (
     sanitize_input,
     validate_deployment_name,
     validate_namespace,
 )
+from app.utils.pagination import process_list_with_pagination_and_search
 
 logger = logging.getLogger("aiops.autofix")
 
@@ -213,23 +214,80 @@ async def get_task_status(task_id: str):
 
 
 @router.get("/autofix/history")
-async def get_history(limit: Optional[int] = 50):
-    """获取修复历史"""
+async def get_history(
+    page: Optional[int] = 1,
+    size: Optional[int] = 20,
+    search: Optional[str] = None,
+    limit: Optional[int] = None  # 保持向后兼容
+):
+    """获取修复历史（支持分页和搜索）"""
     try:
-        if limit < 1 or limit > 500:
-            raise HTTPException(status_code=400, detail="limit参数必须在1-500之间")
+        # 如果使用了旧的limit参数，则使用传统模式
+        if limit is not None:
+            # 验证limit参数
+            if limit < 1 or limit > 500:
+                raise HTTPException(status_code=400, detail="limit参数必须在1-500之间")
 
-        logger.info(f"获取修复历史，限制数量: {limit}")
+            logger.info(f"获取修复历史（传统模式），限制数量: {limit}")
 
-        # 获取历史记录
-        history = await asyncio.to_thread(supervisor_agent.get_fix_history, limit=limit)
+            # 获取历史记录
+            history = await asyncio.to_thread(supervisor_agent.get_fix_history, limit=limit)
 
-        return APIResponse(
+            return ListAPIResponse(
+                code=0,
+                message="修复历史获取成功",
+                items=history,
+            ).model_dump()
+        
+        # 使用新的分页模式
+        logger.info(f"获取修复历史: page={page}, size={size}, search={search}")
+
+        # 获取所有历史记录（需要先获取更多记录用于分页）
+        max_records = 1000  # 最大获取1000条记录用于分页
+        history = await asyncio.to_thread(supervisor_agent.get_fix_history, limit=max_records)
+        
+        # 确保history是字典列表格式
+        if history and not isinstance(history[0], dict):
+            # 如果history是其他格式，尝试转换为字典
+            history_dict = []
+            for i, record in enumerate(history):
+                if hasattr(record, '__dict__'):
+                    record_dict = record.__dict__
+                elif hasattr(record, 'model_dump'):
+                    record_dict = record.model_dump()
+                else:
+                    # 简单转换
+                    record_dict = {
+                        "id": getattr(record, 'id', f"fix_{i}"),
+                        "name": getattr(record, 'deployment', f"Fix {i+1}"),
+                        "deployment": getattr(record, 'deployment', ''),
+                        "namespace": getattr(record, 'namespace', 'default'),
+                        "status": getattr(record, 'status', 'unknown'),
+                        "timestamp": getattr(record, 'timestamp', ''),
+                        "summary": getattr(record, 'summary', '')
+                    }
+                history_dict.append(record_dict)
+            history = history_dict
+
+        # 应用分页和搜索（在deployment、namespace、status、summary字段中搜索）
+        paginated_history, pagination_info = process_list_with_pagination_and_search(
+            items=history,
+            page=page,
+            size=size,
+            search=search,
+            search_fields=["name", "deployment", "namespace", "status", "summary"]
+        )
+
+        return PaginatedListAPIResponse(
             code=0,
             message="修复历史获取成功",
-            data={"history": history, "count": len(history), "limit": limit},
+            items=paginated_history,
+            pagination=pagination_info
         ).model_dump()
 
+    except ValueError as e:
+        logger.error(f"参数验证失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
