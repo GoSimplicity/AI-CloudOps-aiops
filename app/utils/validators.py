@@ -10,7 +10,7 @@ Description: 验证器模块 - 输入数据验证工具
 """
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 
@@ -23,8 +23,9 @@ def validate_time_range(
     time_diff = (end_time - start_time).total_seconds() / 60
     if time_diff > max_range_minutes:
         return False
-    # 检查是否是未来时间
-    now = datetime.now(BEIJING_TZ)
+    # 检查是否是未来时间（使用北京时间）
+    beijing_tz = timezone(timedelta(hours=8))
+    now = datetime.now(beijing_tz)
     if start_time > now or end_time > now:
         return False
     return True

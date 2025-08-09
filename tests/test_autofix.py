@@ -1,7 +1,3 @@
-
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -20,6 +16,9 @@ import subprocess
 from datetime import datetime, timezone, timedelta
 import logging
 from pathlib import Path
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 # 配置日志
 logging.basicConfig(

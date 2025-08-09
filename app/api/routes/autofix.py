@@ -12,7 +12,7 @@ Description: 自动修复API路由 - 提供Kubernetes问题自动诊断、修复
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -22,14 +22,12 @@ from app.core.agents.k8s_fixer import K8sFixerAgent
 from app.core.agents.notifier import NotifierAgent
 from app.core.agents.supervisor import SupervisorAgent
 from app.models.request_models import AutoFixRequest
-from app.models.response_models import APIResponse, AutoFixResponse, PaginatedListAPIResponse
+from app.models.response_models import (APIResponse, AutoFixResponse,
+                                        PaginatedListAPIResponse)
 from app.services.notification import NotificationService
-from app.utils.validators import (
-    sanitize_input,
-    validate_deployment_name,
-    validate_namespace,
-)
 from app.utils.pagination import process_list_with_pagination_and_search
+from app.utils.validators import (sanitize_input, validate_deployment_name,
+                                  validate_namespace)
 
 logger = logging.getLogger("aiops.autofix")
 
@@ -54,9 +52,9 @@ notifier_agent = NotifierAgent()
 notification_service = NotificationService()
 
 
-@router.post("/autofix")
-async def autofix_k8s(request_data: AutoFixRequest):
-    """自动修复Kubernetes问题"""
+@router.post("/autofix/create")
+async def create_autofix(request_data: AutoFixRequest):
+    """创建自动修复Kubernetes问题"""
     try:
         # 验证请求参数
         deployment = sanitize_input(request_data.deployment)
@@ -125,9 +123,9 @@ async def autofix_k8s(request_data: AutoFixRequest):
         raise HTTPException(status_code=500, detail=f"自动修复失败: {str(e)}")
 
 
-@router.post("/autofix/workflow")
-async def start_workflow(request_data: WorkflowRequest):
-    """启动自动修复工作流"""
+@router.post("/workflows/create")
+async def create_workflow(request_data: WorkflowRequest):
+    """创建自动修复工作流"""
     try:
         namespace = request_data.namespace
 
@@ -152,9 +150,9 @@ async def start_workflow(request_data: WorkflowRequest):
         raise HTTPException(status_code=500, detail=f"启动工作流失败: {str(e)}")
 
 
-@router.post("/autofix/diagnosis")
-async def run_diagnosis(request_data: AutoFixRequest):
-    """运行问题诊断"""
+@router.post("/diagnosis/create")
+async def create_diagnosis(request_data: AutoFixRequest):
+    """创建问题诊断"""
     try:
         deployment = sanitize_input(request_data.deployment)
         namespace = (
@@ -187,9 +185,9 @@ async def run_diagnosis(request_data: AutoFixRequest):
         raise HTTPException(status_code=500, detail=f"问题诊断失败: {str(e)}")
 
 
-@router.get("/autofix/status/{task_id}")
-async def get_task_status(task_id: str):
-    """获取任务状态"""
+@router.get("/tasks/{task_id}")
+async def get_task_detail(task_id: str):
+    """获取任务状态详情"""
     try:
         task_id = sanitize_input(task_id)
 
@@ -215,13 +213,13 @@ async def get_task_status(task_id: str):
         raise HTTPException(status_code=500, detail=f"查询任务状态失败: {str(e)}")
 
 
-@router.get("/autofix/history")
-async def get_history(
+@router.get("/history/list")
+async def list_fix_history(
     page: Optional[int] = 1,
     size: Optional[int] = 20,
     search: Optional[str] = None
 ):
-    """获取修复历史（支持分页和搜索）"""
+    """获取修复历史列表（支持分页和搜索）"""
     try:
         logger.info(f"获取修复历史: page={page}, size={size}, search={search}")
 

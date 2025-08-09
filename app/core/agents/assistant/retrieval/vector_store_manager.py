@@ -15,12 +15,9 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
 from app.core.agents.assistant.models.config import assistant_config
-
 # Redis向量存储
-from app.core.vector.redis_vector_store import (
-    OptimizedRedisVectorStore,
-    RedisVectorStoreManager,
-)
+from app.core.vector.redis_vector_store import (OptimizedRedisVectorStore,
+                                                RedisVectorStoreManager)
 
 logger = logging.getLogger("aiops.assistant.vector_store_manager")
 
@@ -106,7 +103,7 @@ class VectorStoreManager:
             return False
 
     async def create_vector_store(
-        self, documents: List[Document], use_memory: bool = False
+        self, documents: List[Document]
     ) -> bool:
         """创建向量数据库"""
         if not self.redis_manager:

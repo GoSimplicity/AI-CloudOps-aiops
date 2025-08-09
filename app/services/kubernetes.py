@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from kubernetes import client
@@ -224,6 +224,32 @@ class KubernetesService:
             logger.warning("Kubernetes未初始化，无法获取事件列表")
             return []
 
+        try:
+            namespace = namespace or config.k8s.namespace
+            events = self.core_v1.list_namespaced_event(
+                namespace=namespace, field_selector=field_selector, limit=limit
+            )
+
+            event_list: List[Dict[str, Any]] = []
+            for event in events.items:
+                event_dict = event.to_dict()
+                # 清理不必要的字段
+                if "metadata" in event_dict:
+                    metadata = event_dict["metadata"]
+                    for key in ["managed_fields", "resource_version", "uid"]:
+                        metadata.pop(key, None)
+                event_list.append(event_dict)
+
+            logger.info(f"获取到 {len(event_list)} 个事件")
+            return event_list
+
+        except ApiException as e:
+            logger.error(f"获取事件列表失败: {str(e)}")
+            return []
+        except Exception as e:
+            logger.error(f"获取事件列表异常: {str(e)}")
+            return []
+
     async def get_pod_logs(
         self,
         pod_name: str,
@@ -309,31 +335,6 @@ class KubernetesService:
 
         return results
 
-        try:
-            namespace = namespace or config.k8s.namespace
-            events = self.core_v1.list_namespaced_event(
-                namespace=namespace, field_selector=field_selector, limit=limit
-            )
-
-            event_list = []
-            for event in events.items:
-                event_dict = event.to_dict()
-                # 清理不必要的字段
-                if "metadata" in event_dict:
-                    metadata = event_dict["metadata"]
-                    for key in ["managed_fields", "resource_version", "uid"]:
-                        metadata.pop(key, None)
-                event_list.append(event_dict)
-
-            logger.info(f"获取到 {len(event_list)} 个事件")
-            return event_list
-
-        except ApiException as e:
-            logger.error(f"获取事件列表失败: {str(e)}")
-            return []
-        except Exception as e:
-            logger.error(f"获取事件列表异常: {str(e)}")
-            return []
 
     async def restart_deployment(self, name: str, namespace: str = None) -> bool:
         """重启Deployment"""

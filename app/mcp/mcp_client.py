@@ -15,10 +15,8 @@ from typing import Any, Dict, List, Union
 
 import aiohttp
 from openai import AsyncOpenAI
-from openai.types.chat import (
-    ChatCompletionSystemMessageParam,
-    ChatCompletionUserMessageParam,
-)
+from openai.types.chat import (ChatCompletionSystemMessageParam,
+                               ChatCompletionUserMessageParam)
 
 logger = logging.getLogger("aiops.mcp.client")
 

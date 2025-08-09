@@ -335,7 +335,7 @@ def parse_server_url(url: str) -> tuple[str, int]:
         return "0.0.0.0", 9000
 
 
-def signal_handler(signum, frame):
+def signal_handler(signum, _):
     """信号处理器"""
     logger.info(f"接收到信号 {signum}，正在优雅关闭...")
     # 清理全局资源

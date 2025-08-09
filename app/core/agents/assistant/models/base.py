@@ -71,5 +71,7 @@ class FallbackChatModel(BaseChatModel):
             response = f"您询问关于：'{last_message}'。由于主要模型暂时不可用，建议您稍后重试或查看相关文档。"
 
         message = AIMessage(content=response)
+        # 明确忽略 stop/run_manager 参数以保持兼容签名
+        _ = (stop, run_manager)
         generation = ChatGeneration(message=message)
         return ChatResult(generations=[generation])

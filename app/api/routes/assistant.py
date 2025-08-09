@@ -14,7 +14,7 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Union
 
 from fastapi import APIRouter, HTTPException
@@ -207,9 +207,9 @@ def create_success_response(message: str, data: Optional[Dict] = None) -> Dict:
     return APIResponse(code=0, message=message, data=data or {}).model_dump()
 
 
-@router.post("/assistant/query")
-async def assistant_query(request_data: QueryRequest):
-    """智能小助手查询API"""
+@router.post("/queries/create")
+async def create_query(request_data: QueryRequest):
+    """创建智能小助手查询"""
     try:
         logger.info("收到查询请求")
         logger.debug(f"请求数据: {request_data}")
@@ -288,9 +288,9 @@ async def assistant_query(request_data: QueryRequest):
         raise HTTPException(status_code=500, detail=f"处理查询时出错: {str(ex)}")
 
 
-@router.post("/assistant/session")
+@router.post("/sessions/create")
 async def create_session(request_data: SessionRequest):
-    """创建会话API"""
+    """创建会话"""
     try:
         agent = get_assistant_agent()
         if agent is None:
@@ -310,9 +310,9 @@ async def create_session(request_data: SessionRequest):
         raise HTTPException(status_code=500, detail=f"创建会话时出错: {str(ex)}")
 
 
-@router.post("/assistant/refresh")
+@router.post("/knowledge/refresh")
 async def refresh_knowledge():
-    """刷新知识库API"""
+    """刷新知识库"""
     try:
         agent = get_assistant_agent()
         if agent is None:
@@ -342,9 +342,9 @@ async def refresh_knowledge():
         raise HTTPException(status_code=500, detail=f"刷新知识库时出错: {str(ex)}")
 
 
-@router.post("/assistant/add-document")
-async def add_document(request_data: DocumentRequest):
-    """添加文档API"""
+@router.post("/documents/create")
+async def create_document(request_data: DocumentRequest):
+    """创建文档"""
     try:
         # 验证文档内容
         if not request_data.content or not request_data.content.strip():
@@ -390,9 +390,9 @@ async def add_document(request_data: DocumentRequest):
         raise HTTPException(status_code=500, detail=f"添加文档时出错: {str(ex)}")
 
 
-@router.post("/assistant/clear-cache")
+@router.post("/cache/clear")
 async def clear_cache():
-    """清空缓存API"""
+    """清空缓存"""
     try:
         agent = get_assistant_agent()
         if agent is None:
@@ -415,7 +415,7 @@ async def clear_cache():
 
 @router.post("/assistant/reinitialize")
 async def reinitialize_assistant():
-    """重新初始化助手API"""
+    """重新初始化助手"""
     global _assistant_agent, _is_initializing, _init_called
 
     try:

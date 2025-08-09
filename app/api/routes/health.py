@@ -11,7 +11,7 @@ Description: 健康检查API模块，提供AI-CloudOps系统的服务健康监�
 
 import logging
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import psutil
 from fastapi import APIRouter, HTTPException
@@ -60,7 +60,7 @@ def get_service_instance(service_name: str, service_class):
 
 
 @router.get("/health")
-async def health_check():
+async def system_health():
     """系统综合健康检查"""
     try:
         current_time = datetime.now(BEIJING_TZ)
@@ -85,7 +85,7 @@ async def health_check():
         raise HTTPException(status_code=500, detail=f"健康检查失败: {str(e)}")
 
 
-@router.get("/health/components")
+@router.get("/components/health")
 async def components_health():
     """组件详细健康检查"""
     try:
@@ -139,8 +139,8 @@ async def components_health():
         raise HTTPException(status_code=500, detail=f"组件健康检查失败: {str(e)}")
 
 
-@router.get("/health/metrics")
-async def health_metrics():
+@router.get("/metrics/health")
+async def metrics_health():
     """系统健康指标"""
     try:
         system_metrics = get_system_status()
@@ -160,8 +160,8 @@ async def health_metrics():
         raise HTTPException(status_code=500, detail=f"获取健康指标失败: {str(e)}")
 
 
-@router.get("/health/ready")
-async def readiness_probe():
+@router.get("/readiness/health")
+async def readiness_health():
     """就绪性探针"""
     try:
         components_status = check_components_health()
@@ -197,8 +197,8 @@ async def readiness_probe():
         raise HTTPException(status_code=500, detail=f"就绪性检查失败: {str(e)}")
 
 
-@router.get("/health/live")
-async def liveness_probe():
+@router.get("/liveness/health")
+async def liveness_health():
     """
     存活性探针
     """

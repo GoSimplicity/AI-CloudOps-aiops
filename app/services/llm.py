@@ -19,15 +19,11 @@ import ollama
 from openai import OpenAI
 
 from app.config.settings import config
-from app.constants import LLM_MAX_RETRIES, LLM_TEMPERATURE_MAX, LLM_TEMPERATURE_MIN
-from app.utils.error_handlers import (
-    ErrorHandler,
-    ExternalServiceError,
-    ServiceError,
-    ValidationError,
-    retry_on_exception,
-    validate_field_range,
-)
+from app.constants import (LLM_MAX_RETRIES, LLM_TEMPERATURE_MAX,
+                           LLM_TEMPERATURE_MIN)
+from app.utils.error_handlers import (ErrorHandler, ExternalServiceError,
+                                      ServiceError, ValidationError,
+                                      retry_on_exception, validate_field_range)
 
 logger = logging.getLogger("aiops.llm")
 
@@ -67,7 +63,7 @@ class LLMService:
                 os.environ["OLLAMA_HOST"] = config.llm.ollama_base_url.replace(
                     "/v1", ""
                 )
-                logger.debug(f"备用Ollama服务初始化完成")
+                logger.debug("备用Ollama服务初始化完成")
             except Exception as e:
                 logger.warning(f"备用Ollama初始化失败: {str(e)}")
 
@@ -80,7 +76,7 @@ class LLMService:
                 self.backup_client = OpenAI(
                     api_key=config.llm.api_key, base_url=config.llm.base_url
                 )
-                logger.debug(f"备用OpenAI服务初始化完成")
+                logger.debug("备用OpenAI服务初始化完成")
             except Exception as e:
                 logger.warning(f"备用OpenAI初始化失败: {str(e)}")
         else:

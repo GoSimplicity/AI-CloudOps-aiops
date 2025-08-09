@@ -419,6 +419,8 @@ else:
 print(chart)
 """
 
+            # chart_type 目前用于接口兼容，暂未分支使用
+            _ = chart_type
             result = self._execute_python_code(visualization_code)
             return result
 

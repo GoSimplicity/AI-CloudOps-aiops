@@ -287,7 +287,7 @@ class EnhancedK8sFixerAgent:
         """格式化修复报告"""
         try:
             report = []
-            report.append(f"🔧 修复报告")
+            report.append("🔧 修复报告")
             report.append(f"发现问题: {len(problems)}")
             
             for result in fix_results:

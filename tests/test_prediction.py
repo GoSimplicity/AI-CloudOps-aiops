@@ -1,7 +1,3 @@
-
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -19,6 +15,8 @@ import time
 from datetime import datetime, timezone, timedelta
 import logging
 
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 # 配置日志
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"

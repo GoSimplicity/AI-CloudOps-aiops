@@ -11,7 +11,7 @@ Description: 根因分析API路由 - 提供异常检测、相关性分析和根�
 
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -26,8 +26,8 @@ from app.core.rca.topology.graph import build_topology_from_state
 from app.models.request_models import RCARequest
 from app.models.response_models import APIResponse, PaginatedListAPIResponse
 from app.services.prometheus import PrometheusService
-from app.utils.validators import validate_metric_list, validate_time_range
 from app.utils.pagination import process_list_with_pagination_and_search
+from app.utils.validators import validate_metric_list, validate_time_range
 
 logger = logging.getLogger("aiops.rca")
 
@@ -56,10 +56,10 @@ class RCAJobRequest(BaseModel):
     namespace: Optional[str] = None
 
 
-@router.post("/rca")
-async def root_cause_analysis(request_data: RCARequest):
+@router.post("/rca/create")
+async def create_root_cause_analysis(request_data: RCARequest):
     """
-    根因分析接口
+    创建根因分析
     """
     try:
         # 验证时间范围
@@ -111,9 +111,9 @@ async def root_cause_analysis(request_data: RCARequest):
         raise HTTPException(status_code=500, detail=f"根因分析失败: {str(e)}")
 
 
-@router.post("/rca/jobs")
-async def submit_rca_job(request_data: RCAJobRequest):
-    """提交异步根因分析任务，返回 job_id"""
+@router.post("/jobs/create")
+async def create_rca_job(request_data: RCAJobRequest):
+    """创建异步根因分析任务，返回 job_id"""
     try:
         if job_manager is None:
             raise HTTPException(status_code=503, detail="异步任务服务未就绪")
@@ -153,8 +153,8 @@ async def submit_rca_job(request_data: RCAJobRequest):
         raise HTTPException(status_code=500, detail=f"提交任务失败: {str(e)}")
 
 
-@router.get("/rca/jobs/{job_id}")
-async def get_rca_job(job_id: str):
+@router.get("/jobs/{job_id}")
+async def get_job_detail(job_id: str):
     """查询异步根因分析任务状态与结果"""
     try:
         if job_manager is None:
@@ -178,8 +178,8 @@ async def get_rca_job(job_id: str):
         raise HTTPException(status_code=500, detail=f"查询任务失败: {str(e)}")
 
 
-@router.get("/rca/metrics")
-async def get_available_metrics():
+@router.get("/metrics/list")
+async def list_available_metrics():
     """获取 Prometheus 可用指标与默认指标"""
     try:
         prom = PrometheusService()
@@ -202,8 +202,8 @@ async def get_available_metrics():
         raise HTTPException(status_code=500, detail=f"获取可用指标失败: {str(e)}")
 
 
-@router.get("/rca/topology")
-async def get_topology(
+@router.get("/topology/list")
+async def list_topology(
     namespace: Optional[str] = None,
     source: Optional[str] = None,
     max_hops: Optional[int] = 1,
@@ -247,15 +247,15 @@ async def get_topology(
         raise HTTPException(status_code=500, detail=f"获取拓扑失败: {str(e)}")
 
 
-@router.post("/rca/anomaly")
-async def detect_anomaly(
+@router.post("/anomalies/create")
+async def create_anomaly_detection(
     start_time: datetime,
     end_time: datetime,
     metrics: Optional[list] = None,
     sensitivity: Optional[float] = 0.8,
 ):
     """
-    异常检测接口
+    创建异常检测
     """
     try:
         # 验证时间范围
@@ -293,27 +293,27 @@ async def detect_anomaly(
         raise HTTPException(status_code=500, detail=f"异常检测失败: {str(e)}")
 
 
-# 兼容测试：/rca/anomalies
-@router.post("/rca/anomalies")
-async def detect_anomalies_alias(
+# 兼容测试：/anomalies/list
+@router.get("/anomalies/list")
+async def list_anomalies(
     start_time: datetime,
     end_time: datetime,
     metrics: Optional[list] = None,
     threshold: Optional[float] = 0.8,
     namespace: Optional[str] = None,
 ):
-    return await detect_anomaly(start_time, end_time, metrics, threshold)
+    return await create_anomaly_detection(start_time, end_time, metrics, threshold)
 
 
-@router.post("/rca/correlation")
-async def analyze_correlation(
+@router.post("/correlations/create")
+async def create_correlation_analysis(
     start_time: datetime,
     end_time: datetime,
     target_metric: str,
     metrics: Optional[list] = None,
 ):
     """
-    相关性分析接口
+    创建相关性分析
     """
     try:
         # 验证时间范围
@@ -358,9 +358,9 @@ class CrossCorrelationRequest(BaseModel):
     max_lags: Optional[int] = 10
 
 
-@router.post("/rca/cross-correlation")
-async def cross_correlation(req: CrossCorrelationRequest):
-    """跨时滞相关分析端点"""
+@router.post("/cross-correlations/create")
+async def create_cross_correlation(req: CrossCorrelationRequest):
+    """创建跨时滞相关分析"""
     try:
         if not validate_time_range(req.start_time, req.end_time):
             raise HTTPException(status_code=400, detail="无效的时间范围")
@@ -385,9 +385,9 @@ async def cross_correlation(req: CrossCorrelationRequest):
         raise HTTPException(status_code=500, detail=f"跨时滞相关分析失败: {str(e)}")
 
 
-# 兼容测试：/rca/correlations
-@router.post("/rca/correlations")
-async def analyze_correlations_alias(
+# 兼容测试：/correlations/list
+@router.get("/correlations/list")
+async def list_correlations(
     start_time: datetime,
     end_time: datetime,
     metrics: Optional[list] = None,
@@ -395,17 +395,19 @@ async def analyze_correlations_alias(
     min_correlation: Optional[float] = None,
 ):
     # 直接调用已有端点；当前忽略 min_correlation（内部使用配置阈值）
-    return await analyze_correlation(
+    # 为保持向后兼容与接口完整性，这里消费但不使用该参数
+    _ = min_correlation
+    return await create_correlation_analysis(
         start_time, end_time, target_metric="", metrics=metrics
     )
 
 
-@router.post("/rca/timeline")
-async def generate_timeline(
+@router.post("/timelines/create")
+async def create_timeline(
     start_time: datetime, end_time: datetime, events: Optional[list] = None
 ):
     """
-    事件时间线生成接口
+    创建事件时间线
     """
     try:
         # 验证时间范围
@@ -436,14 +438,14 @@ async def generate_timeline(
         raise HTTPException(status_code=500, detail=f"事件时间线生成失败: {str(e)}")
 
 
-@router.get("/rca/history")
-async def get_analysis_history(
+@router.get("/history/list")
+async def list_analysis_history(
     page: Optional[int] = 1,
     size: Optional[int] = 20,
     search: Optional[str] = None
 ):
     """
-    获取分析历史记录接口（支持分页和搜索）
+    获取分析历史记录列表（支持分页和搜索）
     """
     try:
         logger.info(f"获取分析历史记录: page={page}, size={size}, search={search}")

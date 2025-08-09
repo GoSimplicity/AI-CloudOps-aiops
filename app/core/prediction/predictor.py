@@ -11,15 +11,28 @@ Description: 预测模块 - 提供负载预测功能
 
 import datetime
 import logging
-from typing import Any, Dict, List
+import math
+from typing import Any, Dict, List, Optional
 
-import numpy as np
-from app.constants import DAY_FACTORS, HOUR_FACTORS, LOW_QPS_THRESHOLD
+import pandas as pd
+
+from app.config.settings import config
 from app.core.prediction.model_loader import ModelLoader
 from app.services.prometheus import PrometheusService
 from app.utils.error_handlers import ErrorHandler
 
 logger = logging.getLogger("aiops.predictor")
+
+# 时间因子常量
+HOUR_FACTORS = {
+    0: 0.3, 1: 0.2, 2: 0.2, 3: 0.2, 4: 0.2, 5: 0.3,
+    6: 0.5, 7: 0.7, 8: 0.9, 9: 1.0, 10: 1.0, 11: 1.0,
+    12: 0.9, 13: 0.9, 14: 1.0, 15: 1.0, 16: 1.0, 17: 0.9,
+    18: 0.8, 19: 0.7, 20: 0.6, 21: 0.5, 22: 0.4, 23: 0.3
+}
+
+DAY_FACTORS = {0: 1.0, 1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0, 5: 0.8, 6: 0.6}
+LOW_QPS_THRESHOLD = 1.0
 
 
 class PredictionService:
@@ -27,177 +40,173 @@ class PredictionService:
 
     def __init__(self):
         """初始化负载预测服务"""
-        self.prometheus = PrometheusService()
         self.model_loader = ModelLoader()
-        self.model_loaded = False
-        self.scaler_loaded = False
         self.error_handler = ErrorHandler(logger)
+        self.prometheus_service = PrometheusService()
+        
+        # 初始化模型
+        self._initialize()
         
         logger.info("负载预测服务初始化完成")
 
     def _initialize(self):
         """初始化模型"""
         try:
-            self.model_loaded = self.model_loader.load_model()
-            self.scaler_loaded = self.model_loader.load_scaler()
+            # 加载模型和标准化器
+            self.model_loaded = self.model_loader.load_models()
             
-            if self.model_loaded and self.scaler_loaded:
+            if self.model_loaded:
                 logger.info("预测模型加载成功")
+                # 验证模型
+                if not self.model_loader.validate_model():
+                    logger.warning("模型验证失败，将使用基础预测方法")
+                    self.model_loaded = False
             else:
                 logger.warning("预测模型加载失败，将使用基础预测方法")
                 
         except Exception as e:
             logger.error(f"模型初始化失败: {e}")
             self.model_loaded = False
-            self.scaler_loaded = False
 
     async def predict(
         self, 
-        service_name: str, 
-        namespace: str = "default", 
-        duration_minutes: int = 60
+        current_qps: Optional[float] = None,
+        timestamp: Optional[datetime.datetime] = None,
     ) -> Dict[str, Any]:
-        """预测服务负载"""
+        """预测实例数"""
         try:
-            logger.info(f"开始预测服务 {service_name} 的负载")
+            # 使用默认值
+            if current_qps is None:
+                current_qps = 50.0  # 默认QPS
+            if timestamp is None:
+                timestamp = datetime.datetime.now()
 
-            # 获取当前QPS
-            current_qps = await self._get_current_qps(service_name, namespace)
-            
-            # 获取历史数据
-            historical_data = await self._get_historical_qps(service_name, namespace)
-            
+            logger.info(f"开始预测实例数: 当前QPS={current_qps}, 时间={timestamp}")
+
             # 执行预测
-            if self.model_loaded and len(historical_data) >= 10:
-                prediction = await self._ml_predict(historical_data, duration_minutes)
+            if self.model_loaded:
+                prediction_result = self._ml_predict(current_qps, timestamp)
             else:
-                prediction = await self._simple_predict(current_qps, duration_minutes)
+                prediction_result = self._simple_predict(current_qps, timestamp)
 
             # 构建预测结果
-            result = {
-                "service_name": service_name,
-                "namespace": namespace,
+            result: Dict[str, Any] = {
+                "instances": prediction_result.get("instances", 1),
                 "current_qps": current_qps,
-                "predicted_qps": prediction["predicted_qps"],
-                "prediction_time": duration_minutes,
-                "confidence": prediction.get("confidence", 0.5),
-                "prediction_method": prediction.get("method", "simple"),
-                "timestamp": datetime.datetime.now().isoformat(),
-                "recommendation": self._generate_recommendation(
-                    current_qps, prediction["predicted_qps"]
-                )
+                "timestamp": timestamp.isoformat(),
+                "confidence": prediction_result.get("confidence", 0.5),
+                "model_version": self.model_loader.model_metadata.get("version", "1.0"),
+                "prediction_type": prediction_result.get("method", "simple"),
+                "features": prediction_result.get("features")
             }
 
-            logger.info(f"预测完成: 当前QPS={current_qps:.2f}, 预测QPS={prediction['predicted_qps']:.2f}")
+            logger.info(f"预测完成: 当前QPS={current_qps:.2f}, 预测实例数={result['instances']}")
             return result
 
         except Exception as e:
             logger.error(f"预测失败: {e}")
-            return {
-                "service_name": service_name,
-                "namespace": namespace,
-                "error": str(e),
-                "current_qps": 0.0,
-                "predicted_qps": 0.0,
-                "confidence": 0.0
-            }
+            raise Exception(f"预测服务异常: {str(e)}")
 
-    async def _get_current_qps(self, service_name: str, namespace: str = "default") -> float:
-        """获取当前QPS"""
+
+    async def get_qps_from_prometheus(
+        self,
+        metric: str,
+        selector: Optional[str] = None,
+        window: str = "1m",
+        timestamp: Optional[datetime.datetime] = None,
+    ) -> Optional[float]:
+        """从Prometheus获取当前QPS
+
+        参数设计尽量简单，避免过度设计：
+        - metric: 指标名（例如 http_requests_total）
+        - selector: 标签选择器字符串，例如 'job="my-service",namespace="default"'
+        - window: 速率计算窗口，默认1m
+        - timestamp: 可选时间点，不传则使用当前时间
+        """
         try:
-            query = f'rate(http_requests_total{{service="{service_name}",namespace="{namespace}"}}[5m])'
-            result = await self.prometheus.query(query)
-            
-            if result and "data" in result:
-                data_points = result["data"].get("result", [])
-                if data_points:
-                    return float(data_points[0]["value"][1])
-            
-            return 0.0
-            
-        except Exception as e:
-            logger.error(f"获取当前QPS失败: {e}")
-            return 0.0
+            if not metric:
+                return None
 
-    async def _get_historical_qps(
-        self, 
-        service_name: str, 
-        namespace: str = "default", 
-        hours: int = 24
-    ) -> List[float]:
-        """获取历史QPS数据"""
-        try:
-            end_time = datetime.datetime.now()
-            start_time = end_time - datetime.timedelta(hours=hours)
-            
-            query = f'rate(http_requests_total{{service="{service_name}",namespace="{namespace}"}}[5m])'
-            result = await self.prometheus.query_range(
-                query, 
-                start_time.timestamp(), 
-                end_time.timestamp(), 
-                step=300  # 5分钟间隔
-            )
-            
-            qps_values = []
-            if result and "data" in result:
-                data_points = result["data"].get("result", [])
-                if data_points:
-                    values = data_points[0].get("values", [])
-                    qps_values = [float(value[1]) for value in values]
-            
-            return qps_values
-            
-        except Exception as e:
-            logger.error(f"获取历史QPS失败: {e}")
-            return []
+            # 构造PromQL：sum(rate(metric{selector}[window]))
+            if selector and selector.strip():
+                query = f"sum(rate({metric}{{{selector}}}[{window}]))"
+            else:
+                query = f"sum(rate({metric}[{window}]))"
 
-    async def _ml_predict(self, historical_data: List[float], duration_minutes: int) -> Dict[str, Any]:
+            results = await self.prometheus_service.query_instant(query, timestamp)
+            if not results:
+                return None
+
+            # 兼容多序列的情况，求和得到整体QPS
+            total_qps: float = 0.0
+            for series in results:
+                value = series.get("value")
+                if isinstance(value, list) and len(value) == 2:
+                    try:
+                        total_qps += float(value[1])
+                    except (ValueError, TypeError):
+                        continue
+            return total_qps if total_qps >= 0 else 0.0
+        except Exception as e:
+            logger.error(f"从Prometheus获取QPS失败: {e}")
+            return None
+
+    def _ml_predict(self, current_qps: float, timestamp: datetime.datetime) -> Dict[str, Any]:
         """机器学习预测"""
         try:
             if not self.model_loaded:
-                return await self._simple_predict(historical_data[-1], duration_minutes)
+                return self._simple_predict(current_qps, timestamp)
 
             # 准备特征数据
-            features = self._prepare_features(historical_data)
+            features = self._prepare_features(current_qps, timestamp)
+            
+            # 转换为DataFrame
+            feature_df = pd.DataFrame([features])
+            
+            # 数据标准化
+            scaled_features = self.model_loader.scaler.transform(feature_df)
             
             # 执行预测
-            prediction = self.model_loader.predict(features)
+            prediction = self.model_loader.model.predict(scaled_features)
+            instances = max(1, int(round(prediction[0])))
+            # 边界约束
+            instances = max(config.prediction.min_instances, min(instances, config.prediction.max_instances))
             
             # 计算置信度
-            confidence = self._calculate_ml_confidence(historical_data, prediction)
+            confidence = self._calculate_ml_confidence(current_qps, instances)
             
             return {
-                "predicted_qps": max(0.0, float(prediction)),
+                "instances": instances,
                 "confidence": confidence,
-                "method": "machine_learning"
+                "method": "machine_learning",
+                "features": features
             }
             
         except Exception as e:
             logger.error(f"机器学习预测失败: {e}")
-            return await self._simple_predict(historical_data[-1] if historical_data else 0.0, duration_minutes)
+            return self._simple_predict(current_qps, timestamp)
 
-    async def _simple_predict(self, current_qps: float, duration_minutes: int) -> Dict[str, Any]:
+    def _simple_predict(self, current_qps: float, timestamp: datetime.datetime) -> Dict[str, Any]:
         """简单预测方法"""
         try:
-            now = datetime.datetime.now()
-            future_time = now + datetime.timedelta(minutes=duration_minutes)
+            # 基于QPS的简单预测算法
+            # 每30 QPS需要1个实例
+            instances = max(1, int(math.ceil(current_qps / 30)))
             
-            # 基于时间因子的预测
-            current_hour_factor = self._get_hour_factor(now.hour)
-            future_hour_factor = self._get_hour_factor(future_time.hour)
+            # 基于时间因子调整
+            hour_factor = self._get_hour_factor(timestamp.hour)
+            day_factor = self._get_day_factor(timestamp.weekday())
             
-            current_day_factor = self._get_day_factor(now.weekday())
-            future_day_factor = self._get_day_factor(future_time.weekday())
-            
-            # 计算预测值
-            if current_hour_factor > 0:
-                base_qps = current_qps / current_hour_factor / current_day_factor
-                predicted_qps = base_qps * future_hour_factor * future_day_factor
-            else:
-                predicted_qps = current_qps  # 如果当前因子为0，保持当前值
+            # 应用时间因子
+            adjusted_instances = max(1, int(round(instances * hour_factor * day_factor)))
+            # 边界约束
+            adjusted_instances = max(
+                config.prediction.min_instances,
+                min(adjusted_instances, config.prediction.max_instances),
+            )
             
             return {
-                "predicted_qps": max(0.0, predicted_qps),
+                "instances": adjusted_instances,
                 "confidence": 0.6 if current_qps > LOW_QPS_THRESHOLD else 0.3,
                 "method": "time_factor"
             }
@@ -205,82 +214,86 @@ class PredictionService:
         except Exception as e:
             logger.error(f"简单预测失败: {e}")
             return {
-                "predicted_qps": current_qps,
+                "instances": 1,
                 "confidence": 0.1,
                 "method": "fallback"
             }
 
-    def _prepare_features(self, historical_data: List[float]) -> List[float]:
+    def _prepare_features(self, current_qps: float, timestamp: datetime.datetime) -> Dict[str, float]:
         """准备机器学习特征"""
         try:
-            if len(historical_data) < 5:
-                return [0.0] * 10  # 默认特征
+            # 时间特征
+            hour = timestamp.hour
+            day_of_year = timestamp.timetuple().tm_yday
             
-            recent_data = historical_data[-10:]  # 取最近10个数据点
+            # 周期性时间特征
+            sin_time = math.sin(2 * math.pi * hour / 24)
+            cos_time = math.cos(2 * math.pi * hour / 24)
+            sin_day = math.sin(2 * math.pi * day_of_year / 365)
+            cos_day = math.cos(2 * math.pi * day_of_year / 365)
             
-            features = [
-                np.mean(recent_data),  # 平均值
-                np.std(recent_data),   # 标准差
-                max(recent_data),      # 最大值
-                min(recent_data),      # 最小值
-                recent_data[-1],       # 最新值
-            ]
+            # 业务时间特征
+            is_business_hour = 1 if 9 <= hour <= 17 else 0
+            is_weekend = 1 if timestamp.weekday() >= 5 else 0
             
-            # 补充特征到固定长度
-            while len(features) < 10:
-                features.append(0.0)
-                
-            return features[:10]
+            # 由于缺乏历史数据，使用合理的估算值
+            qps_1h_ago = current_qps * 0.9  # 假设1小时前略低
+            qps_1d_ago = current_qps * 1.1  # 假设1天前略高
+            qps_1w_ago = current_qps * 1.05  # 假设1周前类似
+            qps_change = (current_qps - qps_1h_ago) / max(qps_1h_ago, 1.0)
+            qps_avg_6h = current_qps * 0.95  # 假设6小时平均略低
+            
+            features = {
+                "QPS": current_qps,
+                "sin_time": sin_time,
+                "cos_time": cos_time,
+                "sin_day": sin_day,
+                "cos_day": cos_day,
+                "is_business_hour": is_business_hour,
+                "is_weekend": is_weekend,
+                "QPS_1h_ago": qps_1h_ago,
+                "QPS_1d_ago": qps_1d_ago,
+                "QPS_1w_ago": qps_1w_ago,
+                "QPS_change": qps_change,
+                "QPS_avg_6h": qps_avg_6h
+            }
+            
+            return features
             
         except Exception as e:
             logger.error(f"特征准备失败: {e}")
-            return [0.0] * 10
+            # 返回默认特征
+            return {
+                "QPS": current_qps,
+                "sin_time": 0.0,
+                "cos_time": 1.0,
+                "sin_day": 0.0,
+                "cos_day": 1.0,
+                "is_business_hour": 1,
+                "is_weekend": 0,
+                "QPS_1h_ago": current_qps,
+                "QPS_1d_ago": current_qps,
+                "QPS_1w_ago": current_qps,
+                "QPS_change": 0.0,
+                "QPS_avg_6h": current_qps
+            }
 
-    def _calculate_ml_confidence(self, historical_data: List[float], prediction: float) -> float:
+    def _calculate_ml_confidence(self, current_qps: float, instances: int) -> float:
         """计算机器学习预测的置信度"""
         try:
-            if len(historical_data) < 2:
-                return 0.3
+            # 基于QPS合理性的置信度
+            qps_confidence = 0.8 if current_qps > 10 else 0.5
             
-            # 基于历史数据的方差计算置信度
-            variance = np.var(historical_data[-10:])
-            stability = 1.0 / (1.0 + variance)
+            # 基于实例数合理性的置信度
+            instance_confidence = 0.9 if 1 <= instances <= 10 else 0.6
             
-            # 基于数据量的置信度调整
-            data_confidence = min(len(historical_data) / 100.0, 1.0)
+            # 组合置信度
+            confidence = (qps_confidence + instance_confidence) / 2
             
-            return min(0.9, stability * 0.7 + data_confidence * 0.3)
+            return min(0.95, confidence)
             
         except Exception:
             return 0.5
-
-    def _generate_recommendation(self, current_qps: float, predicted_qps: float) -> Dict[str, Any]:
-        """生成资源调整建议"""
-        try:
-            change_ratio = (predicted_qps - current_qps) / max(current_qps, 0.1)
-            
-            if change_ratio > 0.5:
-                return {
-                    "action": "scale_up",
-                    "reason": f"预计负载将增加{change_ratio:.1%}",
-                    "suggested_replicas": "+2"
-                }
-            elif change_ratio < -0.3:
-                return {
-                    "action": "scale_down", 
-                    "reason": f"预计负载将减少{abs(change_ratio):.1%}",
-                    "suggested_replicas": "-1"
-                }
-            else:
-                return {
-                    "action": "maintain",
-                    "reason": "负载变化不大，维持当前配置",
-                    "suggested_replicas": "0"
-                }
-                
-        except Exception as e:
-            logger.error(f"生成建议失败: {e}")
-            return {"action": "maintain", "reason": "无法分析负载变化"}
 
     def _get_hour_factor(self, hour: int) -> float:
         """获取小时因子"""
@@ -290,35 +303,45 @@ class PredictionService:
         """获取星期因子"""
         return DAY_FACTORS.get(day_of_week, 1.0)
 
-    async def predict_trend(self, service_name: str, namespace: str = "default") -> Dict[str, Any]:
+    async def predict_trend(self, hours_ahead: int = 24, current_qps: Optional[float] = None) -> Dict[str, Any]:
         """预测趋势"""
         try:
-            # 获取多个时间点的预测
+            if current_qps is None:
+                current_qps = 50.0
+                
+            now = datetime.datetime.now()
             predictions = []
-            for minutes in [15, 30, 60, 120]:
-                pred = await self.predict(service_name, namespace, minutes)
-                predictions.append({
-                    "time_minutes": minutes,
-                    "predicted_qps": pred.get("predicted_qps", 0.0)
-                })
+            
+            # 生成未来多个时间点的预测
+            for hour_offset in [1, 3, 6, 12, 24]:
+                if hour_offset <= hours_ahead:
+                    future_time = now + datetime.timedelta(hours=hour_offset)
+                    pred_result = await self.predict(current_qps, future_time)
+                    predictions.append({
+                        "hours_ahead": hour_offset,
+                        "timestamp": future_time.isoformat(),
+                        "predicted_instances": pred_result.get("instances", 1),
+                        "confidence": pred_result.get("confidence", 0.5)
+                    })
             
             return {
-                "service_name": service_name,
-                "namespace": namespace,
+                "current_qps": current_qps,
+                "hours_ahead": hours_ahead,
                 "trend_predictions": predictions,
-                "trend_analysis": self._analyze_trend(predictions)
+                "trend_analysis": self._analyze_trend(predictions),
+                "timestamp": now.isoformat()
             }
             
         except Exception as e:
             logger.error(f"趋势预测失败: {e}")
-            return {"error": str(e)}
+            raise Exception(f"趋势预测失败: {str(e)}")
 
     def _analyze_trend(self, predictions: List[Dict]) -> str:
         """分析趋势"""
         if len(predictions) < 2:
             return "数据不足"
         
-        values = [p["predicted_qps"] for p in predictions]
+        values = [p["predicted_instances"] for p in predictions]
         
         if values[-1] > values[0] * 1.2:
             return "上升趋势"
@@ -329,23 +352,22 @@ class PredictionService:
 
     def is_healthy(self) -> bool:
         """检查服务健康状态"""
-        return self.prometheus.is_healthy()
+        return self.model_loaded
 
-    def get_service_info(self) -> Dict[str, Any]:
-        """获取服务信息"""
+    def get_model_info(self) -> Dict[str, Any]:
+        """获取模型信息"""
         return {
             "service_name": "PredictionService",
             "model_loaded": self.model_loaded,
-            "scaler_loaded": self.scaler_loaded,
-            "prometheus_healthy": self.prometheus.is_healthy(),
+            "model_info": self.model_loader.get_model_info(),
             "status": "healthy" if self.is_healthy() else "unhealthy"
         }
 
-    async def reload_models(self) -> bool:
+    def reload_models(self) -> bool:
         """重新加载模型"""
         try:
             self._initialize()
-            return self.model_loaded and self.scaler_loaded
+            return self.model_loaded
         except Exception as e:
             logger.error(f"重新加载模型失败: {e}")
             return False

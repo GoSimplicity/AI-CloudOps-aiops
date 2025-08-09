@@ -75,7 +75,6 @@ class K8sFixerAgent:
         self,
         deployment: Dict[str, Any],
         context: Dict[str, Any],
-        force_fix: bool = False,
     ) -> Dict[str, Any]:
         """识别并修复常见问题"""
         try:

@@ -87,14 +87,107 @@ def register_routes(app):
                 "version": "1.0.0",
                 "status": "running",
                 "endpoints": {
-                    "health": "/api/v1/health",
-                    "prediction": "/api/v1/predict",
-                    "rca": "/api/v1/rca",
-                    "autofix": "/api/v1/autofix",
-                    "assistant": "/api/v1/assistant",
-                    "multi_agent": "/api/v1/multi-agent",
+                    "health": {
+                        "system": "/api/v1/health",
+                        "components": "/api/v1/components/health",
+                        "metrics": "/api/v1/metrics/health",
+                        "readiness": "/api/v1/readiness/health",
+                        "liveness": "/api/v1/liveness/health"
+                    },
+                    "predictions": {
+                        "list": "/api/v1/predictions/list",
+                        "create": "/api/v1/predictions/create",
+                        "health": "/api/v1/predictions/health"
+                    },
+                    "trends": {
+                        "list": "/api/v1/trends/list",
+                        "create": "/api/v1/trends/create"
+                    },
+                    "models": {
+                        "info": "/api/v1/models/info",
+                        "reload": "/api/v1/models/reload"
+                    },
+                    "rca": {
+                        "create": "/api/v1/rca/create",
+                        "health": "/api/v1/rca/health"
+                    },
+                    "jobs": {
+                        "create": "/api/v1/jobs/create",
+                        "detail": "/api/v1/jobs/{job_id}"
+                    },
+                    "metrics": {
+                        "list": "/api/v1/metrics/list"
+                    },
+                    "topology": {
+                        "list": "/api/v1/topology/list"
+                    },
+                    "anomalies": {
+                        "create": "/api/v1/anomalies/create",
+                        "list": "/api/v1/anomalies/list"
+                    },
+                    "correlations": {
+                        "create": "/api/v1/correlations/create",
+                        "list": "/api/v1/correlations/list"
+                    },
+                    "cross_correlations": {
+                        "create": "/api/v1/cross-correlations/create"
+                    },
+                    "timelines": {
+                        "create": "/api/v1/timelines/create"
+                    },
+                    "history": {
+                        "list": "/api/v1/history/list"
+                    },
+                    "autofix": {
+                        "create": "/api/v1/autofix/create",
+                        "health": "/api/v1/autofix/health"
+                    },
+                    "workflows": {
+                        "create": "/api/v1/workflows/create"
+                    },
+                    "diagnosis": {
+                        "create": "/api/v1/diagnosis/create"
+                    },
+                    "tasks": {
+                        "detail": "/api/v1/tasks/{task_id}",
+                        "list": "/api/v1/history/list"
+                    },
+                    "assistant": {
+                        "reinitialize": "/api/v1/assistant/reinitialize"
+                    },
+                    "queries": {
+                        "create": "/api/v1/queries/create"
+                    },
+                    "sessions": {
+                        "create": "/api/v1/sessions/create"
+                    },
+                    "knowledge": {
+                        "refresh": "/api/v1/knowledge/refresh"
+                    },
+                    "documents": {
+                        "create": "/api/v1/documents/create"
+                    },
+                    "cache": {
+                        "clear": "/api/v1/cache/clear"
+                    },
+                    "multi_agent": {
+                        "health": "/api/v1/multi-agent/health"
+                    },
+                    "repairs": {
+                        "create": "/api/v1/repairs/create",
+                        "create_all": "/api/v1/repairs/create-all"
+                    },
+                    "analysis": {
+                        "create": "/api/v1/analysis/create"
+                    },
+                    "coordinator": {
+                        "status": "/api/v1/coordinator/status"
+                    },
+                    "agents": {
+                        "list": "/api/v1/agents/list"
+                    },
                     "docs": "/docs",
-                    "redoc": "/redoc",
+                    "redoc": "/redoc"
                 },
             },
         ).model_dump()

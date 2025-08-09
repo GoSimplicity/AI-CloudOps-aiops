@@ -11,7 +11,7 @@ Description: 提供多Agent协作的K8s修复API接口
 
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -19,12 +19,9 @@ from pydantic import BaseModel
 
 from app.core.agents.coordinator import K8sCoordinatorAgent
 from app.models.response_models import APIResponse, PaginatedListAPIResponse
-from app.utils.validators import (
-    sanitize_input,
-    validate_deployment_name,
-    validate_namespace,
-)
 from app.utils.pagination import process_list_with_pagination_and_search
+from app.utils.validators import (sanitize_input, validate_deployment_name,
+                                  validate_namespace)
 
 logger = logging.getLogger("aiops.multi_agent")
 
@@ -51,9 +48,9 @@ class ClusterRequest(BaseModel):
 coordinator = K8sCoordinatorAgent()
 
 
-@router.post("/multi-agent/repair")
-async def repair_deployment(request_data: RepairRequest):
-    """修复单个部署"""
+@router.post("/repairs/create")
+async def create_deployment_repair(request_data: RepairRequest):
+    """创建单个部署修复"""
     try:
         deployment = sanitize_input(request_data.deployment)
         namespace = sanitize_input(request_data.namespace)
@@ -84,9 +81,9 @@ async def repair_deployment(request_data: RepairRequest):
         raise HTTPException(status_code=500, detail=f"修复部署失败: {str(e)}")
 
 
-@router.post("/multi-agent/repair-all")
-async def repair_all_deployments(request_data: RepairAllRequest):
-    """修复命名空间下所有部署"""
+@router.post("/repairs/create-all")
+async def create_all_repairs(request_data: RepairAllRequest):
+    """创建命名空间下所有部署修复"""
     try:
         namespace = sanitize_input(request_data.namespace)
 
@@ -109,9 +106,9 @@ async def repair_all_deployments(request_data: RepairAllRequest):
         raise HTTPException(status_code=500, detail=f"批量修复失败: {str(e)}")
 
 
-@router.post("/multi-agent/analyze")
-async def analyze_cluster(request_data: ClusterRequest):
-    """分析集群健康状态"""
+@router.post("/analysis/create")
+async def create_cluster_analysis(request_data: ClusterRequest):
+    """创建集群健康状态分析"""
     try:
         cluster_name = sanitize_input(request_data.cluster_name)
 
@@ -131,7 +128,7 @@ async def analyze_cluster(request_data: ClusterRequest):
         raise HTTPException(status_code=500, detail=f"集群分析失败: {str(e)}")
 
 
-@router.get("/multi-agent/status")
+@router.get("/coordinator/status")
 async def get_coordinator_status():
     """获取协调器状态"""
     try:
@@ -149,7 +146,7 @@ async def get_coordinator_status():
         raise HTTPException(status_code=500, detail=f"获取协调器状态失败: {str(e)}")
 
 
-@router.get("/multi-agent/agents")
+@router.get("/agents/list")
 async def list_agents(
     page: Optional[int] = 1,
     size: Optional[int] = 20,

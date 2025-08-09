@@ -12,7 +12,7 @@ Description: Trace服务模块 - 提供从Jaeger Query API拉取Trace/Span的能
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import requests
