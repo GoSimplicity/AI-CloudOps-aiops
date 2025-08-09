@@ -26,16 +26,16 @@
 3. 在输入框中输入您的问题，点击发送或按回车
 4. 查看智能小助手的回答及相关推荐
 
-### 3.2 API 调用
+### 3.2 API 调用（统一响应 APIResponse）
 
 智能小助手提供了 REST API 接口，可以方便地集成到其他系统中：
 
 ```bash
 # 创建新会话
-curl -X POST http://localhost:8080/api/v1/assistant/session
+curl -X POST http://localhost:8080/api/v1/sessions/create
 
 # 发送问题（不使用会话）
-curl -X POST http://localhost:8080/api/v1/assistant/query \
+curl -X POST http://localhost:8080/api/v1/queries/create \
   -H "Content-Type: application/json" \
   -d '{
     "question": "AIOps平台有哪些核心功能？",
@@ -43,7 +43,7 @@ curl -X POST http://localhost:8080/api/v1/assistant/query \
   }'
 
 # 发送问题（使用会话）
-curl -X POST http://localhost:8080/api/v1/assistant/query \
+curl -X POST http://localhost:8080/api/v1/queries/create \
   -H "Content-Type: application/json" \
   -d '{
     "question": "它的根因分析功能如何工作？",
@@ -52,7 +52,7 @@ curl -X POST http://localhost:8080/api/v1/assistant/query \
   }'
 
 # 刷新知识库
-curl -X POST http://localhost:8080/api/v1/assistant/refresh
+curl -X POST http://localhost:8080/api/v1/knowledge/refresh
 ```
 
 ### 3.3 WebSocket 流式接口

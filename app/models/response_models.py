@@ -78,6 +78,7 @@ class PredictionResponse(BaseModel):
     model_version: Optional[str] = None
     prediction_type: Optional[str] = None
     features: Optional[Dict[str, float]] = None
+    schedule: Optional[Dict[str, Any]] = None
 
 
 class AutoFixResponse(BaseModel):

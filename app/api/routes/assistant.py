@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Union
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.response_models import APIResponse
 
@@ -31,19 +31,21 @@ BEIJING_TZ = timezone(timedelta(hours=8))
 
 # Pydantic模型定义
 class QueryRequest(BaseModel):
-    question: str
-    session_id: Optional[str] = None
-    mode: Optional[str] = "normal"
+    question: str = Field(..., description="用户提问内容")
+    session_id: Optional[str] = Field(default=None, description="会话ID（可选）")
+    mode: Optional[str] = Field(
+        default="normal", description="运行模式：normal 或 mcp"
+    )
 
 
 class SessionRequest(BaseModel):
-    session_id: Optional[str] = None
+    session_id: Optional[str] = Field(default=None, description="会话ID（可选）")
 
 
 class DocumentRequest(BaseModel):
-    content: str
-    title: Optional[str] = None
-    metadata: Optional[Dict] = None
+    content: str = Field(..., description="文档内容")
+    title: Optional[str] = Field(default=None, description="文档标题（可选）")
+    metadata: Optional[Dict] = Field(default=None, description="文档元数据（可选）")
 
 
 def sanitize_for_json(text: Union[str, Any]) -> Union[str, Any]:
@@ -324,7 +326,7 @@ async def refresh_knowledge():
 
         # 重新加载知识库
         try:
-            await run_async_func_safely(agent.load_knowledge_base)
+            await run_async_func_safely(agent.refresh_knowledge_base)
             logger.info("知识库刷新成功")
         except Exception as refresh_ex:
             logger.error(f"知识库刷新失败: {str(refresh_ex)}")
@@ -367,7 +369,9 @@ async def create_document(request_data: DocumentRequest):
                 agent.response_cache = {}
 
             # 这里添加文档添加逻辑
-            # await run_async_func_safely(agent.add_document, document_data)
+            added = agent.add_document(document_data["content"], document_data.get("metadata") or {})
+            if not added:
+                raise RuntimeError("添加文档失败")
             logger.info(f"文档添加成功: {document_data['title']}")
 
             return create_success_response(

@@ -61,14 +61,14 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)/..
 python app/main.py
 ```
 
-### 3.2 API接口
+### 3.2 API接口（统一响应 APIResponse）
 
 #### HTTP接口
 
-- 查询: `POST /api/v1/assistant/query`
-- 创建会话: `POST /api/v1/assistant/session`
-- 刷新知识库: `POST /api/v1/assistant/refresh`
-- 添加文档: `POST /api/v1/assistant/add-document`
+- 查询: `POST /api/v1/queries/create`
+- 创建会话: `POST /api/v1/sessions/create`
+- 刷新知识库: `POST /api/v1/knowledge/refresh`
+- 添加文档: `POST /api/v1/documents/create`
 
 详细接口文档请参考 [docs/assistant_guide.md](docs/assistant_guide.md)
 

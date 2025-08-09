@@ -94,30 +94,32 @@ def register_routes(app):
                         "readiness": "/api/v1/readiness/health",
                         "liveness": "/api/v1/liveness/health"
                     },
-                    "predictions": {
-                        "list": "/api/v1/predictions/list",
-                        "create": "/api/v1/predictions/create",
-                        "health": "/api/v1/predictions/health"
-                    },
-                    "trends": {
-                        "list": "/api/v1/trends/list",
-                        "create": "/api/v1/trends/create"
-                    },
-                    "models": {
-                        "info": "/api/v1/models/info",
-                        "reload": "/api/v1/models/reload"
+                    "predict": {
+                        "post": "/api/v1/predict",
+                        "health": "/api/v1/predict/health",
+                        "trend": "/api/v1/predict/trend",
+                        "models": {
+                            "info": "/api/v1/models/info",
+                            "reload": "/api/v1/models/reload"
+                        }
                     },
                     "rca": {
                         "create": "/api/v1/rca/create",
-                        "health": "/api/v1/rca/health"
+                        "health": "/api/v1/rca/health",
+                        "aliases": {
+                            "create": "/api/v1/rca",
+                            "jobs": "/api/v1/rca/jobs",
+                            "metrics": "/api/v1/rca/metrics",
+                            "topology": "/api/v1/rca/topology",
+                            "anomalies": "/api/v1/rca/anomalies",
+                            "correlations": "/api/v1/rca/correlations"
+                        }
                     },
                     "jobs": {
                         "create": "/api/v1/jobs/create",
                         "detail": "/api/v1/jobs/{job_id}"
                     },
-                    "metrics": {
-                        "list": "/api/v1/metrics/list"
-                    },
+                    "metrics": {"list": "/api/v1/metrics/list"},
                     "topology": {
                         "list": "/api/v1/topology/list"
                     },
@@ -135,44 +137,30 @@ def register_routes(app):
                     "timelines": {
                         "create": "/api/v1/timelines/create"
                     },
-                    "history": {
-                        "list": "/api/v1/history/list"
-                    },
+                    "history": {"list": "/api/v1/history/list"},
                     "autofix": {
                         "create": "/api/v1/autofix/create",
-                        "health": "/api/v1/autofix/health"
+                        "health": "/api/v1/autofix/health",
+                        "aliases": {
+                            "create": "/api/v1/autofix",
+                            "diagnose": "/api/v1/autofix/diagnose",
+                            "workflow": "/api/v1/autofix/workflow",
+                            "notify": "/api/v1/autofix/notify"
+                        }
                     },
-                    "workflows": {
-                        "create": "/api/v1/workflows/create"
-                    },
-                    "diagnosis": {
-                        "create": "/api/v1/diagnosis/create"
-                    },
+                    "workflows": {"create": "/api/v1/workflows/create"},
+                    "diagnosis": {"create": "/api/v1/diagnosis/create"},
                     "tasks": {
                         "detail": "/api/v1/tasks/{task_id}",
                         "list": "/api/v1/history/list"
                     },
-                    "assistant": {
-                        "reinitialize": "/api/v1/assistant/reinitialize"
-                    },
-                    "queries": {
-                        "create": "/api/v1/queries/create"
-                    },
-                    "sessions": {
-                        "create": "/api/v1/sessions/create"
-                    },
-                    "knowledge": {
-                        "refresh": "/api/v1/knowledge/refresh"
-                    },
-                    "documents": {
-                        "create": "/api/v1/documents/create"
-                    },
-                    "cache": {
-                        "clear": "/api/v1/cache/clear"
-                    },
-                    "multi_agent": {
-                        "health": "/api/v1/multi-agent/health"
-                    },
+                    "assistant": {"reinitialize": "/api/v1/assistant/reinitialize"},
+                    "queries": {"create": "/api/v1/queries/create"},
+                    "sessions": {"create": "/api/v1/sessions/create"},
+                    "knowledge": {"refresh": "/api/v1/knowledge/refresh"},
+                    "documents": {"create": "/api/v1/documents/create"},
+                    "cache": {"clear": "/api/v1/cache/clear"},
+                    "multi_agent": {"health": "/api/v1/multi-agent/health"},
                     "repairs": {
                         "create": "/api/v1/repairs/create",
                         "create_all": "/api/v1/repairs/create-all"

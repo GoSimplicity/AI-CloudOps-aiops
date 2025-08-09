@@ -53,9 +53,9 @@ graph TD
   O4 --> M
 ```
 
-### 端点与 flags 返回
+### 端点与 flags 返回（统一响应 APIResponse）
 
-- GET `/api/v1/rca/metrics`
+- GET `/api/v1/rca/metrics`（等价于 `/api/v1/metrics/list`）
   - data.flags: 平台状态
     - request_override: 是否启用“请求级开关优先”
     - logs_enabled: 全局日志采集是否开启
@@ -81,10 +81,10 @@ graph TD
 - GET `/api/v1/rca/health`
   - data.flags: 同上
 
-- GET `/api/v1/rca/topology`
+- GET `/api/v1/rca/topology`（等价于 `/api/v1/topology/list`）
   - data.flags: 同上
 
-- POST `/api/v1/rca/jobs`
+- POST `/api/v1/rca/jobs`（等价于 `/api/v1/jobs/create`）
   - data.flags: 同上（便于前端在任务提交后立即获知平台状态）
 
 - GET `/api/v1/rca/jobs/{job_id}`

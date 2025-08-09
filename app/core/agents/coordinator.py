@@ -294,10 +294,10 @@ class K8sCoordinatorAgent:
 状态: {"✅ 成功" if report["success"] else "❌ 部分成功"}
 """
 
-            await self.notification_service.send_notification(
-                title="K8s修复工作流报告",
+            await self.notification_service.send_feishu_message(
                 message=message,
-                notification_type="success" if report["success"] else "warning",
+                title="K8s修复工作流报告",
+                color="green" if report["success"] else "orange",
             )
 
         except Exception as e:

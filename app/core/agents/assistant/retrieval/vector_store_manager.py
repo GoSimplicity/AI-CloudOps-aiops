@@ -76,6 +76,10 @@ class VectorStoreManager:
         self.retriever = None
         os.makedirs(vector_db_path, exist_ok=True)
 
+    async def add_documents(self, documents: List[Document]) -> bool:
+        """兼容方法：添加文档到向量库（等价于创建/追加）。"""
+        return await self.create_vector_store(documents)
+
     def load_existing_db(self) -> bool:
         """加载现有向量数据库"""
         try:

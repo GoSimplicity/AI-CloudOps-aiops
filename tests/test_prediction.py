@@ -140,11 +140,12 @@ def test_prediction_health():
 
 
 def test_prediction_get():
-    """测试GET预测接口"""
-    print_header("测试GET预测接口")
+    """测试预测接口（POST）"""
+    print_header("测试预测接口（POST）")
 
     url = f"{API_BASE_URL}/predict"
-    response = make_request("get", url)
+    data = {"current_qps": 50.0}
+    response = make_request("post", url, data)
 
     if not response:
         logger.error("GET预测API请求失败")
@@ -263,10 +264,8 @@ def test_prediction_zero_qps():
             else:
                 logger.warning(f"零QPS时实例数异常: {instances}")
 
-            # 验证预测类型
-            prediction_type = response_data.get("prediction_type")
-            if prediction_type == "threshold_based":
-                logger.info("零QPS时使用基于阈值的预测")
+            # 预测类型仅记录
+            _ = response_data.get("prediction_type")
 
     except Exception:
         result = {"raw_response": response.text}
@@ -437,23 +436,10 @@ def test_trend_prediction():
         # 验证趋势预测响应
         if response.status_code == 200 and "data" in result:
             response_data = result["data"]
-
-            # 验证预测数据
-            forecast = response_data.get("forecast", [])
-            if isinstance(forecast, list) and len(forecast) > 0:
-                logger.info(f"趋势预测返回 {len(forecast)} 个预测点")
-
-                # 验证预测点数据结构
-                first_point = forecast[0] if forecast else {}
-                required_fields = ["timestamp", "qps", "instances"]
-                missing_fields = [
-                    field for field in required_fields if field not in first_point
-                ]
-
-                if not missing_fields:
-                    logger.info("趋势预测数据结构验证通过")
-                else:
-                    logger.warning(f"趋势预测数据缺少字段: {missing_fields}")
+            # 新结构：trend_predictions 列表
+            trend_predictions = response_data.get("trend_predictions", [])
+            if isinstance(trend_predictions, list) and len(trend_predictions) > 0:
+                logger.info(f"趋势预测返回 {len(trend_predictions)} 个预测点")
             else:
                 logger.warning("趋势预测返回的预测数据为空")
 

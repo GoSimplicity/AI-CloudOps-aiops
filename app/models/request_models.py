@@ -26,10 +26,18 @@ class ListRequest(BaseModel):
 
 
 class RCARequest(BaseModel):
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
-    metrics: Optional[List[str]] = None
-    time_range_minutes: Optional[int] = Field(None, ge=1, le=config.rca.max_time_range)
+    start_time: Optional[datetime] = Field(
+        default=None, description="起始时间（ISO8601）。若为空，将按时间范围推导"
+    )
+    end_time: Optional[datetime] = Field(
+        default=None, description="结束时间（ISO8601）。若为空，将按时间范围推导"
+    )
+    metrics: Optional[List[str]] = Field(
+        default=None, description="指标列表（为空则使用平台默认指标）"
+    )
+    time_range_minutes: Optional[int] = Field(
+        None, ge=1, le=config.rca.max_time_range, description="时间范围（分钟）"
+    )
     include_logs: bool = Field(default=False, description="是否包含容器日志证据")
     include_traces: bool = Field(default=False, description="是否包含Trace/OTel/Jaeger证据")
     namespace: Optional[str] = Field(default=None, description="目标命名空间，缺省为配置默认")
@@ -69,17 +77,24 @@ class RCARequest(BaseModel):
 
 
 class AutoFixRequest(BaseModel):
-    deployment: str = Field(..., min_length=1)
-    namespace: str = Field(default="default", min_length=1)
-    event: str = Field(..., min_length=1)
-    force: bool = Field(default=False)
-    auto_restart: bool = Field(default=True)
+    deployment: str = Field(..., min_length=1, description="目标部署名称")
+    namespace: str = Field(default="default", min_length=1, description="命名空间")
+    event: str = Field(..., min_length=1, description="触发事件/问题描述")
+    force: bool = Field(default=False, description="是否强制执行修复")
+    auto_restart: bool = Field(default=True, description="修复后是否自动重启")
 
 
 class PredictionRequest(BaseModel):
-    current_qps: Optional[float] = None
-    timestamp: Optional[datetime] = None
-    include_confidence: bool = Field(default=True)
+    current_qps: Optional[float] = Field(default=None, description="当前QPS值")
+    timestamp: Optional[datetime] = Field(default=None, description="预测时间戳")
+    include_confidence: bool = Field(default=True, description="是否包含置信度")
+    # Prometheus 取数相关可选参数
+    use_prom: bool = Field(default=False, description="是否从Prometheus读取当前QPS")
+    metric: Optional[str] = Field(default=None, description="Prometheus指标名，如http_requests_total")
+    selector: Optional[str] = Field(default=None, description="Prometheus标签选择器，如job=\"svc\"")
+    window: Optional[str] = Field(default="1m", description="Prometheus速率窗口，如1m/5m")
+    # 周期执行控制（单位：分钟）
+    interval_minutes: Optional[int] = Field(default=None, ge=1, le=1440, description="预测任务的建议执行周期（分钟）")
 
     @field_validator("current_qps")
     def validate_qps(cls, v):

@@ -10,6 +10,7 @@ Description: 预测模块 - 提供负载预测功能
 """
 
 import datetime
+import asyncio
 import logging
 import math
 from typing import Any, Dict, List, Optional
@@ -69,9 +70,12 @@ class PredictionService:
             self.model_loaded = False
 
     async def predict(
-        self, 
+        self,
         current_qps: Optional[float] = None,
         timestamp: Optional[datetime.datetime] = None,
+        metric: Optional[str] = None,
+        selector: Optional[str] = None,
+        window: str = "1m",
     ) -> Dict[str, Any]:
         """预测实例数"""
         try:
@@ -85,7 +89,13 @@ class PredictionService:
 
             # 执行预测
             if self.model_loaded:
-                prediction_result = self._ml_predict(current_qps, timestamp)
+                prediction_result = await self._ml_predict(
+                    current_qps=current_qps,
+                    timestamp=timestamp,
+                    metric=metric,
+                    selector=selector,
+                    window=window,
+                )
             else:
                 prediction_result = self._simple_predict(current_qps, timestamp)
 
@@ -151,14 +161,27 @@ class PredictionService:
             logger.error(f"从Prometheus获取QPS失败: {e}")
             return None
 
-    def _ml_predict(self, current_qps: float, timestamp: datetime.datetime) -> Dict[str, Any]:
+    async def _ml_predict(
+        self,
+        current_qps: float,
+        timestamp: datetime.datetime,
+        metric: Optional[str] = None,
+        selector: Optional[str] = None,
+        window: str = "1m",
+    ) -> Dict[str, Any]:
         """机器学习预测"""
         try:
             if not self.model_loaded:
                 return self._simple_predict(current_qps, timestamp)
 
             # 准备特征数据
-            features = self._prepare_features(current_qps, timestamp)
+            features = await self._prepare_features(
+                current_qps=current_qps,
+                timestamp=timestamp,
+                metric=metric,
+                selector=selector,
+                window=window,
+            )
             
             # 转换为DataFrame
             feature_df = pd.DataFrame([features])
@@ -219,31 +242,102 @@ class PredictionService:
                 "method": "fallback"
             }
 
-    def _prepare_features(self, current_qps: float, timestamp: datetime.datetime) -> Dict[str, float]:
-        """准备机器学习特征"""
+    async def _prepare_features(
+        self,
+        current_qps: float,
+        timestamp: datetime.datetime,
+        metric: Optional[str] = None,
+        selector: Optional[str] = None,
+        window: str = "1m",
+    ) -> Dict[str, float]:
+        """准备机器学习特征
+
+        优先使用 Prometheus 历史真实数据来构造特征；当缺失或查询失败时回退到合理估算。
+        """
         try:
             # 时间特征
             hour = timestamp.hour
             day_of_year = timestamp.timetuple().tm_yday
-            
-            # 周期性时间特征
+
             sin_time = math.sin(2 * math.pi * hour / 24)
             cos_time = math.cos(2 * math.pi * hour / 24)
             sin_day = math.sin(2 * math.pi * day_of_year / 365)
             cos_day = math.cos(2 * math.pi * day_of_year / 365)
-            
-            # 业务时间特征
+
             is_business_hour = 1 if 9 <= hour <= 17 else 0
             is_weekend = 1 if timestamp.weekday() >= 5 else 0
-            
-            # 由于缺乏历史数据，使用合理的估算值
-            qps_1h_ago = current_qps * 0.9  # 假设1小时前略低
-            qps_1d_ago = current_qps * 1.1  # 假设1天前略高
-            qps_1w_ago = current_qps * 1.05  # 假设1周前类似
+
+            # 默认估算，若有 Prometheus 指标则尝试真实数据
+            qps_1h_ago = current_qps * 0.9
+            qps_1d_ago = current_qps * 1.1
+            qps_1w_ago = current_qps * 1.05
+            qps_avg_6h = current_qps * 0.95
+
+            if metric:
+                # 并发查询 1h/1d/1w 前的瞬时 QPS
+                one_hour_ago = timestamp - datetime.timedelta(hours=1)
+                one_day_ago = timestamp - datetime.timedelta(days=1)
+                one_week_ago = timestamp - datetime.timedelta(days=7)
+
+                async def _get(tp: datetime.datetime) -> Optional[float]:
+                    return await self.get_qps_from_prometheus(
+                        metric=metric, selector=selector, window=window, timestamp=tp
+                    )
+
+                inst_tasks = [
+                    _get(one_hour_ago),
+                    _get(one_day_ago),
+                    _get(one_week_ago),
+                ]
+
+                # 6 小时区间均值
+                if selector and selector.strip():
+                    promql = f"sum(rate({metric}{{{selector}}}[{window}]))"
+                else:
+                    promql = f"sum(rate({metric}[{window}]))"
+
+                range_task = self.prometheus_service.query_range(
+                    query=promql,
+                    start_time=timestamp - datetime.timedelta(hours=6),
+                    end_time=timestamp,
+                    step="1m",
+                )
+
+                results = await asyncio.gather(*inst_tasks, range_task, return_exceptions=True)
+
+                # 解析结果，出现异常则保持默认估算
+                try:
+                    if isinstance(results[0], Exception) is False and results[0] is not None:
+                        qps_1h_ago = float(results[0])
+                except Exception:
+                    pass
+                try:
+                    if isinstance(results[1], Exception) is False and results[1] is not None:
+                        qps_1d_ago = float(results[1])
+                except Exception:
+                    pass
+                try:
+                    if isinstance(results[2], Exception) is False and results[2] is not None:
+                        qps_1w_ago = float(results[2])
+                except Exception:
+                    pass
+                try:
+                    df = results[3]
+                    if df is not None and hasattr(df, "__class__"):
+                        # 期望存在 value 列
+                        if "value" in df.columns:
+                            qps_avg_6h = float(df["value"].mean())
+                        else:
+                            # 若合并后列名不同，则取数值列均值
+                            numeric_cols = df.select_dtypes(include=["number"]).columns
+                            if len(numeric_cols) > 0:
+                                qps_avg_6h = float(df[numeric_cols].mean().mean())
+                except Exception:
+                    pass
+
             qps_change = (current_qps - qps_1h_ago) / max(qps_1h_ago, 1.0)
-            qps_avg_6h = current_qps * 0.95  # 假设6小时平均略低
-            
-            features = {
+
+            return {
                 "QPS": current_qps,
                 "sin_time": sin_time,
                 "cos_time": cos_time,
@@ -255,14 +349,11 @@ class PredictionService:
                 "QPS_1d_ago": qps_1d_ago,
                 "QPS_1w_ago": qps_1w_ago,
                 "QPS_change": qps_change,
-                "QPS_avg_6h": qps_avg_6h
+                "QPS_avg_6h": qps_avg_6h,
             }
-            
-            return features
-            
+
         except Exception as e:
             logger.error(f"特征准备失败: {e}")
-            # 返回默认特征
             return {
                 "QPS": current_qps,
                 "sin_time": 0.0,
@@ -275,7 +366,7 @@ class PredictionService:
                 "QPS_1d_ago": current_qps,
                 "QPS_1w_ago": current_qps,
                 "QPS_change": 0.0,
-                "QPS_avg_6h": current_qps
+                "QPS_avg_6h": current_qps,
             }
 
     def _calculate_ml_confidence(self, current_qps: float, instances: int) -> float:
@@ -303,7 +394,14 @@ class PredictionService:
         """获取星期因子"""
         return DAY_FACTORS.get(day_of_week, 1.0)
 
-    async def predict_trend(self, hours_ahead: int = 24, current_qps: Optional[float] = None) -> Dict[str, Any]:
+    async def predict_trend(
+        self,
+        hours_ahead: int = 24,
+        current_qps: Optional[float] = None,
+        metric: Optional[str] = None,
+        selector: Optional[str] = None,
+        window: str = "1m",
+    ) -> Dict[str, Any]:
         """预测趋势"""
         try:
             if current_qps is None:
@@ -316,7 +414,13 @@ class PredictionService:
             for hour_offset in [1, 3, 6, 12, 24]:
                 if hour_offset <= hours_ahead:
                     future_time = now + datetime.timedelta(hours=hour_offset)
-                    pred_result = await self.predict(current_qps, future_time)
+                    pred_result = await self.predict(
+                        current_qps=current_qps,
+                        timestamp=future_time,
+                        metric=metric,
+                        selector=selector,
+                        window=window,
+                    )
                     predictions.append({
                         "hours_ahead": hour_offset,
                         "timestamp": future_time.isoformat(),

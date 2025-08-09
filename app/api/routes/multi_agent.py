@@ -9,15 +9,15 @@ License: Apache 2.0
 Description: 提供多Agent协作的K8s修复API接口
 """
 
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.core.agents.coordinator import K8sCoordinatorAgent
+from app.core.agents.detector import K8sDetectorAgent
 from app.models.response_models import APIResponse, PaginatedListAPIResponse
 from app.utils.pagination import process_list_with_pagination_and_search
 from app.utils.validators import (sanitize_input, validate_deployment_name,
@@ -32,20 +32,21 @@ router = APIRouter(tags=["multi_agent"])
 
 
 class RepairRequest(BaseModel):
-    deployment: str
-    namespace: Optional[str] = "default"
+    deployment: str = Field(..., description="目标部署名称")
+    namespace: Optional[str] = Field(default="default", description="命名空间")
 
 
 class RepairAllRequest(BaseModel):
-    namespace: Optional[str] = "default"
+    namespace: Optional[str] = Field(default="default", description="命名空间")
 
 
 class ClusterRequest(BaseModel):
-    cluster_name: Optional[str] = "default"
+    cluster_name: Optional[str] = Field(default="default", description="集群名称")
 
 
 # 初始化协调器
 coordinator = K8sCoordinatorAgent()
+detector = K8sDetectorAgent()
 
 
 @router.post("/repairs/create")
@@ -67,11 +68,8 @@ async def create_deployment_repair(request_data: RepairRequest):
 
         logger.info(f"开始多Agent修复部署: {deployment} in {namespace}")
 
-        # 执行修复
-        result = await asyncio.to_thread(
-            coordinator.repair_deployment, deployment=deployment, namespace=namespace
-        )
-
+        # 执行完整工作流
+        result = await coordinator.run_full_workflow(deployment=deployment, namespace=namespace)
         return APIResponse(code=0, message="部署修复完成", data=result).model_dump()
 
     except HTTPException:
@@ -93,10 +91,7 @@ async def create_all_repairs(request_data: RepairAllRequest):
         logger.info(f"开始修复命名空间 {namespace} 下的所有部署")
 
         # 执行批量修复
-        result = await asyncio.to_thread(
-            coordinator.repair_all_deployments, namespace=namespace
-        )
-
+        result = await coordinator.run_batch_workflow(namespace=namespace)
         return APIResponse(code=0, message="批量修复完成", data=result).model_dump()
 
     except HTTPException:
@@ -114,11 +109,8 @@ async def create_cluster_analysis(request_data: ClusterRequest):
 
         logger.info(f"开始分析集群: {cluster_name}")
 
-        # 执行集群分析
-        result = await asyncio.to_thread(
-            coordinator.analyze_cluster, cluster_name=cluster_name
-        )
-
+        # 执行集群分析（使用检测器）
+        result = await detector.get_cluster_overview(namespace=cluster_name or "default")
         return APIResponse(code=0, message="集群分析完成", data=result).model_dump()
 
     except HTTPException:
@@ -135,11 +127,8 @@ async def get_coordinator_status():
         logger.info("获取多Agent协调器状态")
 
         # 获取协调器状态
-        status = await asyncio.to_thread(coordinator.get_status)
-
-        return APIResponse(
-            code=0, message="协调器状态获取成功", data=status
-        ).model_dump()
+        status = await coordinator.health_check()
+        return APIResponse(code=0, message="协调器状态获取成功", data=status).model_dump()
 
     except Exception as e:
         logger.error(f"获取协调器状态失败: {str(e)}")
@@ -148,36 +137,35 @@ async def get_coordinator_status():
 
 @router.get("/agents/list")
 async def list_agents(
-    page: Optional[int] = 1,
-    size: Optional[int] = 20,
-    search: Optional[str] = None
+    page: Optional[int] = Query(1, description="页码（从1开始）"),
+    size: Optional[int] = Query(20, description="每页大小"),
+    search: Optional[str] = Query(None, description="搜索关键词")
 ):
     """列出所有Agent（支持分页和搜索）"""
     try:
         logger.info(f"获取Agent列表: page={page}, size={size}, search={search}")
 
-        # 获取所有Agent列表
-        agents = await asyncio.to_thread(coordinator.list_agents)
-        
-        # 确保agents是字典列表格式，如果不是则转换
-        if agents and not isinstance(agents[0], dict):
-            # 如果agents是其他格式，尝试转换为字典
-            agents_dict = []
-            for i, agent in enumerate(agents):
-                if hasattr(agent, '__dict__'):
-                    agent_dict = agent.__dict__
-                elif hasattr(agent, 'model_dump'):
-                    agent_dict = agent.model_dump()
-                else:
-                    # 简单转换
-                    agent_dict = {
-                        "id": getattr(agent, 'id', f"agent_{i}"),
-                        "name": getattr(agent, 'name', f"Agent {i+1}"),
-                        "status": getattr(agent, 'status', 'unknown'),
-                        "type": getattr(agent, 'type', 'unknown')
-                    }
-                agents_dict.append(agent_dict)
-            agents = agents_dict
+        # 返回内建的Agent概览
+        agents = [
+            {
+                "id": "detector",
+                "name": "K8sDetectorAgent",
+                "status": "available",
+                "type": "detector",
+            },
+            {
+                "id": "strategist",
+                "name": "K8sStrategistAgent",
+                "status": "available",
+                "type": "strategist",
+            },
+            {
+                "id": "executor",
+                "name": "K8sExecutorAgent",
+                "status": "available",
+                "type": "executor",
+            },
+        ]
 
         # 应用分页和搜索（在name字段中搜索）
         paginated_agents, total = process_list_with_pagination_and_search(
@@ -208,15 +196,15 @@ async def multi_agent_health():
     """多Agent服务健康检查"""
     try:
         # 检查协调器健康状态
-        health_status = await asyncio.to_thread(coordinator.is_healthy)
-
+        health = await coordinator.health_check()
         return APIResponse(
             code=0,
             message="多Agent服务健康检查完成",
             data={
-                "healthy": health_status,
+                "healthy": bool(health.get("healthy")),
                 "timestamp": datetime.now(BEIJING_TZ).isoformat(),
                 "service": "multi_agent",
+                "components": health.get("components"),
             },
         ).model_dump()
 

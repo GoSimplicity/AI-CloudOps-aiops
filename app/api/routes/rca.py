@@ -14,8 +14,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Path, Query
+from pydantic import BaseModel, Field
 
 from app.config.settings import config
 from app.core.rca.analyzer import RCAAnalyzer
@@ -50,10 +50,10 @@ except Exception as e:
 class RCAJobRequest(BaseModel):
     """异步RCA任务提交请求模型"""
 
-    start_time: datetime
-    end_time: datetime
-    metrics: Optional[list] = None
-    namespace: Optional[str] = None
+    start_time: datetime = Field(..., description="起始时间，ISO8601 格式")
+    end_time: datetime = Field(..., description="结束时间，ISO8601 格式")
+    metrics: Optional[list] = Field(default=None, description="指标列表（可选）")
+    namespace: Optional[str] = Field(default=None, description="命名空间（可选）")
 
 
 @router.post("/rca/create")
@@ -111,6 +111,12 @@ async def create_root_cause_analysis(request_data: RCARequest):
         raise HTTPException(status_code=500, detail=f"根因分析失败: {str(e)}")
 
 
+# 兼容旧接口：POST /api/v1/rca
+@router.post("/rca")
+async def create_root_cause_analysis_alias(request_data: RCARequest):
+    return await create_root_cause_analysis(request_data)
+
+
 @router.post("/jobs/create")
 async def create_rca_job(request_data: RCAJobRequest):
     """创建异步根因分析任务，返回 job_id"""
@@ -153,8 +159,14 @@ async def create_rca_job(request_data: RCAJobRequest):
         raise HTTPException(status_code=500, detail=f"提交任务失败: {str(e)}")
 
 
+# 兼容旧接口：POST /api/v1/rca/jobs
+@router.post("/rca/jobs")
+async def create_rca_job_alias(request_data: RCAJobRequest):
+    return await create_rca_job(request_data)
+
+
 @router.get("/jobs/{job_id}")
-async def get_job_detail(job_id: str):
+async def get_job_detail(job_id: str = Path(..., description="RCA任务ID")):
     """查询异步根因分析任务状态与结果"""
     try:
         if job_manager is None:
@@ -202,12 +214,18 @@ async def list_available_metrics():
         raise HTTPException(status_code=500, detail=f"获取可用指标失败: {str(e)}")
 
 
+# 兼容旧接口：GET /api/v1/rca/metrics
+@router.get("/rca/metrics")
+async def list_available_metrics_alias():
+    return await list_available_metrics()
+
+
 @router.get("/topology/list")
 async def list_topology(
-    namespace: Optional[str] = None,
-    source: Optional[str] = None,
-    max_hops: Optional[int] = 1,
-    direction: Optional[str] = "out",
+    namespace: Optional[str] = Query(None, description="目标命名空间（可选）"),
+    source: Optional[str] = Query(None, description="源节点名称，用于影响范围计算（可选）"),
+    max_hops: Optional[int] = Query(1, description="最大跳数（默认1）"),
+    direction: Optional[str] = Query("out", description="边方向（out/in），默认out"),
 ):
     """获取指定命名空间的拓扑快照"""
     try:
@@ -247,12 +265,23 @@ async def list_topology(
         raise HTTPException(status_code=500, detail=f"获取拓扑失败: {str(e)}")
 
 
+# 兼容旧接口：GET /api/v1/rca/topology
+@router.get("/rca/topology")
+async def list_topology_alias(
+    namespace: Optional[str] = Query(None, description="目标命名空间（可选）"),
+    source: Optional[str] = Query(None, description="源节点名称（可选）"),
+    max_hops: Optional[int] = Query(1, description="最大跳数（默认1）"),
+    direction: Optional[str] = Query("out", description="边方向（out/in），默认out"),
+):
+    return await list_topology(namespace, source, max_hops, direction)
+
+
 @router.post("/anomalies/create")
 async def create_anomaly_detection(
-    start_time: datetime,
-    end_time: datetime,
-    metrics: Optional[list] = None,
-    sensitivity: Optional[float] = 0.8,
+    start_time: datetime = Query(..., description="起始时间，ISO8601 格式"),
+    end_time: datetime = Query(..., description="结束时间，ISO8601 格式"),
+    metrics: Optional[list] = Query(None, description="指标列表（可选）"),
+    sensitivity: Optional[float] = Query(0.8, description="检测敏感度(0.1-1.0)，默认0.8"),
 ):
     """
     创建异常检测
@@ -293,24 +322,35 @@ async def create_anomaly_detection(
         raise HTTPException(status_code=500, detail=f"异常检测失败: {str(e)}")
 
 
+# 兼容旧接口：POST /api/v1/rca/anomalies
+@router.post("/rca/anomalies")
+async def create_anomaly_detection_alias(
+    start_time: datetime = Query(..., description="起始时间，ISO8601 格式"),
+    end_time: datetime = Query(..., description="结束时间，ISO8601 格式"),
+    metrics: Optional[list] = Query(None, description="指标列表（可选）"),
+    sensitivity: Optional[float] = Query(0.8, description="检测敏感度(0.1-1.0)，默认0.8"),
+):
+    return await create_anomaly_detection(start_time, end_time, metrics, sensitivity)
+
+
 # 兼容测试：/anomalies/list
 @router.get("/anomalies/list")
 async def list_anomalies(
-    start_time: datetime,
-    end_time: datetime,
-    metrics: Optional[list] = None,
-    threshold: Optional[float] = 0.8,
-    namespace: Optional[str] = None,
+    start_time: datetime = Query(..., description="起始时间，ISO8601 格式"),
+    end_time: datetime = Query(..., description="结束时间，ISO8601 格式"),
+    metrics: Optional[list] = Query(None, description="指标列表（可选）"),
+    threshold: Optional[float] = Query(0.8, description="阈值（历史参数，当前不使用）"),
+    namespace: Optional[str] = Query(None, description="命名空间（可选）"),
 ):
     return await create_anomaly_detection(start_time, end_time, metrics, threshold)
 
 
 @router.post("/correlations/create")
 async def create_correlation_analysis(
-    start_time: datetime,
-    end_time: datetime,
-    target_metric: str,
-    metrics: Optional[list] = None,
+    start_time: datetime = Query(..., description="起始时间，ISO8601 格式"),
+    end_time: datetime = Query(..., description="结束时间，ISO8601 格式"),
+    target_metric: str = Query(..., description="目标指标名称"),
+    metrics: Optional[list] = Query(None, description="指标列表（可选）"),
 ):
     """
     创建相关性分析
@@ -351,11 +391,22 @@ async def create_correlation_analysis(
         raise HTTPException(status_code=500, detail=f"相关性分析失败: {str(e)}")
 
 
+# 兼容旧接口：POST /api/v1/rca/correlations
+@router.post("/rca/correlations")
+async def create_correlation_analysis_alias(
+    start_time: datetime = Query(..., description="起始时间，ISO8601 格式"),
+    end_time: datetime = Query(..., description="结束时间，ISO8601 格式"),
+    target_metric: str = Query("", description="目标指标名称，可留空"),
+    metrics: Optional[list] = Query(None, description="指标列表（可选）"),
+):
+    return await create_correlation_analysis(start_time, end_time, target_metric, metrics)
+
+
 class CrossCorrelationRequest(BaseModel):
-    start_time: datetime
-    end_time: datetime
-    metrics: Optional[list] = None
-    max_lags: Optional[int] = 10
+    start_time: datetime = Field(..., description="起始时间，ISO8601 格式")
+    end_time: datetime = Field(..., description="结束时间，ISO8601 格式")
+    metrics: Optional[list] = Field(default=None, description="指标列表（可选）")
+    max_lags: Optional[int] = Field(default=10, description="最大时滞阶数，默认10")
 
 
 @router.post("/cross-correlations/create")
@@ -388,11 +439,11 @@ async def create_cross_correlation(req: CrossCorrelationRequest):
 # 兼容测试：/correlations/list
 @router.get("/correlations/list")
 async def list_correlations(
-    start_time: datetime,
-    end_time: datetime,
-    metrics: Optional[list] = None,
-    namespace: Optional[str] = None,
-    min_correlation: Optional[float] = None,
+    start_time: datetime = Query(..., description="起始时间，ISO8601 格式"),
+    end_time: datetime = Query(..., description="结束时间，ISO8601 格式"),
+    metrics: Optional[list] = Query(None, description="指标列表（可选）"),
+    namespace: Optional[str] = Query(None, description="命名空间（可选）"),
+    min_correlation: Optional[float] = Query(None, description="最小相关系数（历史参数，当前不使用）"),
 ):
     # 直接调用已有端点；当前忽略 min_correlation（内部使用配置阈值）
     # 为保持向后兼容与接口完整性，这里消费但不使用该参数
@@ -404,7 +455,9 @@ async def list_correlations(
 
 @router.post("/timelines/create")
 async def create_timeline(
-    start_time: datetime, end_time: datetime, events: Optional[list] = None
+    start_time: datetime = Query(..., description="起始时间，ISO8601 格式"),
+    end_time: datetime = Query(..., description="结束时间，ISO8601 格式"),
+    events: Optional[list] = Query(None, description="事件列表（可选）"),
 ):
     """
     创建事件时间线
@@ -440,9 +493,9 @@ async def create_timeline(
 
 @router.get("/history/list")
 async def list_analysis_history(
-    page: Optional[int] = 1,
-    size: Optional[int] = 20,
-    search: Optional[str] = None
+    page: Optional[int] = Query(1, description="页码（从1开始）"),
+    size: Optional[int] = Query(20, description="每页大小"),
+    search: Optional[str] = Query(None, description="搜索关键词")
 ):
     """
     获取分析历史记录列表（支持分页和搜索）

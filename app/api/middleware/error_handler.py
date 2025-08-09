@@ -46,7 +46,7 @@ def _safe_get_request_info(request: Request):
 
 
 def _create_error_response(code: int, message: str, extra_data: dict = None):
-    """创建统一的错误响应"""
+    """创建统一的错误响应（与APIResponse结构一致）"""
     try:
         data = {
             "timestamp": datetime.now(BEIJING_TZ).isoformat(),
@@ -55,21 +55,20 @@ def _create_error_response(code: int, message: str, extra_data: dict = None):
         if extra_data:
             data.update(extra_data)
 
-        response = APIResponse(success=False, data=data, message=message, code=code)
+        response = APIResponse(code=code, message=message, data=data)
 
         return JSONResponse(status_code=code, content=response.model_dump())
 
     except Exception as e:
         logger.error(f"创建错误响应时出错: {e}")
-        # 返回最简单的错误响应
+        # 返回最简单的错误响应，保持键名一致
         return JSONResponse(
             status_code=500,
-            content={
-                "success": False,
-                "message": "创建错误响应时发生内部错误",
-                "code": 500,
-                "data": {"timestamp": datetime.now(BEIJING_TZ).isoformat()},
-            },
+            content=APIResponse(
+                code=500,
+                message="创建错误响应时发生内部错误",
+                data={"timestamp": datetime.now(BEIJING_TZ).isoformat()},
+            ).model_dump(),
         )
 
 
