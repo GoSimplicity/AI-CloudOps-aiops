@@ -6,10 +6,7 @@
 提供列表数据的分页和搜索功能
 """
 
-import math
 from typing import Any, Dict, List, Optional, Tuple
-
-from app.models.response_models import PaginationInfo
 
 
 def apply_search_filter(items: List[Dict[str, Any]], search: Optional[str], search_fields: List[str]) -> List[Dict[str, Any]]:
@@ -52,7 +49,7 @@ def apply_pagination(
     items: List[Any], 
     page: int, 
     size: int
-) -> Tuple[List[Any], PaginationInfo]:
+) -> Tuple[List[Any], int]:
     """
     对列表数据应用分页
     
@@ -62,10 +59,9 @@ def apply_pagination(
         size: 每页大小
     
     Returns:
-        分页后的数据列表和分页信息
+        分页后的数据列表和总记录数
     """
     total = len(items)
-    pages = math.ceil(total / size) if size > 0 else 0
     
     # 计算偏移量
     offset = (page - 1) * size
@@ -73,17 +69,7 @@ def apply_pagination(
     # 获取当前页数据
     paginated_items = items[offset:offset + size]
     
-    # 创建分页信息
-    pagination_info = PaginationInfo(
-        page=page,
-        size=size,
-        total=total,
-        pages=pages,
-        has_next=page < pages,
-        has_prev=page > 1
-    )
-    
-    return paginated_items, pagination_info
+    return paginated_items, total
 
 
 def validate_pagination_params(page: Optional[int], size: Optional[int]) -> Tuple[int, int]:
@@ -123,7 +109,7 @@ def process_list_with_pagination_and_search(
     size: Optional[int] = None, 
     search: Optional[str] = None,
     search_fields: Optional[List[str]] = None
-) -> Tuple[List[Dict[str, Any]], PaginationInfo]:
+) -> Tuple[List[Dict[str, Any]], int]:
     """
     综合处理列表数据的搜索和分页
     
@@ -135,7 +121,7 @@ def process_list_with_pagination_and_search(
         search_fields: 搜索字段列表
     
     Returns:
-        处理后的数据列表和分页信息
+        处理后的数据列表和总记录数
     """
     # 验证分页参数
     page, size = validate_pagination_params(page, size)
@@ -146,6 +132,6 @@ def process_list_with_pagination_and_search(
     filtered_items = apply_search_filter(items, search, search_fields)
     
     # 应用分页
-    paginated_items, pagination_info = apply_pagination(filtered_items, page, size)
+    paginated_items, total = apply_pagination(filtered_items, page, size)
     
-    return paginated_items, pagination_info
+    return paginated_items, total

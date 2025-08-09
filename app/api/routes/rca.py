@@ -24,7 +24,7 @@ from app.core.rca.correlator import CorrelationAnalyzer
 from app.core.rca.jobs.job_manager import RCAJobManager
 from app.core.rca.topology.graph import build_topology_from_state
 from app.models.request_models import RCARequest
-from app.models.response_models import APIResponse, ListAPIResponse, PaginatedListAPIResponse
+from app.models.response_models import APIResponse, PaginatedListAPIResponse
 from app.services.prometheus import PrometheusService
 from app.utils.validators import validate_metric_list, validate_time_range
 from app.utils.pagination import process_list_with_pagination_and_search
@@ -437,31 +437,12 @@ async def generate_timeline(
 async def get_analysis_history(
     page: Optional[int] = 1,
     size: Optional[int] = 20,
-    search: Optional[str] = None,
-    limit: Optional[int] = None  # 保持向后兼容
+    search: Optional[str] = None
 ):
     """
     获取分析历史记录接口（支持分页和搜索）
     """
     try:
-        # 如果使用了旧的limit参数，则使用传统模式
-        if limit is not None:
-            # 验证limit参数
-            if limit < 1 or limit > 500:
-                raise HTTPException(status_code=400, detail="limit参数必须在1-500之间")
-            
-            logger.info(f"获取分析历史记录（传统模式），限制数量: {limit}")
-            
-            # 获取历史记录
-            history = await asyncio.to_thread(rca_analyzer.get_analysis_history, limit)
-            
-            return ListAPIResponse(
-                code=0,
-                message="分析历史记录获取成功",
-                items=history,
-            ).model_dump()
-        
-        # 使用新的分页模式
         logger.info(f"获取分析历史记录: page={page}, size={size}, search={search}")
 
         # 获取所有历史记录（需要先获取更多记录用于分页）
@@ -491,7 +472,7 @@ async def get_analysis_history(
             history = history_dict
 
         # 应用分页和搜索（在name、status、type字段中搜索）
-        paginated_history, pagination_info = process_list_with_pagination_and_search(
+        paginated_history, total = process_list_with_pagination_and_search(
             items=history,
             page=page,
             size=size,
@@ -503,7 +484,7 @@ async def get_analysis_history(
             code=0,
             message="分析历史记录获取成功",
             items=paginated_history,
-            pagination=pagination_info
+            total=total
         ).model_dump()
 
     except ValueError as e:

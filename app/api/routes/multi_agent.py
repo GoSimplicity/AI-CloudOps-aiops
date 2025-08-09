@@ -180,7 +180,7 @@ async def list_agents(
             agents = agents_dict
 
         # 应用分页和搜索（在name字段中搜索）
-        paginated_agents, pagination_info = process_list_with_pagination_and_search(
+        paginated_agents, total = process_list_with_pagination_and_search(
             items=agents,
             page=page,
             size=size,
@@ -192,7 +192,7 @@ async def list_agents(
             code=0,
             message="Agent列表获取成功",
             items=paginated_agents,
-            pagination=pagination_info
+            total=total
         ).model_dump()
 
     except ValueError as e:

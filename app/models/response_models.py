@@ -24,23 +24,12 @@ class APIResponse(BaseModel, Generic[T]):
     data: Optional[T] = None
 
 
-class ListAPIResponse(BaseModel, Generic[T]):
-    """统一API响应格式 - 列表请求使用items字段"""
-
-    code: int = 0
-    message: str = ""
-    items: Optional[List[T]] = None
-
-
 class PaginationInfo(BaseModel):
     """分页信息模型"""
     
     page: int  # 当前页码（从1开始）
     size: int  # 每页大小
     total: int  # 总记录数
-    pages: int  # 总页数
-    has_next: bool  # 是否有下一页
-    has_prev: bool  # 是否有上一页
 
 
 class PaginatedListAPIResponse(BaseModel, Generic[T]):
@@ -49,7 +38,7 @@ class PaginatedListAPIResponse(BaseModel, Generic[T]):
     code: int = 0
     message: str = ""
     items: Optional[List[T]] = None
-    pagination: Optional[PaginationInfo] = None
+    total: int = 0
 
 
 class AnomalyInfo(BaseModel):

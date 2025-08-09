@@ -22,7 +22,7 @@ from app.core.agents.k8s_fixer import K8sFixerAgent
 from app.core.agents.notifier import NotifierAgent
 from app.core.agents.supervisor import SupervisorAgent
 from app.models.request_models import AutoFixRequest
-from app.models.response_models import APIResponse, AutoFixResponse, ListAPIResponse, PaginatedListAPIResponse
+from app.models.response_models import APIResponse, AutoFixResponse, PaginatedListAPIResponse
 from app.services.notification import NotificationService
 from app.utils.validators import (
     sanitize_input,
@@ -102,14 +102,13 @@ async def autofix_k8s(request_data: AutoFixRequest):
 
         # 构建响应
         response = AutoFixResponse(
-            task_id=task_id,
+            status="success" if fix_result.get("success", False) else "failed",
+            result=fix_result.get("summary", "修复完成"),
             deployment=deployment,
             namespace=namespace,
-            success=fix_result.get("success", False),
-            timestamp=datetime.now(timezone.utc),
             actions_taken=fix_result.get("actions", []),
-            summary=fix_result.get("summary", "修复完成"),
-            recommendations=fix_result.get("recommendations", []),
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            success=fix_result.get("success", False)
         )
 
         return APIResponse(
@@ -217,29 +216,10 @@ async def get_task_status(task_id: str):
 async def get_history(
     page: Optional[int] = 1,
     size: Optional[int] = 20,
-    search: Optional[str] = None,
-    limit: Optional[int] = None  # 保持向后兼容
+    search: Optional[str] = None
 ):
     """获取修复历史（支持分页和搜索）"""
     try:
-        # 如果使用了旧的limit参数，则使用传统模式
-        if limit is not None:
-            # 验证limit参数
-            if limit < 1 or limit > 500:
-                raise HTTPException(status_code=400, detail="limit参数必须在1-500之间")
-
-            logger.info(f"获取修复历史（传统模式），限制数量: {limit}")
-
-            # 获取历史记录
-            history = await asyncio.to_thread(supervisor_agent.get_fix_history, limit=limit)
-
-            return ListAPIResponse(
-                code=0,
-                message="修复历史获取成功",
-                items=history,
-            ).model_dump()
-        
-        # 使用新的分页模式
         logger.info(f"获取修复历史: page={page}, size={size}, search={search}")
 
         # 获取所有历史记录（需要先获取更多记录用于分页）
@@ -270,7 +250,7 @@ async def get_history(
             history = history_dict
 
         # 应用分页和搜索（在deployment、namespace、status、summary字段中搜索）
-        paginated_history, pagination_info = process_list_with_pagination_and_search(
+        paginated_history, total = process_list_with_pagination_and_search(
             items=history,
             page=page,
             size=size,
@@ -282,7 +262,7 @@ async def get_history(
             code=0,
             message="修复历史获取成功",
             items=paginated_history,
-            pagination=pagination_info
+            total=total
         ).model_dump()
 
     except ValueError as e:

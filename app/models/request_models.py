@@ -17,6 +17,14 @@ from pydantic import BaseModel, Field, field_validator
 from app.config.settings import config
 
 
+class ListRequest(BaseModel):
+    """统一的列表请求模型"""
+    
+    page: int = Field(default=1, ge=1, description="页码（从1开始）")
+    size: int = Field(default=20, ge=1, le=100, description="每页大小")
+    search: Optional[str] = Field(default=None, description="搜索关键词")
+
+
 class RCARequest(BaseModel):
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
