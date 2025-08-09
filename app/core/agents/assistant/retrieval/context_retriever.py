@@ -24,7 +24,7 @@ class ContextAwareRetriever:
         self.doc_ranker = doc_ranker
         self.conversation_context = {}
 
-    def retrieve_with_context(
+    async def retrieve_with_context(
         self,
         query: str,
         session_id: str = None,
@@ -42,7 +42,9 @@ class ContextAwareRetriever:
 
             for q in queries:
                 try:
-                    docs = self.base_retriever.invoke(q)
+                    # 兼容异步/同步检索器
+                    result = self.base_retriever.invoke(q)
+                    docs = await result if hasattr(result, "__await__") else result
                     all_docs.extend(docs)
                 except Exception as e:
                     logger.warning(f"查询检索失败 '{q}': {e}")
@@ -56,7 +58,8 @@ class ContextAwareRetriever:
                     for word in query_words:
                         if len(word) > 2:  # 跳过太短的词
                             try:
-                                word_docs = self.base_retriever.invoke(word)
+                                result = self.base_retriever.invoke(word)
+                                word_docs = await result if hasattr(result, "__await__") else result
                                 all_docs.extend(word_docs)
                                 if len(all_docs) >= top_k * 2:
                                     break
@@ -85,9 +88,19 @@ class ContextAwareRetriever:
             logger.error(f"上下文感知检索失败: {e}")
             # 降级到基础检索
             try:
-                return self.base_retriever.invoke(query)[:top_k]
+                result = self.base_retriever.invoke(query)
+                docs = await result if hasattr(result, "__await__") else result
+                return docs[:top_k]
             except Exception:
                 return []
+
+    async def retrieve_relevant_docs(self, query: str, max_docs: int = 8) -> List[Document]:
+        """兼容方法：按 AssistantAgent 预期提供的接口包装。"""
+        return await self.retrieve_with_context(query, session_id=None, history=None, top_k=max_docs)
+
+    def update_knowledge(self, documents: List[Document]):
+        """占位以兼容上层调用；当前检索器无需持久状态。"""
+        _ = documents
 
     def _build_enhanced_query(self, query: str, history: List[Dict] = None) -> str:
         """构建增强查询"""

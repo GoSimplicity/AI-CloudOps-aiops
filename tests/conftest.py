@@ -2,9 +2,26 @@
 # -*- coding: utf-8 -*-
 
 import pytest
+import warnings
 import requests
 from fastapi.testclient import TestClient
 from typing import Any
+@pytest.fixture(scope="session", autouse=True)
+def _silence_test_warnings():
+    """全局抑制测试中的已知非功能性警告。
+
+    - PytestReturnNotNoneWarning：测试脚本里部分函数返回字典用于收集结果，
+      这是脚本风格选择，非失败条件；统一抑制以净化输出。
+    """
+    try:
+        from _pytest.warning_types import PytestReturnNotNoneWarning  # type: ignore
+    except Exception:
+        class PytestReturnNotNoneWarning(Warning):
+            pass
+
+    warnings.filterwarnings("ignore", category=PytestReturnNotNoneWarning)
+    yield
+
 
 
 class _FlaskLikeResponse:

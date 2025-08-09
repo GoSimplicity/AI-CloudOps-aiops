@@ -72,6 +72,10 @@ AI-CloudOps-backend/python/
 │   │   │   ├── assistant.py     # RAG智能助手
 │   │   │   ├── coder.py         # 代码生成代理
 │   │   │   ├── k8s_fixer.py     # K8s自动修复代理
+│   │   │   ├── k8s_fixer_enhanced.py # K8s增强修复代理
+│   │   │   ├── fix_registry.py  # 修复动作注册表（新增）
+│   │   │   ├── verifier.py      # 验证Agent（新增）
+│   │   │   ├── rollback.py      # 回滚Agent（新增）
 │   │   │   ├── notifier.py      # 通知代理
 │   │   │   ├── researcher.py    # 研究分析代理
 │   │   │   └── supervisor.py    # 主管代理
@@ -87,7 +91,7 @@ AI-CloudOps-backend/python/
 │   │   ├── request_models.py    # 请求模型
 │   │   └── response_models.py   # 响应模型
 │   ├── services/                # 服务层
-│   │   ├── kubernetes.py        # K8s服务
+│   │   ├── kubernetes.py        # K8s服务（支持dry-run/field_manager，新增patch_service）
 │   │   ├── llm.py               # LLM服务
 │   │   ├── notification.py      # 通知服务
 │   │   └── prometheus.py        # 监控服务

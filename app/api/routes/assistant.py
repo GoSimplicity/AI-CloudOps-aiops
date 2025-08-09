@@ -199,9 +199,7 @@ async def run_async_func_safely(func, *args, **kwargs):
         raise
 
 
-def create_error_response(code: int, message: str, data: Optional[Dict] = None) -> Dict:
-    """创建统一格式的错误响应"""
-    return APIResponse(code=code, message=message, data=data or {}).model_dump()
+# 统一响应构建：保留成功响应构造器；错误响应由全局中间件处理
 
 
 def create_success_response(message: str, data: Optional[Dict] = None) -> Dict:

@@ -54,9 +54,6 @@ class CoderAgent:
 
             # 执行数据分析
             analysis_code = f"""
-import pandas as pd
-import numpy as np
-import json
 from datetime import datetime
 
 # 解析数据
@@ -139,9 +136,6 @@ print(report)
                 data = correlation_data
 
             analysis_code = f"""
-import json
-import numpy as np
-
 # 解析相关性数据
 correlation_data = {json.dumps(data)}
 
@@ -224,7 +218,6 @@ print(report)
                 data = prediction_data
 
             analysis_code = f"""
-import json
 from datetime import datetime
 
 # 解析预测数据
@@ -366,8 +359,6 @@ print(report)
                 parsed_data = data
 
             visualization_code = f"""
-import json
-
 data = {json.dumps(parsed_data)}
 
 def create_ascii_chart(values, labels, title="数据图表"):

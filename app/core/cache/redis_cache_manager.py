@@ -87,7 +87,7 @@ class RedisCacheManager:
             max_cache_size: 最大缓存条目数
             enable_compression: 是否启用数据压缩
         """
-        self.redis_config = redis_config
+        self.redis_config = redis_config or {}
         self.cache_prefix = cache_prefix
         self.default_ttl = default_ttl
         self.max_cache_size = max_cache_size
@@ -97,14 +97,14 @@ class RedisCacheManager:
 
         # Redis连接池，所有参数都从settings读取
         self.connection_pool = ConnectionPool(
-            host=redis_config["host"],
-            port=redis_config["port"],
-            db=redis_config["db"],
-            password=redis_config["password"],
-            decode_responses=redis_config["decode_responses"],
-            max_connections=redis_config["max_connections"],
-            socket_timeout=redis_config["socket_timeout"],
-            socket_connect_timeout=redis_config["connection_timeout"],
+            host=self.redis_config.get("host", "127.0.0.1"),
+            port=self.redis_config.get("port", 6379),
+            db=self.redis_config.get("db", 0),
+            password=self.redis_config.get("password"),
+            decode_responses=False,  # 强制二进制，避免压缩/pickle混淆
+            max_connections=self.redis_config.get("max_connections", 10),
+            socket_timeout=self.redis_config.get("socket_timeout", 5),
+            socket_connect_timeout=self.redis_config.get("connection_timeout", 5),
         )
         self.redis_client = redis.Redis(connection_pool=self.connection_pool)
 
@@ -311,10 +311,8 @@ class RedisCacheManager:
             if current_size > self.max_cache_size:
                 # 获取所有缓存键
                 cache_keys = self.redis_client.smembers(self.index_key)
-                cache_keys = [
-                    key.decode() if isinstance(key, bytes) else key
-                    for key in cache_keys
-                ]
+                # decode_responses=False 下 smembers/keys 返回 bytes
+                cache_keys = [key.decode() if isinstance(key, bytes) else key for key in cache_keys]
 
                 # 获取每个缓存的访问统计
                 entries_with_stats = []
@@ -359,10 +357,7 @@ class RedisCacheManager:
             # 删除所有缓存
             if cache_keys:
                 # 转换为字符串
-                cache_keys = [
-                    key.decode() if isinstance(key, bytes) else key
-                    for key in cache_keys
-                ]
+                cache_keys = [key.decode() if isinstance(key, bytes) else key for key in cache_keys]
                 self.redis_client.delete(*cache_keys)
 
             # 清空索引
@@ -387,11 +382,29 @@ class RedisCacheManager:
                 "cleared_count": 0,
             }
 
+    def clear(self) -> Dict[str, Any]:
+        """兼容方法：清空缓存（别名）。
+
+        设计意图：
+        - 对外暴露更直观的 `clear()` 接口，内部复用 `clear_all()`，避免上层调用方找不到方法。
+        """
+        return self.clear_all()
+
     def get_stats(self) -> Dict[str, Any]:
         """获取缓存统计信息"""
         try:
             stats = self.redis_client.hgetall(self.stats_key)
-            stats = {k.decode(): int(v.decode()) for k, v in stats.items()}
+            # hgetall 在 decode_responses=False 时返回 {bytes: bytes}
+            parsed = {}
+            for k, v in stats.items():
+                key_str = k.decode() if isinstance(k, bytes) else str(k)
+                try:
+                    parsed[key_str] = int(v.decode() if isinstance(v, bytes) else int(v))
+                except Exception:
+                    try:
+                        parsed[key_str] = int(v)
+                    except Exception:
+                        parsed[key_str] = 0
 
             # 计算命中率
             total_requests = stats.get("total_requests", 0)
@@ -402,7 +415,7 @@ class RedisCacheManager:
             current_entries = self.redis_client.scard(self.index_key)
 
             return {
-                **stats,
+                **parsed,
                 "hit_rate": round(hit_rate, 2),
                 "current_entries": current_entries,
                 "max_cache_size": self.max_cache_size,

@@ -14,10 +14,8 @@ import logging
 import time
 from datetime import datetime
 from functools import wraps
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, Optional, Tuple, Type, Union
 
-from app.constants import (ERROR_MESSAGES, HTTP_STATUS_BAD_REQUEST,
-                           HTTP_STATUS_INTERNAL_ERROR, HTTP_STATUS_NOT_FOUND)
 
 
 class AICloudOpsError(Exception):
@@ -111,46 +109,7 @@ class ErrorHandler:
 
         return str(error), error_details
 
-    def handle_validation_error(
-        self, error: Exception, context: str = ""
-    ) -> Tuple[Dict[str, Any], int]:
-        """处理验证错误"""
-        message, details = self.log_and_return_error(
-            error, f"Validation error: {context}"
-        )
-
-        return {
-            "code": HTTP_STATUS_BAD_REQUEST,
-            "message": ERROR_MESSAGES.get("invalid_input", message),
-            "data": {},
-            "error_details": details,
-        }, HTTP_STATUS_BAD_REQUEST
-
-    def handle_service_error(
-        self, error: Exception, context: str = ""
-    ) -> Tuple[Dict[str, Any], int]:
-        """处理服务错误"""
-        message, details = self.log_and_return_error(error, f"Service error: {context}")
-
-        return {
-            "code": HTTP_STATUS_INTERNAL_ERROR,
-            "message": ERROR_MESSAGES.get("internal_error", message),
-            "data": {},
-            "error_details": details,
-        }, HTTP_STATUS_INTERNAL_ERROR
-
-    def handle_not_found_error(
-        self, error: Exception, context: str = ""
-    ) -> Tuple[Dict[str, Any], int]:
-        """处理未找到错误"""
-        message, details = self.log_and_return_error(error, f"Not found: {context}")
-
-        return {
-            "code": HTTP_STATUS_NOT_FOUND,
-            "message": ERROR_MESSAGES.get("not_found", message),
-            "data": {},
-            "error_details": details,
-        }, HTTP_STATUS_NOT_FOUND
+    # 统一的错误响应由 API 中间件处理；保留基础的日志封装以供内部服务使用
 
 
 def retry_on_exception(
@@ -200,30 +159,6 @@ def retry_on_exception(
     return decorator
 
 
-def validate_required_fields(data: Dict[str, Any], required_fields: List[str]) -> None:
-    """验证必需字段"""
-    missing_fields = []
-    for field in required_fields:
-        if field not in data or data[field] is None or data[field] == "":
-            missing_fields.append(field)
-    
-    if missing_fields:
-        raise ValidationError(f"缺少必需字段: {', '.join(missing_fields)}")
-
-
-def validate_field_type(
-    value: Any, field_name: str, expected_type: Type, allow_none: bool = False
-) -> None:
-    """验证字段类型"""
-    if allow_none and value is None:
-        return
-    
-    if not isinstance(value, expected_type):
-        raise ValidationError(
-            f"字段 {field_name} 类型错误，期望 {expected_type.__name__}，实际 {type(value).__name__}"
-        )
-
-
 def validate_field_range(
     value: Union[int, float],
     field_name: str,
@@ -236,11 +171,4 @@ def validate_field_range(
     
     if max_value is not None and value > max_value:
         raise ValidationError(f"字段 {field_name} 值 {value} 大于最大值 {max_value}")
-
-
-def safe_cast(value: Any, target_type: Type, default: Any = None) -> Any:
-    """安全类型转换"""
-    try:
-        return target_type(value)
-    except (ValueError, TypeError):
-        return default
+    

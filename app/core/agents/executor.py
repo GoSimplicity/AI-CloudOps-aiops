@@ -17,6 +17,7 @@ from typing import Any, Dict, List
 
 from app.services.kubernetes import KubernetesService
 from app.services.notification import NotificationService
+from app.config.settings import config
 
 logger = logging.getLogger("aiops.executor")
 
@@ -130,10 +131,111 @@ class K8sExecutorAgent:
         try:
             name = target.get("name")
             namespace = target.get("namespace", "default")
+            action = step.get("action") or ""
             
             if target.get("resource_type") == "deployment":
                 deployment = await self.k8s_service.get_deployment(name, namespace)
                 if deployment:
+                    # 处理额外检查动作（信息性，不阻断流程）
+                    if action == "collect_pod_events":
+                        events = await self.k8s_service.get_events(namespace=namespace, field_selector=f"involvedObject.name={name}", limit=20)
+                        return {"success": True, "message": f"已收集事件 {len(events)} 条"}
+                    if action == "collect_pod_logs":
+                        tail = int(step.get("tail_lines", 200))
+                        logs = await self.k8s_service.get_recent_pod_logs(namespace=namespace, label_selector=f"app={name}", max_pods=3, tail_lines=tail, include_previous=False)
+                        return {"success": True, "message": f"已收集日志 Pod={len(logs)}"}
+                    if action == "validate_image_pull":
+                        pods = await self.k8s_service.get_pods(namespace=namespace, label_selector=f"app={name}")
+                        affected = []
+                        for pod in pods or []:
+                            pod_name = ((pod.get("metadata", {}) or {}).get("name") or "")
+                            spec_containers = ((pod.get("spec", {}) or {}).get("containers") or [])
+                            image_of = {c.get("name"): (c.get("image") or "") for c in spec_containers}
+                            for cs in ((pod.get("status", {}) or {}).get("container_statuses", []) or []):
+                                waiting = ((cs.get("state", {}) or {}).get("waiting", {}) or {})
+                                reason = (waiting.get("reason") or "").lower()
+                                if reason in ("imagepullbackoff", "errimagepull"):
+                                    c_name = cs.get("name")
+                                    img = image_of.get(c_name, "")
+                                    # 解析镜像：registry/repo:tag
+                                    registry_host = ""
+                                    repository = img
+                                    tag = "latest"
+                                    if img:
+                                        # 分离 tag
+                                        repo_part = img
+                                        if ":" in img and not img.endswith(":"):  # 有 tag 或端口
+                                            # 取最后一个冒号后若包含/，可能是端口；简单处理：按最后一个冒号分割，再检查后段是否含"/"
+                                            last_colon = img.rfind(":")
+                                            after = img[last_colon + 1 :]
+                                            before = img[:last_colon]
+                                            if "/" not in after:
+                                                tag = after or tag
+                                                repo_part = before
+                                        # 分离 registry
+                                        if "/" in repo_part:
+                                            first_slash = repo_part.find("/")
+                                            cand = repo_part[:first_slash]
+                                            if any(x in cand for x in (".", ":", "localhost")):
+                                                registry_host = cand
+                                                repository = repo_part[first_slash + 1 :]
+                                            else:
+                                                repository = repo_part
+                                        else:
+                                            repository = repo_part
+                                    affected.append({
+                                        "pod": pod_name,
+                                        "container": c_name,
+                                        "image": img,
+                                        "registry": registry_host,
+                                        "repository": repository,
+                                        "tag": tag,
+                                        "reason": reason,
+                                        "message": (waiting.get("message") or ""),
+                                    })
+                        if not affected:
+                            return {"success": True, "message": "未发现镜像拉取错误"}
+                        # 生成建议
+                        suggestions = []
+                        registries = sorted({a.get("registry") for a in affected if a.get("registry")})
+                        if registries:
+                            suggestions.append(f"检查镜像仓库连通性与DNS解析：{', '.join(registries)}（网络出口/防火墙/代理）")
+                        suggestions.append("为私有仓库配置 imagePullSecrets，并在 ServiceAccount/Pod 上引用")
+                        # 汇总repo:tag
+                        repos = []
+                        for a in affected:
+                            repo = a.get("repository") or ""
+                            tagv = a.get("tag") or "latest"
+                            if repo:
+                                repos.append(f"{repo}:{tagv}")
+                        if repos:
+                            suggestions.append("确认以下镜像与标签已存在于仓库：" + ", ".join(sorted(set(repos))[:5]))
+                        suggestions.append("考虑使用镜像 digest（@sha256:...）固定版本，提升可重复性")
+                        suggestions.append("根据发布策略设置 imagePullPolicy：latest/频繁更新用 Always；稳定版本用 IfNotPresent")
+                        suggestions.append("确认节点/命名空间到镜像仓库的网络出口（NetworkPolicy/安全组/NAT）")
+                        suggestions.append("如为自建不安全仓库，配置运行时 insecure registry 或启用 TLS")
+                        suggestions.append("可重启 Deployment 以重试镜像拉取（kubectl rollout restart）")
+                        return {
+                            "success": True,
+                            "message": f"发现 {len(affected)} 处镜像拉取错误",
+                            "suggestions": suggestions,
+                            "details": {"affected": affected[:20]},
+                        }
+                    if action == "validate_mount":
+                        pods = await self.k8s_service.get_pods(namespace=namespace, label_selector=f"app={name}")
+                        found = False
+                        for pod in pods:
+                            status = (pod.get("status", {}) or {})
+                            for cs in status.get("container_statuses", []) or []:
+                                waiting = (cs.get("state", {}) or {}).get("waiting", {}) or {}
+                                msg = (waiting.get("message") or "").lower()
+                                if any(k in msg for k in ("mount", "mountvolume", "volume")):
+                                    found = True
+                                    break
+                            if found:
+                                break
+                        return {"success": True, "message": "可能存在卷挂载问题" if found else "未发现卷挂载问题"}
+                    # 默认检查通过
                     return {"success": True, "message": f"部署 {name} 存在"}
                 else:
                     return {"success": False, "error": f"部署 {name} 不存在"}
@@ -154,7 +256,17 @@ class K8sExecutorAgent:
                 return {"success": False, "error": "缺少补丁数据"}
 
             if target.get("resource_type") == "deployment":
-                success = await self.k8s_service.patch_deployment(name, patch, namespace)
+                # 根据配置决定是否启用 Dry-Run
+                if config.remediation.dry_run:
+                    dry_ok = await self.k8s_service.patch_deployment(
+                        name, patch, namespace, dry_run=True, field_manager="aiops-executor"
+                    )
+                    if not dry_ok:
+                        return {"success": False, "error": f"Dry-Run 校验未通过: {name}"}
+
+                success = await self.k8s_service.patch_deployment(
+                    name, patch, namespace, dry_run=False, field_manager="aiops-executor"
+                )
                 if success:
                     return {"success": True, "message": f"成功修改部署 {name}"}
                 else:

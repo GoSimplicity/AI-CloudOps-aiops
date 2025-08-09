@@ -24,12 +24,7 @@ class APIResponse(BaseModel, Generic[T]):
     data: Optional[T] = None
 
 
-class PaginationInfo(BaseModel):
-    """分页信息模型"""
-    
-    page: int  # 当前页码（从1开始）
-    size: int  # 每页大小
-    total: int  # 总记录数
+# 备注：分页信息由各API响应直接提供字段，独立模型未直接被引用，移除以减小冗余
 
 
 class PaginatedListAPIResponse(BaseModel, Generic[T]):
@@ -100,12 +95,4 @@ class HealthResponse(BaseModel):
     uptime: Optional[float] = None
 
 
-class AssistantResponse(BaseModel):
-    """智能小助手响应模型"""
-
-    answer: str
-    source_documents: Optional[List[Dict[str, Any]]] = None
-    relevance_score: Optional[float] = None
-    recall_rate: Optional[float] = None  # 文档召回率
-    follow_up_questions: Optional[List[str]] = None
-    session_id: Optional[str] = None
+# 智能小助手响应直接使用通用 `APIResponse` 包裹，删除未用的专用模型

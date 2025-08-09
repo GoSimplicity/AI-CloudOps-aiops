@@ -37,6 +37,15 @@ start_time = time.time()
 # 全局服务实例缓存，避免重复创建和初始化
 _service_instances = {}
 
+# 统一的服务配置，避免重复定义
+HEALTH_CHECK_SERVICES = [
+    ("prometheus", PrometheusService, "Prometheus监控服务", "负责收集和存储系统监控数据"),
+    ("kubernetes", KubernetesService, "Kubernetes集群服务", "负责容器编排和集群资源管理"),
+    ("llm", LLMService, "大语言模型服务", "负责AI推理和智能分析"),
+    ("notification", NotificationService, "通知服务", "负责告警通知和消息推送"),
+    ("prediction", PredictionService, "预测服务", "负责负载预测和容量规划")
+]
+
 
 def get_service_instance(service_name: str, service_class):
     """
@@ -91,16 +100,8 @@ async def components_health():
     try:
         components_detail = {}
         
-        # 检查各服务健康状态
-        services = [
-            ("prometheus", PrometheusService, "Prometheus监控服务", "负责收集和存储系统监控数据"),
-            ("kubernetes", KubernetesService, "Kubernetes集群服务", "负责容器编排和集群资源管理"),
-            ("llm", LLMService, "大语言模型服务", "负责AI推理和智能分析"),
-            ("notification", NotificationService, "通知服务", "负责告警通知和消息推送"),
-            ("prediction", PredictionService, "预测服务", "负责负载预测和容量规划")
-        ]
-        
-        for service_name, service_class, display_name, description in services:
+        # 检查各服务健康状态        
+        for service_name, service_class, display_name, description in HEALTH_CHECK_SERVICES:
             service = get_service_instance(service_name, service_class)
             healthy = service.is_healthy() if service else False
             
@@ -211,16 +212,8 @@ async def liveness_health():
 
 def check_components_health():
     """检查各组件健康状态"""
-    services = [
-        ("prometheus", PrometheusService),
-        ("kubernetes", KubernetesService),
-        ("llm", LLMService),
-        ("notification", NotificationService),
-        ("prediction", PredictionService)
-    ]
-    
     components_status = {}
-    for service_name, service_class in services:
+    for service_name, service_class, _, _ in HEALTH_CHECK_SERVICES:
         try:
             service = get_service_instance(service_name, service_class)
             components_status[service_name] = service.is_healthy() if service else False

@@ -11,31 +11,24 @@ Description: 协调检测、策略、执行和验证的完整工作流
 
 import asyncio
 import logging
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List
 
 from app.core.agents.detector import K8sDetectorAgent
 from app.core.agents.executor import K8sExecutorAgent
 from app.core.agents.strategist import K8sStrategistAgent
+from app.core.agents.verifier import K8sVerifierAgent
+from app.core.agents.rollback import K8sRollbackAgent
 from app.services.notification import NotificationService
+from app.config.settings import config
 
 logger = logging.getLogger("aiops.coordinator")
 
 
-@dataclass
-class AgentState:
-    """Agent状态数据结构"""
-
-    deployment: str
-    namespace: str
-    issues: Dict[str, Any]
-    strategy: Dict[str, Any]
-    execution_result: Dict[str, Any]
-    final_verification: Dict[str, Any]
-    timestamp: str
-    success: bool = False
-    error_message: str = ""
+"""
+说明：本模块内的工作流方法直接返回 Dict 结构用于 API 响应，
+原先定义的 AgentState 数据类未被引用，已移除以减少冗余。
+"""
 
 
 class K8sCoordinatorAgent:
@@ -45,8 +38,17 @@ class K8sCoordinatorAgent:
         self.detector = K8sDetectorAgent()
         self.strategist = K8sStrategistAgent()
         self.executor = K8sExecutorAgent()
+        self.verifier = K8sVerifierAgent()
+        self.rollback = K8sRollbackAgent()
         self.notification_service = NotificationService()
         self.workflow_history = []
+        # 轻量指标（内存级计数，便于API导出）
+        self.metrics = {
+            "total_workflows": 0,
+            "successful_workflows": 0,
+            "rolled_back": 0,
+            "avg_success_rate": 0.0,
+        }
 
     async def run_full_workflow(
         self, deployment: str, namespace: str = "default"
@@ -91,27 +93,56 @@ class K8sCoordinatorAgent:
                     "stage": "strategy",
                 }
 
-            # 步骤3: 执行策略
+            # 步骤3: 执行策略（受安全策略与命名空间白/黑名单约束）
             logger.info("⚙️ 步骤3: 执行修复策略...")
             execution_results = []
 
             for strategy_item in strategy.get("strategies", []):
-                if strategy_item["target"]["name"] == deployment:
-                    execution_result = await self.executor.execute_strategy(
-                        strategy_item
-                    )
-                    execution_results.append(execution_result)
+                if strategy_item["target"]["name"] != deployment:
+                    continue
+                if not strategy_item.get("auto_fix", False):
+                    continue
+                # 命名空间白/黑名单检查
+                if config.remediation.namespace_whitelist and (namespace not in set(config.remediation.namespace_whitelist)):
+                    logger.info(f"跳过执行（不在白名单）: {deployment}/{namespace}")
+                    continue
+                if config.remediation.namespace_blacklist and (namespace in set(config.remediation.namespace_blacklist)):
+                    logger.info(f"跳过执行（在黑名单）: {deployment}/{namespace}")
+                    continue
+                # 安全模式：仅告警不执行
+                if config.remediation.safe_mode:
+                    logger.info(f"安全模式启用：仅告警不执行策略 {strategy_item.get('id')}")
+                    execution_results.append({
+                        "execution_id": f"noop_{int(asyncio.get_event_loop().time())}",
+                        "strategy_id": strategy_item.get("id"),
+                        "target": strategy_item.get("target"),
+                        "success": True,
+                        "steps": [],
+                        "errors": [],
+                        "message": "safe_mode: no-op"
+                    })
+                    continue
 
-            # 步骤4: 验证结果
+                # 正常执行策略（仅在非 safe_mode 情况下）
+                execution_result = await self.executor.execute_strategy(strategy_item)
+                execution_results.append(execution_result)
+
+            # 步骤4: 验证结果（双通道：规则再检测 + 就绪率验证）
             logger.info("✅ 步骤4: 验证修复结果...")
-            final_issues = await self.detector.detect_deployment_issues(
-                deployment, namespace
-            )
+            final_issues = await self.detector.detect_deployment_issues(deployment, namespace)
+            verify_wait = max(0, int(config.remediation.verify_wait_seconds or 20))
+            verification = await self.verifier.verify_deployment_health(deployment, namespace, wait_seconds=verify_wait)
+
+            # 若验证失败，尝试回滚
+            if verification.get("status") == "failed" and config.remediation.allow_rollback:
+                logger.warning("验证失败，执行回滚...")
+                await self.rollback.rollback_deployment(deployment, namespace, reason="verification_failed")
 
             # 步骤5: 生成最终报告
             final_report = await self._generate_final_report(
                 workflow_id, issues, strategy, execution_results, final_issues
             )
+            final_report["verification"] = verification
 
             # 保存工作流历史
             self.workflow_history.append(
@@ -130,6 +161,16 @@ class K8sCoordinatorAgent:
 
             # 发送通知
             await self._send_workflow_notification(final_report)
+
+            # 更新内存指标
+            self.metrics["total_workflows"] += 1
+            self.metrics["successful_workflows"] += 1 if final_report.get("success") else 0
+            if verification.get("status") == "failed":
+                self.metrics["rolled_back"] += 1 if config.remediation.allow_rollback else 0
+            # 平滑更新平均成功率（工作流成功率而非Pod成功率）
+            t = self.metrics["total_workflows"]
+            s = self.metrics["successful_workflows"]
+            self.metrics["avg_success_rate"] = round((s / t) * 100, 2) if t > 0 else 0.0
 
             logger.info(f"✅ 工作流完成: {workflow_id}")
             return final_report
@@ -334,15 +375,4 @@ class K8sCoordinatorAgent:
                 "timestamp": datetime.now().isoformat(),
             }
 
-    async def reset_workflow(self, deployment: str, namespace: str) -> Dict[str, Any]:
-        """重置工作流（清理状态）"""
-        try:
-            # 这里可以添加清理逻辑
-            return {
-                "success": True,
-                "message": f"工作流已重置: {deployment}/{namespace}",
-                "timestamp": datetime.now().isoformat(),
-            }
-
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+    # 备注：历史版本中的 reset_workflow 未在代码中被调用，已移除以保持代码整洁

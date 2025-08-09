@@ -40,6 +40,11 @@ class SessionManager:
         """获取会话数据"""
         return self.sessions.get(session_id)
 
+    def get_history(self, session_id: str) -> List[Dict]:
+        """获取会话历史（兼容上层接口）。"""
+        session = self.get_session(session_id)
+        return session.history if session else []
+
     def add_message_to_history(self, session_id: str, role: str, content: str) -> str:
         """添加消息到会话历史"""
         if session_id not in self.sessions:
@@ -93,6 +98,10 @@ class SessionManager:
                 self.sessions[session_id].context_summary = ""
             return True
         return False
+
+    # 兼容别名
+    def clear_history(self, session_id: str) -> bool:
+        return self.clear_session_history(session_id)
 
     def get_all_sessions(self) -> Dict[str, SessionData]:
         """获取所有会话"""

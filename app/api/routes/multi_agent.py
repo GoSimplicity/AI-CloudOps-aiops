@@ -22,6 +22,7 @@ from app.models.response_models import APIResponse, PaginatedListAPIResponse
 from app.utils.pagination import process_list_with_pagination_and_search
 from app.utils.validators import (sanitize_input, validate_deployment_name,
                                   validate_namespace)
+from app.config.settings import config
 
 logger = logging.getLogger("aiops.multi_agent")
 
@@ -46,7 +47,33 @@ class ClusterRequest(BaseModel):
 
 # 初始化协调器
 coordinator = K8sCoordinatorAgent()
-detector = K8sDetectorAgent()
+_detector = K8sDetectorAgent()
+
+@router.get("/metrics")
+async def multi_agent_metrics():
+    """导出多Agent修复指标（内存级）。"""
+    try:
+        m = coordinator.metrics if hasattr(coordinator, "metrics") else {}
+        return APIResponse(
+            code=0,
+            message="多Agent指标获取成功",
+            data={
+                "total_workflows": m.get("total_workflows", 0),
+                "successful_workflows": m.get("successful_workflows", 0),
+                "rolled_back": m.get("rolled_back", 0),
+                "avg_success_rate": m.get("avg_success_rate", 0.0),
+                "config": {
+                    "safe_mode": bool(config.remediation.safe_mode),
+                    "dry_run": bool(config.remediation.dry_run),
+                    "allow_rollback": bool(config.remediation.allow_rollback),
+                },
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            },
+        ).model_dump()
+    except Exception as e:
+        logger.error(f"多Agent指标获取失败: {str(e)}")
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(status_code=500, detail=f"多Agent指标获取失败: {str(e)}")
 
 
 @router.post("/repairs/create")
@@ -110,7 +137,7 @@ async def create_cluster_analysis(request_data: ClusterRequest):
         logger.info(f"开始分析集群: {cluster_name}")
 
         # 执行集群分析（使用检测器）
-        result = await detector.get_cluster_overview(namespace=cluster_name or "default")
+        result = await _detector.get_cluster_overview(namespace=cluster_name or "default")
         return APIResponse(code=0, message="集群分析完成", data=result).model_dump()
 
     except HTTPException:

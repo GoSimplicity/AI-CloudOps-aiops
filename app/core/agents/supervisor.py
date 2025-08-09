@@ -10,23 +10,15 @@ Description: 主管代理 - 协调多个智能代理进行问题解决
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from langchain_core.messages import BaseMessage
-from pydantic import BaseModel
-from typing_extensions import Literal
+ 
 
 from app.models.data_models import AgentState
 from app.services.llm import LLMService
 
 logger = logging.getLogger("aiops.supervisor")
-
-
-class RouteResponse(BaseModel):
-    """Route response data model for supervisor decisions"""
-
-    next: Literal["Researcher", "Coder", "K8sFixer", "Notifier", "FINISH"]
-    reasoning: Optional[str] = None
 
 
 class SupervisorAgent:

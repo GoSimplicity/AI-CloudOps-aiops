@@ -10,6 +10,7 @@ Description: 应用程序配置管理模块
 """
 
 import os
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -49,29 +50,77 @@ def load_config() -> Dict[str, Any]:
 _config_data = load_config()
 
 
+def _cast_value(value: Any, cast_type):
+    """将原始值按类型安全转换。
+
+    - bool: 接受 true/false/yes/no/on/off/1/0（大小写不敏感）
+    - list: 若为字符串，优先尝试 JSON 解析，否则按逗号分隔并 strip；若为列表则原样返回
+    - 其它: 直接使用传入的 cast_type 转换
+    """
+    if value is None:
+        return None
+
+    # 布尔解析
+    if cast_type is bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if text in {"1", "true", "t", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "f", "no", "n", "off"}:
+            return False
+        # 无法判定时返回 False 以避免将 "false" 识别为 True
+        return False
+
+    # 列表解析
+    if cast_type is list:
+        if isinstance(value, list):
+            return value
+        text = str(value).strip()
+        # 优先尝试 JSON 数组
+        if (text.startswith("[") and text.endswith("]")) or (
+            text.startswith("\"") and text.endswith("\"")
+        ):
+            try:
+                loaded = json.loads(text)
+                if isinstance(loaded, list):
+                    return loaded
+                # 若是逗号字符串，继续走分割逻辑
+            except Exception:
+                pass
+        # 按逗号分割
+        parts = [p.strip() for p in text.split(",") if p.strip()]
+        return parts
+
+    # 其它基础类型
+    try:
+        return cast_type(value)
+    except Exception:
+        return None
+
+
 def get_env_or_config(env_key: str, config_key: str, default: Any = None, cast_type=str):
-    """从环境变量或配置文件中获取值"""
-    # 优先从环境变量获取
+    """从环境变量或配置文件中获取值（优先环境变量），并进行安全类型转换。"""
+    # 1) 环境变量优先
     env_value = os.getenv(env_key)
     if env_value is not None:
-        try:
-            return cast_type(env_value)
-        except (ValueError, TypeError):
-            pass
-    
-    # 从配置文件获取
+        converted = _cast_value(env_value, cast_type)
+        if converted is not None:
+            return converted
+
+    # 2) 配置文件读取（支持 a.b.c 嵌套）
     keys = config_key.split('.')
-    value = _config_data
+    cursor: Any = _config_data
     for key in keys:
-        if isinstance(value, dict) and key in value:
-            value = value[key]
+        if isinstance(cursor, dict) and key in cursor:
+            cursor = cursor[key]
         else:
             return default
-    
-    try:
-        return cast_type(value) if value is not None else default
-    except (ValueError, TypeError):
-        return default
+
+    converted = _cast_value(cursor, cast_type)
+    return converted if converted is not None else default
 
 
 @dataclass
@@ -154,6 +203,35 @@ class K8sConfig:
     )
     namespace: str = field(
         default_factory=lambda: get_env_or_config("K8S_NAMESPACE", "kubernetes.namespace", "default")
+    )
+
+
+@dataclass
+class RemediationConfig:
+    """自动修复/多Agent配置"""
+    enabled: bool = field(
+        default_factory=lambda: get_env_or_config("REMEDIATION_ENABLED", "remediation.enabled", True, bool)
+    )
+    dry_run: bool = field(
+        default_factory=lambda: get_env_or_config("REMEDIATION_DRY_RUN", "remediation.dry_run", True, bool)
+    )
+    allow_rollback: bool = field(
+        default_factory=lambda: get_env_or_config("REMEDIATION_ALLOW_ROLLBACK", "remediation.allow_rollback", True, bool)
+    )
+    verify_wait_seconds: int = field(
+        default_factory=lambda: get_env_or_config("REMEDIATION_VERIFY_WAIT", "remediation.verify_wait_seconds", 20, int)
+    )
+    max_concurrent: int = field(
+        default_factory=lambda: get_env_or_config("REMEDIATION_MAX_CONCURRENT", "remediation.max_concurrent", 3, int)
+    )
+    safe_mode: bool = field(
+        default_factory=lambda: get_env_or_config("REMEDIATION_SAFE_MODE", "remediation.safe_mode", False, bool)
+    )
+    namespace_whitelist: List[str] = field(
+        default_factory=lambda: get_env_or_config("REMEDIATION_NS_WHITELIST", "remediation.namespace_whitelist", [], list)
+    )
+    namespace_blacklist: List[str] = field(
+        default_factory=lambda: get_env_or_config("REMEDIATION_NS_BLACKLIST", "remediation.namespace_blacklist", [], list)
     )
 
 
@@ -269,6 +347,9 @@ class RedisConfig:
     password: Optional[str] = field(
         default_factory=lambda: get_env_or_config("REDIS_PASSWORD", "redis.password", None)
     )
+    decode_responses: bool = field(
+        default_factory=lambda: get_env_or_config("REDIS_DECODE_RESPONSES", "redis.decode_responses", False, bool)
+    )
     connection_timeout: int = field(
         default_factory=lambda: get_env_or_config("REDIS_CONNECTION_TIMEOUT", "redis.connection_timeout", 5, int)
     )
@@ -369,6 +450,7 @@ class AppConfig:
     mcp: MCPConfig = field(default_factory=MCPConfig)
     logs: LogsConfig = field(default_factory=LogsConfig)
     tracing: TracingConfig = field(default_factory=TracingConfig)
+    remediation: RemediationConfig = field(default_factory=RemediationConfig)
 
 
 # 全局配置实例

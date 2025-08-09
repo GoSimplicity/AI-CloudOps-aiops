@@ -10,19 +10,14 @@ Description: API请求模型 - 定义用于验证和解析传入API请求的Pyda
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.config.settings import config
 
 
-class ListRequest(BaseModel):
-    """统一的列表请求模型"""
-    
-    page: int = Field(default=1, ge=1, description="页码（从1开始）")
-    size: int = Field(default=20, ge=1, le=100, description="每页大小")
-    search: Optional[str] = Field(default=None, description="搜索关键词")
+# 备注：通用列表请求模型未被当前API使用，移除以减小冗余
 
 
 class RCARequest(BaseModel):
@@ -103,21 +98,4 @@ class PredictionRequest(BaseModel):
         return v
 
 
-class AssistantRequest(BaseModel):
-    """智能小助手请求模型"""
-
-    question: str = Field(..., min_length=1, description="用户提问")
-    chat_history: Optional[List[Dict[str, str]]] = Field(
-        default=None, description="对话历史记录"
-    )
-    use_web_search: bool = Field(default=False, description="是否使用网络搜索增强回答")
-    max_context_docs: int = Field(
-        default=4, ge=1, le=10, description="最大上下文文档数量"
-    )
-    session_id: Optional[str] = Field(
-        default=None, description="会话ID，为空则创建新会话"
-    )
-    mode: str = Field(
-        default="rag",
-        description="运行模式: 'rag' 使用传统RAG功能, 'mcp' 使用MCP工具调用功能",
-    )
+# 备注：助手请求模型未被路由使用（助手路由内有独立模型），移除冗余定义

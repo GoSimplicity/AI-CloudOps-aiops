@@ -16,8 +16,10 @@ from langchain_core.embeddings import Embeddings
 
 from app.core.agents.assistant.models.config import assistant_config
 # Redis向量存储
-from app.core.vector.redis_vector_store import (OptimizedRedisVectorStore,
-                                                RedisVectorStoreManager)
+from app.core.vector.redis_vector_store import (
+    OptimizedRedisVectorStore,
+    RedisVectorStoreManager,
+)
 
 logger = logging.getLogger("aiops.assistant.vector_store_manager")
 
@@ -25,9 +27,7 @@ logger = logging.getLogger("aiops.assistant.vector_store_manager")
 class VectorStoreManager:
     """向量存储管理器"""
 
-    def __init__(
-        self, vector_db_path: str, collection_name: str, embedding_model: Embeddings
-    ):
+    def __init__(self, vector_db_path: str, collection_name: str, embedding_model: Embeddings):
         self.vector_db_path = vector_db_path
         self.collection_name = collection_name
         self.embedding_model = embedding_model
@@ -237,7 +237,7 @@ class VectorStoreManager:
                         logger.error(f"检索器完全失败: {e}")
                         return []
 
-                def invoke(self, query) -> List[Document]:
+                async def invoke(self, query) -> List[Document]:
                     # 兼容字符串查询和字典输入
                     if isinstance(query, dict):
                         query_str = query.get("query", "")

@@ -132,9 +132,13 @@ class AssistantAgent:
     def _init_advanced_components(self):
         """初始化高级组件"""
         try:
+            # 构建高级检索组件
+            from .retrieval.query_rewriter import QueryRewriter
+            from .retrieval.document_ranker import DocumentRanker
             self.context_retriever = ContextAwareRetriever(
-                self.vector_store_manager,
-                self.embedding
+                base_retriever=self.vector_store_manager,
+                query_rewriter=QueryRewriter(),
+                doc_ranker=DocumentRanker(),
             )
             self.answer_generator = ReliableAnswerGenerator(self.llm)
             logger.info("高级组件初始化成功")
@@ -146,7 +150,7 @@ class AssistantAgent:
         """刷新知识库"""
         try:
             start_time = time.time()
-            documents = self.document_loader.load_all_documents()
+            documents = self.document_loader.load_documents()
             
             if not documents:
                 return {"status": "warning", "message": "未找到文档"}
@@ -192,8 +196,9 @@ class AssistantAgent:
             logger.debug(f"处理问题: {question[:50]}...")
 
             # 检查缓存
-            cache_key = f"{hash(question)}_{session_id}"
-            cached_response = self.cache_manager.get(cache_key)
+            # 获取会话历史以构建完整缓存键
+            history = self.session_manager.get_history(session_id) if session_id else []
+            cached_response = self.cache_manager.get(question, session_id, history)
             if cached_response:
                 logger.info("使用缓存回答")
                 return cached_response
@@ -219,7 +224,8 @@ class AssistantAgent:
             # 保存到会话和缓存
             if session_id:
                 self.session_manager.add_message_to_history(session_id, "assistant", result["answer"])
-            self.cache_manager.set(cache_key, result, ttl=3600)
+                updated_history = self.session_manager.get_history(session_id)
+                self.cache_manager.set(question, result, session_id, updated_history, ttl=3600)
 
             return result
         except Exception as e:
@@ -246,7 +252,7 @@ class AssistantAgent:
         """生成答案"""
         try:
             if self.answer_generator:
-                return await self.answer_generator.generate_answer(question, docs)
+                return await self.answer_generator.generate_structured_answer(question, docs)
             else:
                 return await self._simple_generate_answer(question, docs)
         except Exception as e:
@@ -322,7 +328,7 @@ class AssistantAgent:
         self._shutdown = True
         try:
             if hasattr(self, 'cache_manager'):
-                self.cache_manager.close()
+                self.cache_manager.shutdown()
             logger.info("助手代理已关闭")
         except Exception as e:
             logger.error(f"关闭助手时出错: {e}")

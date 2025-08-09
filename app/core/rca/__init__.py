@@ -13,15 +13,5 @@ from .analyzer import RCAAnalyzer
 from .correlator import CorrelationAnalyzer
 from .detector import AnomalyDetector
 
-# 向外导出 RCA 作业管理器（按需导入，避免硬耦合）
-try:
-    from .jobs.job_manager import RCAJobManager  # type: ignore
-
-    __all__ = [
-        "RCAAnalyzer",
-        "AnomalyDetector",
-        "CorrelationAnalyzer",
-        "RCAJobManager",
-    ]
-except Exception:  # 允许在无 Redis 场景下仍可导入核心模块
-    __all__ = ["RCAAnalyzer", "AnomalyDetector", "CorrelationAnalyzer"]
+# 向外导出核心组件，RCAJobManager按需在具体模块中导入
+__all__ = ["RCAAnalyzer", "AnomalyDetector", "CorrelationAnalyzer"]

@@ -11,7 +11,7 @@ Description: Prometheus服务模块 - 提供监控数据查询、时间序列数
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 import requests
@@ -182,21 +182,4 @@ class PrometheusService:
             logger.error(f"Prometheus健康检查失败: {str(e)}")
             return False
 
-    async def get_metric_metadata(self, metric_name: str) -> Optional[Dict[str, Any]]:
-        """获取指标元数据"""
-        try:
-            url = f"{self.base_url}/api/v1/metadata"
-            params = {"metric": metric_name}
-
-            response = requests.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()
-
-            data = response.json()
-            if data["status"] == "success" and data["data"]:
-                return data["data"].get(metric_name, [{}])[0]
-
-            return None
-
-        except Exception as e:
-            logger.error(f"获取指标元数据失败: {str(e)}")
-            return None
+    # 指标元数据接口暂未被使用，删除以减少冗余

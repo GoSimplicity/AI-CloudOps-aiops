@@ -28,6 +28,7 @@ class K8sFixerAgent:
         self.k8s_service = KubernetesService()
         self.llm_service = LLMService()
         self.llm = self.llm_service
+        self.enhanced_agent = EnhancedK8sFixerAgent()  # 重用实例
         self.max_retries = 3
         self.retry_delay = 2
         logger.info("K8s Fixer Agent initialized")
@@ -37,8 +38,7 @@ class K8sFixerAgent:
     ) -> str:
         """分析并修复Deployment问题"""
         try:
-            enhanced_agent = EnhancedK8sFixerAgent()
-            return await enhanced_agent.analyze_and_fix_deployment(
+            return await self.enhanced_agent.analyze_and_fix_deployment(
                 deployment_name, namespace, error_description
             )
         except Exception as e:

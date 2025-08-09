@@ -26,6 +26,7 @@ from app.services.notification import NotificationService
 from app.utils.pagination import process_list_with_pagination_and_search
 from app.utils.validators import (sanitize_input, validate_deployment_name,
                                   validate_namespace)
+from app.config.settings import config
 
 logger = logging.getLogger("aiops.autofix")
 
@@ -41,21 +42,7 @@ class WorkflowRequest(BaseModel):
     )
 
 
-class StatusRequest(BaseModel):
-    task_id: str = Field(..., description="任务ID")
-
-
-class WorkflowStartRequest(BaseModel):
-    deployment: Optional[str] = Field(default=None, description="目标部署名称（可选）")
-    namespace: Optional[str] = Field(default="default", description="命名空间")
-    problem_description: Optional[str] = Field(default=None, description="问题描述（可选）")
-
-
-class NotificationRequest(BaseModel):
-    title: str = Field(..., description="通知标题")
-    message: str = Field(..., description="通知内容")
-    level: Optional[str] = Field(default="info", description="级别: info/warning/error")
-    timestamp: Optional[str] = Field(default=None, description="时间戳(可选)")
+# 移除未使用的请求模型以精简API模块
 
 
 # 初始化服务/Agent
@@ -292,6 +279,12 @@ async def autofix_health():
                     "notifier": notifier_healthy,
                     "kubernetes": k8s_healthy,
                 },
+                "remediation_config": {
+                    "enabled": bool(config.remediation.enabled),
+                    "dry_run": bool(config.remediation.dry_run),
+                    "allow_rollback": bool(config.remediation.allow_rollback),
+                    "verify_wait_seconds": int(config.remediation.verify_wait_seconds),
+                },
                 "timestamp": datetime.now(BEIJING_TZ).isoformat(),
                 "service": "autofix",
             },
@@ -304,45 +297,4 @@ async def autofix_health():
         )
 
 
-# 兼容旧接口：POST /api/v1/autofix
-@router.post("/autofix")
-async def create_autofix_alias(request_data: AutoFixRequest):
-    return await create_autofix(request_data)
-
-
-# 兼容旧接口：POST /api/v1/autofix/diagnose（集群/命名空间级诊断）
-@router.post("/autofix/diagnose")
-async def diagnose_cluster(request_data: WorkflowRequest):
-    try:
-        namespace = request_data.namespace or "default"
-        result = await k8s_fixer_agent.diagnose_cluster_health(namespace=namespace)
-        return APIResponse(code=0, message="诊断完成", data={"namespace": namespace, "report": result}).model_dump()
-    except Exception as e:
-        logger.error(f"集群诊断失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"集群诊断失败: {str(e)}")
-
-
-# 兼容旧接口：POST /api/v1/autofix/workflow
-@router.post("/autofix/workflow")
-async def start_autofix_workflow(request_data: WorkflowStartRequest):
-    try:
-        ns = request_data.namespace or "default"
-        if request_data.deployment:
-            result = await coordinator.run_full_workflow(deployment=request_data.deployment, namespace=ns)
-        else:
-            result = await coordinator.run_batch_workflow(namespace=ns)
-        return APIResponse(code=0, message="工作流执行完成", data=result).model_dump()
-    except Exception as e:
-        logger.error(f"启动工作流失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"启动工作流失败: {str(e)}")
-
-
-# 兼容旧接口：POST /api/v1/autofix/notify
-@router.post("/autofix/notify")
-async def send_notification(req: NotificationRequest):
-    try:
-        ok = await notification_service.send_feishu_message(message=req.message, title=req.title)
-        return APIResponse(code=0, message="通知已发送" if ok else "通知发送失败", data={"sent": ok, "level": req.level, "timestamp": req.timestamp or datetime.now(BEIJING_TZ).isoformat()}).model_dump()
-    except Exception as e:
-        logger.error(f"发送通知失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"发送通知失败: {str(e)}")
+    # 仅保留新接口，无旧接口兼容

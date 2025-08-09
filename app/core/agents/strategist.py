@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.services.llm import LLMService
+from app.core.agents.fix_registry import FixRegistry
 
 logger = logging.getLogger("aiops.strategist")
 
@@ -125,7 +126,12 @@ class K8sStrategistAgent:
     async def _create_issue_strategy(
         self, issue: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """为单个问题创建策略"""
+        """为单个问题创建策略
+
+        设计更新：
+        - 使用 FixRegistry 生成标准化、可执行的步骤（step为结构化dict，而非纯文本）。
+        - 保留模板信息用于展示与估时，但步骤以可执行的动作为准。
+        """
         try:
             strategy_type = self._determine_strategy_type(issue)
             if not strategy_type:
@@ -135,17 +141,32 @@ class K8sStrategistAgent:
             if not template:
                 return None
 
-            # 基于问题详情定制策略
+            # 计算目标资源（K8s真实资源类型与名称）
+            issue_type = issue["type"]
+            if issue_type == "pod_issue":
+                target_resource_type = "deployment"
+                target_name = issue.get("deployment") or issue.get("resource_name")
+            elif issue_type == "deployment_issue":
+                target_resource_type = "deployment"
+                target_name = issue.get("resource_name")
+            elif issue_type == "service_issue":
+                target_resource_type = "service"
+                target_name = issue.get("resource_name")
+            else:
+                target_resource_type = "deployment"
+                target_name = issue.get("resource_name")
+
+            # 基于问题详情定制策略（含可执行步骤）
             customized_strategy = {
                 "id": f"{issue['resource_name']}_{issue['sub_type']}",
                 "type": strategy_type,
                 "target": {
-                    "resource_type": issue["type"],
-                    "name": issue["resource_name"],
+                    "resource_type": target_resource_type,
+                    "name": target_name,
                     "namespace": issue["namespace"],
                 },
                 "description": template["description"],
-                "steps": self._customize_steps(template["steps"], issue),
+                "steps": self._build_executable_steps(issue),
                 "priority": template["priority"],
                 "severity": issue["severity"],
                 "auto_fix": issue["auto_fix"],
@@ -184,19 +205,36 @@ class K8sStrategistAgent:
 
         return None
 
-    def _customize_steps(self, steps: List[str], issue: Dict[str, Any]) -> List[str]:
-        """根据问题定制步骤"""
-        customized = steps.copy()
-
-        # 根据问题类型添加具体信息
-        if issue["sub_type"] == "crash_loop":
-            customized[1] = f"检查探针配置 - 资源: {issue['resource_name']}"
-        elif issue["sub_type"] == "resource_pressure":
-            customized[1] = (
-                f"分析资源需求 - 当前: {issue.get('details', {}).get('current', 'N/A')}"
-            )
-
-        return customized
+    def _build_executable_steps(self, issue: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """根据问题类型构建可执行步骤（结构化）。"""
+        actions = FixRegistry.get_actions_for_issue(issue.get("sub_type"))
+        # 针对可诊断问题类型，附加只读检查步骤（不会更改集群状态）
+        sub = issue.get("sub_type")
+        if sub == "image_pull_error":
+            actions = [{"type": "check", "action": "validate_image_pull"}, {"type": "check", "action": "collect_pod_events"}] + actions
+        elif sub == "mount_failure":
+            actions = [{"type": "check", "action": "validate_mount"}, {"type": "check", "action": "collect_pod_events"}] + actions
+        # 将 registry 中的容器名称占位符 "auto" 替换成具体容器名（若可得）
+        container_name = (
+            (issue.get("details", {}) or {}).get("container")
+            or (issue.get("details", {}) or {}).get("container_name")
+            or "auto"
+        )
+        normalized: List[Dict[str, Any]] = []
+        for step in actions:
+            step_copy = {**step}
+            patch = step_copy.get("patch")
+            if patch:
+                containers = (
+                    patch.get("spec", {})
+                    .get("template", {})
+                    .get("spec", {})
+                    .get("containers", [])
+                )
+                if containers and isinstance(containers[0], dict):
+                    containers[0]["name"] = container_name
+            normalized.append(step_copy)
+        return normalized
 
     def _estimate_time(self, strategy_type: str, issue: Dict[str, Any]) -> int:
         """估算执行时间（分钟）"""

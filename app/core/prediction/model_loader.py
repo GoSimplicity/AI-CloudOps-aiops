@@ -11,6 +11,7 @@ Description: 模型加载器 - 处理预测模型的加载、验证和管理
 
 import logging
 import os
+import warnings
 from datetime import datetime
 
 import joblib
@@ -20,6 +21,13 @@ import pandas as pd
 from app.config.settings import config
 
 logger = logging.getLogger("aiops.model_loader")
+
+# 兼容性：在不同版本的 scikit-learn 下导入 InconsistentVersionWarning
+try:
+    from sklearn.exceptions import InconsistentVersionWarning  # type: ignore
+except Exception:  # 兜底，若无法导入则定义为普通 Warning 类型
+    class InconsistentVersionWarning(Warning):
+        pass
 
 
 class ModelLoader:
@@ -49,12 +57,16 @@ class ModelLoader:
                 logger.error(f"标准化器文件不存在: {scaler_path}")
                 return False
 
-            # 加载模型
-            self.model = joblib.load(model_path)
+            # 加载模型（屏蔽 sklearn 反序列化的版本不一致告警）
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", InconsistentVersionWarning)
+                self.model = joblib.load(model_path)
             logger.info(f"成功加载预测模型: {model_path}")
 
-            # 加载标准化器
-            self.scaler = joblib.load(scaler_path)
+            # 加载标准化器（同样屏蔽版本不一致告警）
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", InconsistentVersionWarning)
+                self.scaler = joblib.load(scaler_path)
             logger.info(f"成功加载数据标准化器: {scaler_path}")
 
             # 加载模型元数据

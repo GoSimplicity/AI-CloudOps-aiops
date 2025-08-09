@@ -63,9 +63,7 @@ def validate_qps(qps: float) -> bool:
     return isinstance(qps, (int, float)) and qps >= 0
 
 
-def validate_confidence(confidence: float) -> bool:
-    """验证置信度值"""
-    return isinstance(confidence, (int, float)) and 0 <= confidence <= 1
+# 置信度校验在具体模型层处理，移除通用函数以简化接口
 
 
 def validate_metric_list(metrics: List[str]) -> bool:

@@ -37,6 +37,15 @@ class KubernetesService:
         self._init_retry_interval = 60  # 60秒后重试初始化
         self._try_init()
 
+    def _clean_metadata(self, resource_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """清理Kubernetes资源的敏感元数据信息"""
+        if "metadata" in resource_dict:
+            metadata = resource_dict["metadata"]
+            sensitive_keys = ["managed_fields", "resource_version", "uid", "self_link"]
+            for key in sensitive_keys:
+                metadata.pop(key, None)
+        return resource_dict
+
     def _try_init(self):
         """尝试初始化Kubernetes客户端"""
         try:
@@ -140,10 +149,7 @@ class KubernetesService:
 
             deployment_dict = deployment.to_dict()
             # 清理敏感信息
-            if "metadata" in deployment_dict:
-                metadata = deployment_dict["metadata"]
-                for key in ["managed_fields", "resource_version", "uid", "self_link"]:
-                    metadata.pop(key, None)
+            deployment_dict = self._clean_metadata(deployment_dict)
 
             logger.info(f"获取Deployment成功: {name}")
             return deployment_dict
@@ -156,9 +162,20 @@ class KubernetesService:
             return None
 
     async def patch_deployment(
-        self, name: str, patch: Dict[str, Any], namespace: str = None
+        self,
+        name: str,
+        patch: Dict[str, Any],
+        namespace: str = None,
+        *,
+        dry_run: bool = False,
+        field_manager: Optional[str] = None,
     ) -> bool:
-        """更新Deployment"""
+        """更新Deployment
+
+        说明：
+        - 支持 Kubernetes server-side dry-run，用于在真正变更前校验补丁有效性与冲突风险。
+        - 通过 `field_manager` 指定字段管理者，便于后续审计与冲突定位。
+        """
         if not self._ensure_initialized():
             logger.warning("Kubernetes未初始化，无法更新Deployment")
             return False
@@ -166,13 +183,21 @@ class KubernetesService:
         try:
             namespace = namespace or config.k8s.namespace
 
-            logger.info(f"更新Deployment: {name}, patch: {json.dumps(patch, indent=2)}")
-
-            self.apps_v1.patch_namespaced_deployment(
-                name=name, namespace=namespace, body=patch
+            logger.info(
+                f"更新Deployment: {name}, dry_run={dry_run}, patch: {json.dumps(patch, indent=2, ensure_ascii=False)}"
             )
 
-            logger.info(f"成功更新Deployment {name}")
+            kwargs: Dict[str, Any] = {}
+            if dry_run:
+                kwargs["dry_run"] = "All"
+            if field_manager:
+                kwargs["field_manager"] = field_manager
+
+            self.apps_v1.patch_namespaced_deployment(
+                name=name, namespace=namespace, body=patch, **kwargs
+            )
+
+            logger.info(("DryRun 成功" if dry_run else "成功") + f"更新Deployment {name}")
             return True
 
         except ApiException as e:
@@ -180,6 +205,44 @@ class KubernetesService:
             return False
         except Exception as e:
             logger.error(f"更新Deployment异常: {str(e)}")
+            return False
+
+    async def patch_service(
+        self,
+        name: str,
+        patch: Dict[str, Any],
+        namespace: str = None,
+        *,
+        dry_run: bool = False,
+        field_manager: Optional[str] = None,
+    ) -> bool:
+        """更新Service（支持dry-run）"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法更新Service")
+            return False
+
+        try:
+            namespace = namespace or config.k8s.namespace
+            logger.info(
+                f"更新Service: {name}, dry_run={dry_run}, patch: {json.dumps(patch, indent=2, ensure_ascii=False)}"
+            )
+
+            kwargs: Dict[str, Any] = {}
+            if dry_run:
+                kwargs["dry_run"] = "All"
+            if field_manager:
+                kwargs["field_manager"] = field_manager
+
+            self.core_v1.patch_namespaced_service(
+                name=name, namespace=namespace, body=patch, **kwargs
+            )
+            logger.info(("DryRun 成功" if dry_run else "成功") + f"更新Service {name}")
+            return True
+        except ApiException as e:
+            logger.error(f"更新Service失败: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"更新Service异常: {str(e)}")
             return False
 
     async def get_pods(
@@ -200,10 +263,7 @@ class KubernetesService:
             for pod in pods.items:
                 pod_dict = pod.to_dict()
                 # 清理不必要的字段
-                if "metadata" in pod_dict:
-                    metadata = pod_dict["metadata"]
-                    for key in ["managed_fields", "resource_version", "uid"]:
-                        metadata.pop(key, None)
+                pod_dict = self._clean_metadata(pod_dict)
                 pod_list.append(pod_dict)
 
             logger.info(f"获取到 {len(pod_list)} 个Pod")
@@ -234,10 +294,7 @@ class KubernetesService:
             for event in events.items:
                 event_dict = event.to_dict()
                 # 清理不必要的字段
-                if "metadata" in event_dict:
-                    metadata = event_dict["metadata"]
-                    for key in ["managed_fields", "resource_version", "uid"]:
-                        metadata.pop(key, None)
+                event_dict = self._clean_metadata(event_dict)
                 event_list.append(event_dict)
 
             logger.info(f"获取到 {len(event_list)} 个事件")
@@ -456,10 +513,7 @@ class KubernetesService:
             for deployment in deployments.items:
                 deployment_dict = deployment.to_dict()
                 # 清理不必要的字段
-                if "metadata" in deployment_dict:
-                    metadata = deployment_dict["metadata"]
-                    for key in ["managed_fields", "resource_version", "uid"]:
-                        metadata.pop(key, None)
+                deployment_dict = self._clean_metadata(deployment_dict)
                 deployment_list.append(deployment_dict)
 
             logger.info(f"获取到 {len(deployment_list)} 个Deployment")
@@ -486,10 +540,7 @@ class KubernetesService:
             for service in services.items:
                 service_dict = service.to_dict()
                 # 清理不必要的字段
-                if "metadata" in service_dict:
-                    metadata = service_dict["metadata"]
-                    for key in ["managed_fields", "resource_version", "uid"]:
-                        metadata.pop(key, None)
+                service_dict = self._clean_metadata(service_dict)
                 service_list.append(service_dict)
 
             logger.info(f"获取到 {len(service_list)} 个Service")
@@ -536,10 +587,7 @@ class KubernetesService:
             for node in nodes.items:
                 node_dict = node.to_dict()
                 # 清理不必要的字段
-                if "metadata" in node_dict:
-                    metadata = node_dict["metadata"]
-                    for key in ["managed_fields", "resource_version", "uid"]:
-                        metadata.pop(key, None)
+                node_dict = self._clean_metadata(node_dict)
                 node_list.append(node_dict)
 
             logger.info(f"获取到 {len(node_list)} 个节点")

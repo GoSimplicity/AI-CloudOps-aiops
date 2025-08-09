@@ -27,6 +27,17 @@ kubernetes:
   config_path: deploy/kubernetes/config
   namespace: default
 
+# 自动修复/多Agent配置
+remediation:
+  enabled: true
+  dry_run: true           # 高风险环境建议开启
+  allow_rollback: true    # 验证失败自动回滚
+  verify_wait_seconds: 20 # 验证等待时间
+  max_concurrent: 3
+  safe_mode: false        # 仅告警不执行变更
+  namespace_whitelist: []
+  namespace_blacklist: []
+
 # 根因分析配置
 rca:
   default_time_range: 30

@@ -7,15 +7,5 @@
 
 from __future__ import annotations
 
-from typing import Dict
 
-
-def format_explanation(result: Dict) -> Dict:
-    """占位：返回传入结果并预留扩展字段。"""
-    if not isinstance(result, dict):
-        return {"summary": "invalid result"}
-    result.setdefault("evidence", [])
-    result.setdefault("timeline", [])
-    result.setdefault("impact_scope", [])
-    result.setdefault("suggestions", [])
-    return result
+# 占位函数暂未被调用，移除以减少冗余

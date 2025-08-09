@@ -218,8 +218,8 @@ def test_diagnose_cluster():
     """测试集群诊断API"""
     print_header("测试集群诊断API")
 
-    url = f"{API_BASE_URL}/autofix/diagnose"
-    data = {"namespace": "default"}
+    url = f"{API_BASE_URL}/multi-agent/analysis/create"
+    data = {"cluster_name": "default"}
 
     response = make_request("post", url, data)
 
@@ -242,7 +242,7 @@ def test_autofix_normal():
     """测试正常部署的自动修复API"""
     print_header("测试正常部署的自动修复API")
 
-    url = f"{API_BASE_URL}/autofix"
+    url = f"{API_BASE_URL}/multi-agent/repairs/create"
     data = {
         "deployment": "nginx-deployment",
         "namespace": "default",
@@ -260,12 +260,8 @@ def test_autofix_normal():
     result = response.json()
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
-    # 检查响应中是否包含预期的字段
-    success = (
-        response.status_code in [200, 500]
-        and "status" in result
-        and "timestamp" in result
-    )
+    # 新版接口统一返回 APIResponse 结构
+    success = (response.status_code == 200 and result.get("code") == 0)
 
     return {"success": success, "status_code": response.status_code, "response": result}
 
@@ -274,7 +270,7 @@ def test_autofix_problematic():
     """测试问题部署的自动修复API"""
     print_header("测试问题部署的自动修复API")
 
-    url = f"{API_BASE_URL}/autofix"
+    url = f"{API_BASE_URL}/multi-agent/repairs/create"
     data = {
         "deployment": "nginx-problematic",
         "namespace": "default",
@@ -292,12 +288,7 @@ def test_autofix_problematic():
     result = response.json()
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
-    # 检查响应中是否包含预期的字段
-    success = (
-        response.status_code in [200, 500]
-        and "status" in result
-        and "timestamp" in result
-    )
+    success = (response.status_code == 200 and result.get("code") == 0)
 
     # 等待一段时间，让修复生效
     if success:
@@ -318,7 +309,7 @@ def test_autofix_test_problem():
     """测试探针问题的自动修复API"""
     print_header("测试探针问题的自动修复API")
 
-    url = f"{API_BASE_URL}/autofix"
+    url = f"{API_BASE_URL}/multi-agent/repairs/create"
     data = {
         "deployment": "nginx-test-problem",
         "namespace": "default",
@@ -336,12 +327,7 @@ def test_autofix_test_problem():
     result = response.json()
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
-    # 检查响应中是否包含预期的字段
-    success = (
-        response.status_code in [200, 500]
-        and "status" in result
-        and "timestamp" in result
-    )
+    success = (response.status_code == 200 and result.get("code") == 0)
 
     # 等待一段时间，让修复生效
     if success:
@@ -362,15 +348,8 @@ def test_notification():
     """测试通知API"""
     print_header("测试通知API")
 
-    url = f"{API_BASE_URL}/autofix/notify"
-    data = {
-        "title": "测试通知",
-        "message": "这是一条测试通知消息",
-        "level": "info",
-        "timestamp": datetime.now(BEIJING_TZ).isoformat(),
-    }
-
-    response = make_request("post", url, data)
+    url = f"{API_BASE_URL}/multi-agent/metrics"  # 使用指标端点作为替代
+    response = make_request("get", url)
 
     if not response:
         logger.error("通知API请求失败")
@@ -391,11 +370,8 @@ def test_workflow():
     """测试完整工作流API"""
     print_header("测试完整工作流API")
 
-    url = f"{API_BASE_URL}/autofix/workflow"
-    data = {
-        "problem_description": "Kubernetes集群中的Pod出现CrashLoopBackOff状态，需要诊断并修复"
-    }
-
+    url = f"{API_BASE_URL}/multi-agent/repairs/create-all"
+    data = {"namespace": "default"}
     response = make_request("post", url, data)
 
     if not response:

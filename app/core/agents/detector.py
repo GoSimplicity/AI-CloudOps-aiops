@@ -15,6 +15,8 @@ from typing import Any, Dict, List
 
 from app.services.kubernetes import KubernetesService
 from app.services.prometheus import PrometheusService
+from app.core.agents.detector_rules import DetectionRules
+from app.core.agents.detector_helpers import DetectorHelpers
 
 logger = logging.getLogger("aiops.detector")
 
@@ -26,52 +28,26 @@ class K8sDetectorAgent:
         self.k8s_service = KubernetesService()
         self.prometheus_service = PrometheusService()
         self.detection_rules = self._load_detection_rules()
+        # 保存当前扫描周期内的 Pod 列表，供 Service 端点检查使用
+        self._current_pods: List[Dict[str, Any]] = []
 
     def _load_detection_rules(self) -> Dict[str, Any]:
         """加载检测规则"""
-        return {
-            "pod_issues": {
-                "crash_loop": {
-                    "condition": lambda pod: self._has_crash_loop(pod),
-                    "severity": "critical",
-                    "auto_fix": True,
-                },
-                "image_pull_error": {
-                    "condition": lambda pod: self._has_image_pull_error(pod),
-                    "severity": "high",
-                    "auto_fix": False,
-                },
-                "resource_pressure": {
-                    "condition": lambda pod: self._has_resource_pressure(pod),
-                    "severity": "medium",
-                    "auto_fix": True,
-                },
-                "pending_timeout": {
-                    "condition": lambda pod: self._is_pending_timeout(pod),
-                    "severity": "medium",
-                    "auto_fix": True,
-                },
-            },
-            "deployment_issues": {
-                "replica_mismatch": {
-                    "condition": lambda deploy: self._has_replica_mismatch(deploy),
-                    "severity": "high",
-                    "auto_fix": True,
-                },
-                "unavailable_replicas": {
-                    "condition": lambda deploy: self._has_unavailable_replicas(deploy),
-                    "severity": "critical",
-                    "auto_fix": True,
-                },
-            },
-            "service_issues": {
-                "no_endpoints": {
-                    "condition": lambda svc: self._has_no_endpoints(svc),
-                    "severity": "high",
-                    "auto_fix": True,
-                }
-            },
-        }
+        rules = DetectionRules.get_all_rules()
+        
+        # 为规则添加检测条件函数
+        rules["pod_issues"]["crash_loop"]["condition"] = self._has_crash_loop
+        rules["pod_issues"]["image_pull_error"]["condition"] = self._has_image_pull_error
+        rules["pod_issues"]["mount_failure"]["condition"] = self._has_mount_failure
+        rules["pod_issues"]["resource_pressure"]["condition"] = self._has_resource_pressure
+        rules["pod_issues"]["pending_timeout"]["condition"] = self._is_pending_timeout
+        
+        rules["deployment_issues"]["replica_mismatch"]["condition"] = self._has_replica_mismatch
+        rules["deployment_issues"]["unavailable_replicas"]["condition"] = self._has_unavailable_replicas
+        
+        rules["service_issues"]["no_endpoints"]["condition"] = self._has_no_endpoints
+        
+        return rules
 
     async def detect_all_issues(self, namespace: str = None) -> Dict[str, Any]:
         """检测所有类型的问题"""
@@ -105,6 +81,8 @@ class K8sDetectorAgent:
             issues["details"].extend(deployment_issues)
 
             # 检测Service问题
+            # 将本轮 Pod 缓存，供 Service 端点匹配逻辑使用
+            self._current_pods = pods
             service_issues = self._detect_service_issues_sync(services)
             issues["details"].extend(service_issues)
 
@@ -202,80 +180,58 @@ class K8sDetectorAgent:
         self, deployments: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """检测Deployment问题"""
-        issues = []
-
-        for deployment in deployments or []:
-            try:
-                for issue_type, rule in self.detection_rules[
-                    "deployment_issues"
-                ].items():
-                    try:
-                        if rule["condition"](deployment):
-                            issues.append(
-                                {
-                                    "type": "deployment_issue",
-                                    "sub_type": issue_type,
-                                    "severity": rule["severity"],
-                                    "auto_fix": rule["auto_fix"],
-                                    "resource_name": deployment.get("metadata", {}).get(
-                                        "name"
-                                    ),
-                                    "namespace": deployment.get("metadata", {}).get(
-                                        "namespace"
-                                    ),
-                                    "message": self._get_deployment_message(
-                                        deployment, issue_type
-                                    ),
-                                    "details": self._get_deployment_details(deployment),
-                                    "timestamp": datetime.now().isoformat(),
-                                }
-                            )
-                    except Exception as e:
-                        logger.warning(f"检测部署问题失败: {str(e)}")
-                        continue
-            except Exception as e:
-                logger.warning(f"处理部署数据失败: {str(e)}")
-                continue
-
-        return issues
+        return self._detect_resource_issues(
+            resources=deployments,
+            resource_type="deployment",
+            rules_key="deployment_issues",
+            message_func=DetectorHelpers.get_deployment_message,
+            details_func=DetectorHelpers.get_deployment_details
+        )
 
     def _detect_service_issues_sync(
         self, services: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """检测Service问题"""
+        return self._detect_resource_issues(
+            resources=services,
+            resource_type="service",
+            rules_key="service_issues",
+            message_func=DetectorHelpers.get_service_message,
+            details_func=DetectorHelpers.get_service_details
+        )
+
+    def _detect_resource_issues(
+        self,
+        resources: List[Dict[str, Any]],
+        resource_type: str,
+        rules_key: str,
+        message_func,
+        details_func
+    ) -> List[Dict[str, Any]]:
+        """通用资源问题检测方法"""
         issues = []
 
-        for service in services or []:
+        for resource in resources or []:
             try:
-                for issue_type, rule in self.detection_rules["service_issues"].items():
+                for issue_type, rule in self.detection_rules[rules_key].items():
                     try:
-                        if rule["condition"](service):
-                            issues.append(
-                                {
-                                    "type": "service_issue",
-                                    "sub_type": issue_type,
-                                    "severity": rule["severity"],
-                                    "auto_fix": rule["auto_fix"],
-                                    "resource_name": service.get("metadata", {}).get(
-                                        "name"
-                                    ),
-                                    "namespace": service.get("metadata", {}).get(
-                                        "namespace"
-                                    ),
-                                    "message": self._get_service_message(
-                                        service, issue_type
-                                    ),
-                                    "details": self._get_service_details(service),
-                                    "timestamp": datetime.now().isoformat(),
-                                }
-                            )
+                        if rule["condition"](resource):
+                            issues.append({
+                                "type": f"{resource_type}_issue",
+                                "sub_type": issue_type,
+                                "severity": rule["severity"],
+                                "auto_fix": rule["auto_fix"],
+                                "resource_name": resource.get("metadata", {}).get("name"),
+                                "namespace": resource.get("metadata", {}).get("namespace"),
+                                "message": message_func(resource, issue_type),
+                                "details": details_func(resource),
+                                "timestamp": datetime.now().isoformat(),
+                            })
                     except Exception as e:
-                        logger.warning(
-                            f"检测Service问题类型 {issue_type} 失败: {str(e)}"
-                        )
+                        logger.warning(f"检测{resource_type}问题类型 {issue_type} 失败: {str(e)}")
                         continue
             except Exception as e:
-                logger.warning(f"处理Service数据失败: {str(e)}")
+                logger.warning(f"处理{resource_type}数据失败: {str(e)}")
                 continue
 
         return issues
@@ -296,6 +252,31 @@ class K8sDetectorAgent:
             waiting = status.get("state", {}).get("waiting", {})
             if waiting.get("reason") in ["ImagePullBackOff", "ErrImagePull"]:
                 return True
+        return False
+
+    def _has_mount_failure(self, pod: Dict[str, Any]) -> bool:
+        """检查是否有卷挂载失败/配置错误。
+
+        采用保守启发：
+        - 容器 state.waiting.reason 为 CreateContainerConfigError/ContainerCreating 且 message 含 mount/volume/MountVolume
+        - PodScheduled 条件 Unschedulable 且 message 含 volume/persistentvolumeclaim
+        """
+        status = pod.get("status", {}) or {}
+        # 检查容器等待态的 message 提示
+        for cs in status.get("container_statuses", []) or []:
+            waiting = (cs.get("state", {}) or {}).get("waiting", {}) or {}
+            reason = (waiting.get("reason") or "").lower()
+            message = (waiting.get("message") or "").lower()
+            if reason in ("createcontainerconfigerror", "containercreating") and (
+                "mount" in message or "volume" in message or "mountvolume" in message
+            ):
+                return True
+        # 检查条件中的 Unschedulable 提示
+        for cond in status.get("conditions", []) or []:
+            if (cond.get("type") == "PodScheduled" and cond.get("reason") == "Unschedulable"):
+                msg = (cond.get("message") or "").lower()
+                if "volume" in msg or "persistentvolumeclaim" in msg or "pvc" in msg:
+                    return True
         return False
 
     def _has_resource_pressure(self, pod: Dict[str, Any]) -> bool:
@@ -338,11 +319,35 @@ class K8sDetectorAgent:
         return unavailable > 0
 
     def _has_no_endpoints(self, service: Dict[str, Any]) -> bool:
-        """检查Service是否有Endpoints"""
-        # 这里需要获取Endpoints信息
-        # 简化版本：检查selector是否匹配到Pod
-        selector = service.get("spec", {}).get("selector", {})
-        return len(selector) == 0  # 修复逻辑：无selector表示无endpoints
+        """检查Service是否缺少有效端点。
+
+        简化但更贴近实际的判定策略：
+        - ExternalName 类型不参与端点判定
+        - 若无 selector：视为缺少端点（常见误配），但排除 ExternalName
+        - 若有 selector：与当前命名空间 Pod 标签匹配，若匹配且 Running 的 Pod 数为 0，则视为缺少端点
+        """
+        spec = service.get("spec", {}) or {}
+        service_type = (spec.get("type") or "").upper()
+        if service_type == "EXTERNALNAME":
+            return False
+
+        selector = spec.get("selector") or {}
+        if not selector:
+            return True
+
+        # 基于 selector 匹配 Pod
+        matched_running_pods = 0
+        for pod in self._current_pods or []:
+            try:
+                labels = (pod.get("metadata", {}) or {}).get("labels", {}) or {}
+                # 选择器要求子集匹配
+                if all(labels.get(k) == v for k, v in selector.items()):
+                    if (pod.get("status", {}) or {}).get("phase") == "Running":
+                        matched_running_pods += 1
+            except Exception:
+                continue
+
+        return matched_running_pods == 0
 
     async def _check_deployment_health(
         self, deployment: Dict[str, Any]
@@ -389,77 +394,7 @@ class K8sDetectorAgent:
 
         return issues
 
-    def _get_issue_message(self, pod: Dict[str, Any], issue_type: str) -> str:
-        """获取问题描述消息"""
-        pod_name = pod.get("metadata", {}).get("name", "unknown")
 
-        messages = {
-            "crash_loop": f"Pod {pod_name} 处于CrashLoopBackOff状态",
-            "image_pull_error": f"Pod {pod_name} 镜像拉取失败",
-            "resource_pressure": f"Pod {pod_name} 因资源压力无法调度",
-            "pending_timeout": f"Pod {pod_name} 长时间处于Pending状态",
-        }
-
-        return messages.get(issue_type, f"Pod {pod_name} 出现问题")
-
-    def _get_deployment_message(
-        self, deployment: Dict[str, Any], issue_type: str
-    ) -> str:
-        """获取部署问题描述"""
-        name = deployment.get("metadata", {}).get("name", "unknown")
-        messages = {
-            "replica_mismatch": f"部署 {name} 副本数不匹配",
-            "unavailable_replicas": f"部署 {name} 有不可用副本",
-        }
-        return messages.get(issue_type, f"部署 {name} 出现问题")
-
-    def _get_service_message(self, service: Dict[str, Any], issue_type: str) -> str:
-        """获取服务问题描述"""
-        name = service.get("metadata", {}).get("name", "unknown")
-        messages = {"no_endpoints": f"服务 {name} 没有可用的Endpoints"}
-        return messages.get(issue_type, f"服务 {name} 出现问题")
-
-    def _get_pod_details(self, pod: Dict[str, Any]) -> Dict[str, Any]:
-        """获取Pod详细信息"""
-        return {
-            "name": pod.get("metadata", {}).get("name"),
-            "namespace": pod.get("metadata", {}).get("namespace"),
-            "phase": pod.get("status", {}).get("phase"),
-            "restart_count": sum(
-                cs.get("restart_count", 0)
-                for cs in pod.get("status", {}).get("container_statuses", [])
-            ),
-            "conditions": [
-                {
-                    "type": c.get("type"),
-                    "status": c.get("status"),
-                    "reason": c.get("reason"),
-                }
-                for c in pod.get("status", {}).get("conditions", [])
-            ],
-        }
-
-    def _get_deployment_details(self, deployment: Dict[str, Any]) -> Dict[str, Any]:
-        """获取部署详细信息"""
-        return {
-            "name": deployment.get("metadata", {}).get("name"),
-            "namespace": deployment.get("metadata", {}).get("namespace"),
-            "replicas": {
-                "desired": deployment.get("spec", {}).get("replicas", 0),
-                "available": deployment.get("status", {}).get("available_replicas", 0),
-                "ready": deployment.get("status", {}).get("ready_replicas", 0),
-            },
-        }
-
-    def _get_service_details(self, service: Dict[str, Any]) -> Dict[str, Any]:
-        """获取服务详细信息"""
-        return {
-            "name": service.get("metadata", {}).get("name"),
-            "namespace": service.get("metadata", {}).get("namespace"),
-            "type": service.get("spec", {}).get("type"),
-            "selector": service.get("spec", {}).get("selector", {}),
-            "ports": service.get("spec", {}).get("ports", []),
-        }
 
     async def get_cluster_overview(self, namespace: str = None) -> Dict[str, Any]:
         """获取集群概览信息"""

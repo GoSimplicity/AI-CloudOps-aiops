@@ -46,11 +46,6 @@ class LLMService:
         self.backup_provider = (
             "ollama" if self.provider.lower() == "openai" else "openai"
         )
-        self.backup_model = (
-            config.llm.ollama_model
-            if self.backup_provider == "ollama"
-            else config.llm.model
-        )
 
         if self.provider.lower() == "openai":
             self.client = OpenAI(

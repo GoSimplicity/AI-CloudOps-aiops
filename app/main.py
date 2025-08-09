@@ -10,7 +10,6 @@ Description: 主应用模块 - 提供FastAPI应用的创建和初始化功能
 """
 
 import logging
-import multiprocessing
 import time
 from contextlib import asynccontextmanager
 
@@ -83,8 +82,7 @@ if __name__ == "__main__":
     logger = logging.getLogger("aiops")
 
     try:
-        if multiprocessing.current_process().name == "MainProcess":
-            logger.info(f"在 {config.host}:{config.port} 启动FastAPI服务器")
+        logger.info(f"在 {config.host}:{config.port} 启动FastAPI服务器")
 
         uvicorn.run(
             "app.main:app",
@@ -94,8 +92,7 @@ if __name__ == "__main__":
             log_level=config.log_level.lower(),
         )
     except KeyboardInterrupt:
-        if multiprocessing.current_process().name == "MainProcess":
-            logger.info("收到中断信号，正在关闭服务...")
+        logger.info("收到中断信号，正在关闭服务...")
     except Exception as e:
         logger.error(f"服务启动失败: {e}")
         raise
