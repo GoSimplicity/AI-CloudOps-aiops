@@ -11,7 +11,7 @@ Description: 健康检查API模块，提供AI-CloudOps系统的服务健康监�
 
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 import psutil
 from fastapi import APIRouter, HTTPException
@@ -24,6 +24,9 @@ from app.services.notification import NotificationService
 from app.services.prometheus import PrometheusService
 
 logger = logging.getLogger("aiops.health")
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 # 创建健康检查路由器
 router = APIRouter(tags=["health"])
@@ -60,7 +63,7 @@ def get_service_instance(service_name: str, service_class):
 async def health_check():
     """系统综合健康检查"""
     try:
-        current_time = datetime.utcnow()
+        current_time = datetime.now(BEIJING_TZ)
         uptime = time.time() - start_time
         components_status = check_components_health()
         system_status = get_system_status()
@@ -105,7 +108,7 @@ async def components_health():
                 "healthy": healthy,
                 "name": display_name,
                 "description": description,
-                "last_check": datetime.utcnow().isoformat()
+                "last_check": datetime.now(BEIJING_TZ).isoformat()
             }
             
             if not healthy and service:
@@ -126,7 +129,7 @@ async def components_health():
             code=0,
             message="组件健康检查完成",
             data={
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
                 "components": components_detail,
             },
         ).model_dump()
@@ -144,7 +147,7 @@ async def health_metrics():
         process_metrics = get_process_metrics()
 
         health_metrics = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             "system": system_metrics,
             "process": process_metrics,
             "uptime": time.time() - start_time,
@@ -175,7 +178,7 @@ async def readiness_probe():
                 message="服务部分就绪，部分功能可能不可用",
                 data={
                     "ready": True,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(BEIJING_TZ).isoformat(),
                     "failed_components": critical_failed,
                     "warning": "部分关键组件不可用，相关功能可能受影响",
                 },
@@ -184,7 +187,7 @@ async def readiness_probe():
         return APIResponse(
             code=0,
             message="就绪性检查通过",
-            data={"ready": True, "timestamp": datetime.utcnow().isoformat()},
+            data={"ready": True, "timestamp": datetime.now(BEIJING_TZ).isoformat()},
         ).model_dump()
 
     except HTTPException:
@@ -202,7 +205,7 @@ async def liveness_probe():
     return APIResponse(
         code=0,
         message="存活性检查通过",
-        data={"alive": True, "timestamp": datetime.utcnow().isoformat()},
+        data={"alive": True, "timestamp": datetime.now(BEIJING_TZ).isoformat()},
     ).model_dump()
 
 

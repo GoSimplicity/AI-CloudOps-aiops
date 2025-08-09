@@ -1,3 +1,7 @@
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -13,7 +17,7 @@ import requests
 import json
 import time
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import logging
 from pathlib import Path
 
@@ -364,7 +368,7 @@ def test_notification():
         "title": "测试通知",
         "message": "这是一条测试通知消息",
         "level": "info",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(BEIJING_TZ).isoformat(),
     }
 
     response = make_request("post", url, data)
@@ -516,7 +520,7 @@ def main():
 
     # 初始化测试结果
     results = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(BEIJING_TZ).isoformat(),
         "results": {},
         "environment_setup": False,
     }

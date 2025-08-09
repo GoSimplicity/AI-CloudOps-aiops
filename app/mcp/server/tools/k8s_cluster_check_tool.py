@@ -11,8 +11,11 @@ Description: k8s集群健康检查的MCP工具
 
 import asyncio
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta, timedelta
 from typing import Any, Dict, List, Optional
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 from kubernetes import client, config
 
@@ -141,7 +144,7 @@ class K8sClusterCheckTool(K8sBaseTool):
 
         return {
             "report": report,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             "status": "success",
         }
 
@@ -250,7 +253,7 @@ class K8sClusterCheckTool(K8sBaseTool):
     ) -> List[Dict[str, Any]]:
         """获取近期重要事件"""
         try:
-            since_time = datetime.utcnow() - timedelta(hours=time_window)
+            since_time = datetime.now(BEIJING_TZ) - timedelta(hours=time_window)
             loop = asyncio.get_event_loop()
 
             # 根据命名空间过滤获取事件，进一步限制数量
@@ -471,7 +474,7 @@ class K8sClusterCheckTool(K8sBaseTool):
         report_lines = []
         report_lines.append("# Kubernetes集群健康检查报告")
         report_lines.append(
-            f"**检查时间**: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+            f"**检查时间**: {datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M:%S')} UTC"
         )
         if namespace_filter:
             report_lines.append(f"**检查范围**: 命名空间 `{namespace_filter}`")

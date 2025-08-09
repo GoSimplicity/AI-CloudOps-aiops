@@ -1,3 +1,7 @@
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -12,7 +16,7 @@ Description: Kubernetes预测服务测试脚本，验证AI驱动的负载预测�
 import requests
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import logging
 
 # 配置日志
@@ -186,7 +190,7 @@ def test_prediction_post():
     print_header("测试POST预测接口")
 
     url = f"{API_BASE_URL}/predict"
-    data = {"current_qps": 150.5, "timestamp": datetime.utcnow().isoformat()}
+    data = {"current_qps": 150.5, "timestamp": datetime.now(BEIJING_TZ).isoformat()}
 
     response = make_request("post", url, data)
 
@@ -233,7 +237,7 @@ def test_prediction_zero_qps():
     print_header("测试零QPS预测")
 
     url = f"{API_BASE_URL}/predict"
-    data = {"current_qps": 0.0, "timestamp": datetime.utcnow().isoformat()}
+    data = {"current_qps": 0.0, "timestamp": datetime.now(BEIJING_TZ).isoformat()}
 
     response = make_request("post", url, data)
 
@@ -284,7 +288,7 @@ def test_prediction_low_qps():
     url = f"{API_BASE_URL}/predict"
     data = {
         "current_qps": 3.5,  # 低于阈值的QPS
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(BEIJING_TZ).isoformat(),
     }
 
     response = make_request("post", url, data)
@@ -331,7 +335,7 @@ def test_prediction_high_qps():
     url = f"{API_BASE_URL}/predict"
     data = {
         "current_qps": 1000.0,  # 高QPS
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(BEIJING_TZ).isoformat(),
     }
 
     response = make_request("post", url, data)
@@ -382,7 +386,7 @@ def test_prediction_invalid_qps():
     url = f"{API_BASE_URL}/predict"
     data = {
         "current_qps": -10.0,  # 无效的负数QPS
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(BEIJING_TZ).isoformat(),
     }
 
     response = make_request("post", url, data)
@@ -418,7 +422,7 @@ def test_trend_prediction():
     data = {
         "current_qps": 100.0,
         "hours_ahead": 6,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(BEIJING_TZ).isoformat(),
     }
 
     response = make_request("post", url, data)
@@ -596,7 +600,7 @@ def main():
 
     # 初始化测试结果
     results = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(BEIJING_TZ).isoformat(),
         "results": {},
         "environment_setup": False,
     }

@@ -24,7 +24,7 @@ def validate_time_range(
     if time_diff > max_range_minutes:
         return False
     # 检查是否是未来时间
-    now = datetime.now(timezone.utc)
+    now = datetime.now(BEIJING_TZ)
     if start_time > now or end_time > now:
         return False
     return True

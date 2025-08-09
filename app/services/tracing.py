@@ -12,7 +12,7 @@ Description: Trace服务模块 - 提供从Jaeger Query API拉取Trace/Span的能
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -20,6 +20,9 @@ import requests
 from app.config.settings import config
 
 logger = logging.getLogger("aiops.tracing")
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 class TracingService:

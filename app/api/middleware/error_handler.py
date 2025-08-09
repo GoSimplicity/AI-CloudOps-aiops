@@ -11,7 +11,7 @@ Description: 错误处理中间件 - 提供统一的HTTP错误响应格式和异
 
 import logging
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -19,6 +19,9 @@ from fastapi.responses import JSONResponse
 from app.models.response_models import APIResponse
 
 logger = logging.getLogger("aiops.error_handler")
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 def _safe_get_request_info(request: Request):
@@ -46,7 +49,7 @@ def _create_error_response(code: int, message: str, extra_data: dict = None):
     """创建统一的错误响应"""
     try:
         data = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(BEIJING_TZ).isoformat(),
         }
 
         if extra_data:
@@ -65,7 +68,7 @@ def _create_error_response(code: int, message: str, extra_data: dict = None):
                 "success": False,
                 "message": "创建错误响应时发生内部错误",
                 "code": 500,
-                "data": {"timestamp": datetime.now(timezone.utc).isoformat()},
+                "data": {"timestamp": datetime.now(BEIJING_TZ).isoformat()},
             },
         )
 
@@ -124,7 +127,7 @@ async def validation_exception_handler(request: Request, exc: Exception):
 async def general_exception_handler(request: Request, exc: Exception):
     """处理一般异常"""
     try:
-        error_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        error_id = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
         request_info = _safe_get_request_info(request)
 
         logger.error(f"Unexpected error [{error_id}]: {request_info['url']}")
@@ -160,7 +163,7 @@ async def general_exception_handler(request: Request, exc: Exception):
 
     except Exception as handler_error:
         logger.error(f"通用错误处理器出错: {handler_error}")
-        error_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        error_id = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
         return _create_error_response(
             500, "服务器遇到严重错误", extra_data={"error_id": error_id}
         )

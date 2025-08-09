@@ -10,8 +10,11 @@ Description: k8s Service管理的MCP工具，提供Service的查看、创建、�
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 from kubernetes import client
 from kubernetes.client.rest import ApiException
@@ -217,7 +220,7 @@ class K8sServiceTool(K8sBaseTool):
                 "operation": "list_services",
                 "total_count": len(service_list),
                 "services": service_list,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except Exception as e:
@@ -225,7 +228,7 @@ class K8sServiceTool(K8sBaseTool):
                 "success": False,
                 "error": "获取Service列表失败",
                 "message": str(e),
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
     async def _get_service_details(
@@ -317,7 +320,7 @@ class K8sServiceTool(K8sBaseTool):
                 "success": True,
                 "operation": "get_service_details",
                 "service_details": service_details,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except ApiException as e:
@@ -403,7 +406,7 @@ class K8sServiceTool(K8sBaseTool):
                 "namespace": created_service.metadata.namespace,
                 "cluster_ip": created_service.spec.cluster_ip,
                 "type": created_service.spec.type,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except ApiException as e:
@@ -449,7 +452,7 @@ class K8sServiceTool(K8sBaseTool):
                 "message": f"Service {service_name} 在命名空间 {namespace} 中已成功删除",
                 "service_name": service_name,
                 "namespace": namespace,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except ApiException as e:
@@ -498,7 +501,7 @@ class K8sServiceTool(K8sBaseTool):
                         "namespace": namespace,
                         "message": "Service存在但没有可用的端点",
                         "subsets": [],
-                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "timestamp": datetime.now(BEIJING_TZ).isoformat(),
                     }
                 raise
 
@@ -560,7 +563,7 @@ class K8sServiceTool(K8sBaseTool):
                 "not_ready_endpoints": sum(
                     len(s["not_ready_addresses"]) for s in subsets
                 ),
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except Exception as e:

@@ -1,3 +1,7 @@
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -14,7 +18,7 @@ import json
 import time
 import os
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta, timedelta
 import logging
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -400,7 +404,7 @@ def test_rca_jobs_flags():
     """测试RCA异步任务端点flags返回（如任务服务未启用则容错）"""
     print_header("测试RCA Jobs端点 flags")
 
-    end_time = datetime.utcnow()
+    end_time = datetime.now(BEIJING_TZ)
     start_time = end_time - timedelta(minutes=10)
 
     # 提交任务
@@ -460,7 +464,7 @@ def test_anomaly_detection():
     print_header("测试异常检测API")
 
     # 使用最近1小时的时间范围
-    end_time = datetime.utcnow()
+    end_time = datetime.now(BEIJING_TZ)
     start_time = end_time - timedelta(hours=1)
 
     url = f"{API_BASE_URL}/rca/anomalies"
@@ -496,7 +500,7 @@ def test_correlation_analysis():
     print_header("测试相关性分析API")
 
     # 使用最近1小时的时间范围
-    end_time = datetime.utcnow()
+    end_time = datetime.now(BEIJING_TZ)
     start_time = end_time - timedelta(hours=1)
 
     url = f"{API_BASE_URL}/rca/correlations"
@@ -532,7 +536,7 @@ def test_root_cause_analysis():
     print_header("测试根因分析API")
 
     # 使用最近2小时的时间范围以获得更多数据
-    end_time = datetime.utcnow()
+    end_time = datetime.now(BEIJING_TZ)
     start_time = end_time - timedelta(hours=2)
 
     url = f"{API_BASE_URL}/rca"
@@ -570,7 +574,7 @@ def test_rca_with_specific_workload():
     """测试针对特定工作负载的RCA"""
     print_header("测试针对特定工作负载的RCA")
 
-    end_time = datetime.utcnow()
+    end_time = datetime.now(BEIJING_TZ)
     start_time = end_time - timedelta(hours=1)
 
     url = f"{API_BASE_URL}/rca"
@@ -606,7 +610,7 @@ def test_rca_performance():
 
     def single_rca_request(thread_id):
         """单个RCA请求"""
-        end_time = datetime.utcnow()
+        end_time = datetime.now(BEIJING_TZ)
         start_time = end_time - timedelta(minutes=30)  # 使用较短时间范围以提高性能
 
         url = f"{API_BASE_URL}/rca"
@@ -686,7 +690,7 @@ def test_rca_historical_analysis():
     print_header("测试历史数据RCA分析")
 
     # 使用过去24小时的数据
-    end_time = datetime.utcnow() - timedelta(hours=1)  # 1小时前结束
+    end_time = datetime.now(BEIJING_TZ) - timedelta(hours=1)  # 1小时前结束
     start_time = end_time - timedelta(hours=6)  # 向前推6小时
 
     url = f"{API_BASE_URL}/rca"
@@ -785,7 +789,7 @@ def main():
 
     # 初始化测试结果
     results = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(BEIJING_TZ).isoformat(),
         "test_type": "RCA功能测试",
         "results": {},
         "environment_setup": False,

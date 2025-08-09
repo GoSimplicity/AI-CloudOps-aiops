@@ -10,8 +10,11 @@ Description: k8s Deployment管理的MCP工具，提供Deployment的查看、更�
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 from kubernetes import client
 from kubernetes.client.rest import ApiException
@@ -187,7 +190,7 @@ class K8sDeploymentTool(K8sBaseTool):
                 "operation": "list_deployments",
                 "total_count": len(deployment_list),
                 "deployments": deployment_list,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except Exception as e:
@@ -195,7 +198,7 @@ class K8sDeploymentTool(K8sBaseTool):
                 "success": False,
                 "error": "获取Deployment列表失败",
                 "message": str(e),
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
     async def _get_deployment_status(
@@ -324,7 +327,7 @@ class K8sDeploymentTool(K8sBaseTool):
                 "success": True,
                 "operation": "get_deployment_status",
                 "deployment_status": deployment_status,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except ApiException as e:
@@ -411,7 +414,7 @@ class K8sDeploymentTool(K8sBaseTool):
                 "old_image": old_image,
                 "new_image": new_image,
                 "revision": updated_deployment.metadata.generation,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except ApiException as e:
@@ -494,7 +497,7 @@ class K8sDeploymentTool(K8sBaseTool):
                 "namespace": namespace,
                 "target_revision": revision,
                 "current_revision": updated_deployment.metadata.generation,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except Exception as e:
@@ -545,7 +548,7 @@ class K8sDeploymentTool(K8sBaseTool):
                 "namespace": namespace,
                 "old_replicas": old_replicas,
                 "new_replicas": replicas,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except ApiException as e:
@@ -620,7 +623,7 @@ class K8sDeploymentTool(K8sBaseTool):
                 "namespace": namespace,
                 "history": history,
                 "total_revisions": len(history),
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except Exception as e:
@@ -659,7 +662,7 @@ class K8sDeploymentTool(K8sBaseTool):
 
             deployment.spec.template.metadata.annotations[
                 "kubectl.kubernetes.io/restartedAt"
-            ] = (datetime.utcnow().isoformat() + "Z")
+            ] = (datetime.now(BEIJING_TZ).isoformat())
 
             # 更新Deployment
             await loop.run_in_executor(
@@ -678,7 +681,7 @@ class K8sDeploymentTool(K8sBaseTool):
                 "restarted_at": deployment.spec.template.metadata.annotations[
                     "kubectl.kubernetes.io/restartedAt"
                 ],
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except ApiException as e:

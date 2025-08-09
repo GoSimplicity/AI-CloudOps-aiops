@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from kubernetes import client
@@ -23,6 +23,9 @@ from kubernetes.client.rest import ApiException
 from app.config.settings import config
 
 logger = logging.getLogger("aiops.kubernetes")
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 class KubernetesService:
@@ -347,7 +350,7 @@ class KubernetesService:
                     "template": {
                         "metadata": {
                             "annotations": {
-                                "kubectl.kubernetes.io/restartedAt": datetime.utcnow().isoformat()
+                                "kubectl.kubernetes.io/restartedAt": datetime.now(BEIJING_TZ).isoformat()
                             }
                         }
                     }

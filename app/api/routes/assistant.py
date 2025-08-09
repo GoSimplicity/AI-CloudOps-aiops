@@ -14,7 +14,7 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional, Union
 
 from fastapi import APIRouter, HTTPException
@@ -24,6 +24,9 @@ from app.models.response_models import APIResponse
 
 # 创建日志器
 logger = logging.getLogger("aiops.api.assistant")
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 # Pydantic模型定义

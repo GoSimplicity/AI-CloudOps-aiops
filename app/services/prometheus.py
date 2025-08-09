@@ -10,7 +10,7 @@ Description: Prometheus服务模块 - 提供监控数据查询、时间序列数
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -19,6 +19,9 @@ import requests
 from app.config.settings import config
 
 logger = logging.getLogger("aiops.prometheus")
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 class PrometheusService:
@@ -68,7 +71,7 @@ class PrometheusService:
                     continue
 
                 timestamps = [
-                    datetime.utcfromtimestamp(float(val[0])) for val in result["values"]
+                    datetime.fromtimestamp(float(val[0])) for val in result["values"]
                 ]
                 values = []
 

@@ -10,7 +10,7 @@ Description: 时间工具模块 - 时间处理工具函数
 """
 
 import calendar
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
@@ -18,12 +18,34 @@ import pandas as pd
 class TimeUtils:
     """时间相关的工具函数"""
 
+    # 北京时区
+    BEIJING_TZ = timezone(timedelta(hours=8))
+    
     # 简化版节假日（仅包含主要节假日）
     HOLIDAYS = {
         "0101": True, "0102": True, "0103": True,  # 元旦
         "0501": True, "0502": True, "0503": True,  # 劳动节
         "1001": True, "1002": True, "1003": True,  # 国庆节
     }
+
+    @classmethod
+    def now_beijing(cls) -> datetime:
+        """获取当前北京时间"""
+        return datetime.now(cls.BEIJING_TZ)
+
+    @classmethod
+    def utc_to_beijing(cls, utc_dt: datetime) -> datetime:
+        """将UTC时间转换为北京时间"""
+        if utc_dt.tzinfo is None:
+            utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+        return utc_dt.astimezone(cls.BEIJING_TZ)
+
+    @classmethod
+    def beijing_to_utc(cls, beijing_dt: datetime) -> datetime:
+        """将北京时间转换为UTC时间"""
+        if beijing_dt.tzinfo is None:
+            beijing_dt = beijing_dt.replace(tzinfo=cls.BEIJING_TZ)
+        return beijing_dt.astimezone(timezone.utc)
 
     @classmethod
     def is_business_hour(cls, timestamp: datetime) -> bool:

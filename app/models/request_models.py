@@ -49,7 +49,8 @@ class RCARequest(BaseModel):
 
         # 如果没有提供时间范围，使用默认值
         if not self.start_time or not self.end_time:
-            tz = timezone.utc
+            # 使用北京时间（UTC+8）
+            tz = timezone(timedelta(hours=8))
             now = datetime.now(tz)
             if self.time_range_minutes:
                 self.end_time = now

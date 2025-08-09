@@ -12,7 +12,7 @@ Description: 自动修复API路由 - 提供Kubernetes问题自动诊断、修复
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -32,6 +32,9 @@ from app.utils.validators import (
 from app.utils.pagination import process_list_with_pagination_and_search
 
 logger = logging.getLogger("aiops.autofix")
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 router = APIRouter(tags=["autofix"])
 
@@ -107,7 +110,7 @@ async def autofix_k8s(request_data: AutoFixRequest):
             deployment=deployment,
             namespace=namespace,
             actions_taken=fix_result.get("actions", []),
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(BEIJING_TZ).isoformat(),
             success=fix_result.get("success", False)
         )
 
@@ -296,7 +299,7 @@ async def autofix_health():
                     "fixer": fixer_healthy,
                     "notifier": notifier_healthy,
                 },
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
                 "service": "autofix",
             },
         ).model_dump()

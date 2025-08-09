@@ -19,11 +19,14 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 import joblib
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import matplotlib.pyplot as plt
 
 # 基本设置
 os.makedirs("models", exist_ok=True)
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 MODEL_PATH = "models/time_qps_auto_scaling_model.pkl"
 SCALER_PATH = "models/time_qps_auto_scaling_scaler.pkl"
 METADATA_PATH = "models/time_qps_auto_scaling_model_metadata.json"
@@ -269,7 +272,7 @@ def train_model():
         model_metadata = {
             "version": "v1.0.0",
             "author": "Bamboo",
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(BEIJING_TZ).isoformat(),
             "features": list(features.columns),
             "target": "instances",
             "algorithm": best_name,

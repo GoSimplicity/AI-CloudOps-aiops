@@ -12,8 +12,11 @@ Description: Kubernetes工具的基类，提供通用的Kubernetes操作功能
 import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 from kubernetes import client, config
 
@@ -64,14 +67,14 @@ class K8sBaseTool(BaseTool):
                 "success": False,
                 "error": "操作超时",
                 "message": f"{self.name}执行时间超过60秒，已中止操作。",
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
         except Exception as e:
             return {
                 "success": False,
                 "error": "执行失败",
                 "message": str(e),
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
     async def _execute_internal(self, parameters: Dict[str, Any]) -> Any:
@@ -85,7 +88,7 @@ class K8sBaseTool(BaseTool):
             return "Unknown"
 
         age = (
-            datetime.utcnow().replace(tzinfo=creation_timestamp.tzinfo)
+            datetime.now(BEIJING_TZ).replace(tzinfo=creation_timestamp.tzinfo)
             - creation_timestamp
         )
         days = age.days

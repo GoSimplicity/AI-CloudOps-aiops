@@ -9,7 +9,7 @@ License: Apache 2.0
 Description: 获取当前时间的MCP工具
 """
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict
 
 from ..mcp_server import BaseTool
@@ -37,8 +37,8 @@ class TimeTool(BaseTool):
                 },
                 "timezone": {
                     "type": "string",
-                    "description": "时区，例如'UTC'、'Asia/Shanghai'，默认为UTC",
-                    "default": "UTC",
+                    "description": "时区，例如'UTC'、'Asia/Shanghai'，默认为Asia/Shanghai",
+                    "default": "Asia/Shanghai",
                 },
             },
             "required": [],
@@ -49,10 +49,21 @@ class TimeTool(BaseTool):
         try:
             # 获取参数
             time_format = parameters.get("format", "iso")
-            timezone_str = parameters.get("timezone", "UTC")
+            timezone_str = parameters.get("timezone", "Asia/Shanghai")
 
-            # 获取当前时间
-            now = datetime.utcnow()
+            # 根据时区获取当前时间
+            if timezone_str == "Asia/Shanghai":
+                # 北京时间 (UTC+8)
+                tz = timezone(timedelta(hours=8))
+                now = datetime.now(tz)
+            elif timezone_str == "UTC":
+                tz = timezone.utc
+                now = datetime.now(tz)
+            else:
+                # 默认使用北京时间
+                tz = timezone(timedelta(hours=8))
+                now = datetime.now(tz)
+                timezone_str = "Asia/Shanghai"
 
             if time_format == "timestamp":
                 # 返回Unix时间戳
@@ -60,9 +71,9 @@ class TimeTool(BaseTool):
             else:
                 # 返回ISO-8601格式
                 return {
-                    "time": now.isoformat() + "Z",
+                    "time": now.isoformat(),
                     "format": "ISO-8601",
-                    "timezone": "UTC",
+                    "timezone": timezone_str,
                 }
 
         except Exception as e:

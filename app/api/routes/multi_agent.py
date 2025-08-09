@@ -11,7 +11,7 @@ Description: 提供多Agent协作的K8s修复API接口
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -27,6 +27,9 @@ from app.utils.validators import (
 from app.utils.pagination import process_list_with_pagination_and_search
 
 logger = logging.getLogger("aiops.multi_agent")
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 router = APIRouter(tags=["multi_agent"])
 
@@ -215,7 +218,7 @@ async def multi_agent_health():
             message="多Agent服务健康检查完成",
             data={
                 "healthy": health_status,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
                 "service": "multi_agent",
             },
         ).model_dump()

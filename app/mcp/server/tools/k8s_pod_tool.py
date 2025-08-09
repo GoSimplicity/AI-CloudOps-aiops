@@ -10,8 +10,11 @@ Description: k8s Pod管理的MCP工具，提供Pod的查看、删除、重启等
 """
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta, timedelta
 from typing import Any, Dict
+
+# 北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 from kubernetes import client
 from kubernetes.client.rest import ApiException
@@ -178,7 +181,7 @@ class K8sPodTool(K8sBaseTool):
                 "operation": "list_pods",
                 "total_count": len(pod_list),
                 "pods": pod_list,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except Exception as e:
@@ -186,7 +189,7 @@ class K8sPodTool(K8sBaseTool):
                 "success": False,
                 "error": "获取Pod列表失败",
                 "message": str(e),
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
     async def _get_pod_details(
@@ -291,7 +294,7 @@ class K8sPodTool(K8sBaseTool):
                 "success": True,
                 "operation": "get_pod_details",
                 "pod_details": pod_details,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except ApiException as e:
@@ -339,7 +342,7 @@ class K8sPodTool(K8sBaseTool):
                 "message": f"Pod {pod_name} 在命名空间 {namespace} 中已成功删除",
                 "pod_name": pod_name,
                 "namespace": namespace,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except ApiException as e:
@@ -420,7 +423,7 @@ class K8sPodTool(K8sBaseTool):
                     {"kind": ref.kind, "name": ref.name, "controller": ref.controller}
                     for ref in owner_refs
                 ],
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except Exception as e:
@@ -443,7 +446,7 @@ class K8sPodTool(K8sBaseTool):
                 }
 
             loop = asyncio.get_event_loop()
-            since_time = datetime.utcnow() - timedelta(hours=time_window_hours)
+            since_time = datetime.now(BEIJING_TZ) - timedelta(hours=time_window_hours)
 
             # 获取命名空间内的所有事件
             events = await loop.run_in_executor(
@@ -502,7 +505,7 @@ class K8sPodTool(K8sBaseTool):
                 "time_window_hours": time_window_hours,
                 "total_events": len(pod_events),
                 "events": pod_events,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
             }
 
         except Exception as e:
