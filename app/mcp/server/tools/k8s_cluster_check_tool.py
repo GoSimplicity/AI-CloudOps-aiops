@@ -16,10 +16,11 @@ from typing import Any, Dict, List, Optional
 
 from kubernetes import client, config
 
+from app.utils.time_utils import iso_utc_now
+
 from .k8s_base_tool import K8sBaseTool
 
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
+UTC_TZ = timezone.utc
 
 
 class K8sClusterCheckTool(K8sBaseTool):
@@ -76,7 +77,7 @@ class K8sClusterCheckTool(K8sBaseTool):
             }
 
         except Exception as e:
-            raise Exception(f"无法加载Kubernetes配置: {str(e)}")
+            raise Exception(f"无法加载Kubernetes配置: {str(e)}") from e
 
     async def _execute_internal(self, parameters: Dict[str, Any]) -> Any:
         """执行工具内部逻辑"""
@@ -144,7 +145,7 @@ class K8sClusterCheckTool(K8sBaseTool):
 
         return {
             "report": report,
-            "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             "status": "success",
         }
 
@@ -253,7 +254,7 @@ class K8sClusterCheckTool(K8sBaseTool):
     ) -> List[Dict[str, Any]]:
         """获取近期重要事件"""
         try:
-            since_time = datetime.now(BEIJING_TZ) - timedelta(hours=time_window)
+            since_time = datetime.now(UTC_TZ) - timedelta(hours=time_window)
             loop = asyncio.get_event_loop()
 
             # 根据命名空间过滤获取事件，进一步限制数量
@@ -413,15 +414,18 @@ class K8sClusterCheckTool(K8sBaseTool):
                     namespace = pod.metadata.namespace
 
                     # 只获取最近的少量日志
+                    def _read_log(name: str, ns: str) -> str:
+                        return v1.read_namespaced_pod_log(
+                            name=name,
+                            namespace=ns,
+                            tail_lines=10,
+                            timestamps=False,
+                            previous=False,
+                        )
+
                     log_content = await loop.run_in_executor(
                         self._executor,
-                        lambda: v1.read_namespaced_pod_log(
-                            name=pod_name,
-                            namespace=namespace,
-                            tail_lines=10,  # 减少行数
-                            timestamps=False,  # 不要时间戳
-                            previous=False,
-                        ),
+                        lambda n=pod_name, ns=namespace: _read_log(n, ns),
                     )
 
                     # 限制日志内容大小
@@ -474,7 +478,7 @@ class K8sClusterCheckTool(K8sBaseTool):
         report_lines = []
         report_lines.append("# Kubernetes集群健康检查报告")
         report_lines.append(
-            f"**检查时间**: {datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M:%S')} UTC"
+            f"**检查时间**: {datetime.now(UTC_TZ).strftime('%Y-%m-%d %H:%M:%S')} UTC"
         )
         if namespace_filter:
             report_lines.append(f"**检查范围**: 命名空间 `{namespace_filter}`")

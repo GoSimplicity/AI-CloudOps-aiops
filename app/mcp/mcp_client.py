@@ -15,8 +15,7 @@ from typing import Any, Dict, List, Union
 
 import aiohttp
 from openai import AsyncOpenAI
-from openai.types.chat import (ChatCompletionSystemMessageParam,
-                               ChatCompletionUserMessageParam)
+from openai.types.chat import ChatCompletionSystemMessageParam, ChatCompletionUserMessageParam
 
 logger = logging.getLogger("aiops.mcp.client")
 
@@ -61,7 +60,7 @@ class MCPSessionClient:
 
         except aiohttp.ClientError as e:
             logger.error(f"MCP客户端网络错误: {str(e)}")
-            raise RuntimeError(f"MCP服务连接失败: {str(e)}")
+            raise RuntimeError(f"MCP服务连接失败: {str(e)}") from e
         except Exception as e:
             logger.error(f"MCP客户端执行异常: {str(e)}")
             raise
@@ -94,7 +93,7 @@ class MCPSessionClient:
                         )
         except aiohttp.ClientError as e:
             logger.error(f"MCP客户端网络错误: {str(e)}")
-            raise RuntimeError(f"MCP服务连接失败: {str(e)}")
+            raise RuntimeError(f"MCP服务连接失败: {str(e)}") from e
         except Exception as e:
             logger.error(f"MCP客户端{operation_name}异常: {str(e)}")
             raise

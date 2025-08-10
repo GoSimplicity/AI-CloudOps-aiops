@@ -113,7 +113,7 @@ class CalculatorTool(BaseTool):
             }
 
         except Exception as e:
-            raise RuntimeError(f"计算失败: {str(e)}")
+            raise RuntimeError(f"计算失败: {str(e)}") from e
 
 
 class StatisticsTool(BaseTool):
@@ -214,7 +214,7 @@ class StatisticsTool(BaseTool):
             return {"numbers": numbers, "statistics": result, "operations": operations}
 
         except Exception as e:
-            raise RuntimeError(f"统计计算失败: {str(e)}")
+            raise RuntimeError(f"统计计算失败: {str(e)}") from e
 
 
 class UnitConverterTool(BaseTool):
@@ -408,4 +408,4 @@ class UnitConverterTool(BaseTool):
             }
 
         except Exception as e:
-            raise RuntimeError(f"单位转换失败: {str(e)}")
+            raise RuntimeError(f"单位转换失败: {str(e)}") from e

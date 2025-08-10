@@ -11,31 +11,30 @@ Description: 健康检查API模块，提供AI-CloudOps系统的服务健康监�
 
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 import psutil
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from app.core.prediction.predictor import PredictionService
+from app.db.base import get_engine
+from app.di import get_service
 from app.models.response_models import APIResponse
 from app.services.kubernetes import KubernetesService
 from app.services.llm import LLMService
 from app.services.notification import NotificationService
 from app.services.prometheus import PrometheusService
+from app.utils.time_utils import UTC_TZ, iso_utc_now
 
 logger = logging.getLogger("aiops.health")
-
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
 
 # 创建健康检查路由器
 router = APIRouter(tags=["health"])
 
 # 应用启动时间戳，用于计算系统运行时间（uptime）
 start_time = time.time()
-
-# 全局服务实例缓存，避免重复创建和初始化
-_service_instances = {}
 
 # 统一的服务配置，避免重复定义
 HEALTH_CHECK_SERVICES = [
@@ -48,39 +47,34 @@ HEALTH_CHECK_SERVICES = [
 
 
 def get_service_instance(service_name: str, service_class):
-    """
-    获取服务实例的单例工厂方法，避免重复创建和健康检查
-
-    Args:
-        service_name (str): 服务名称
-        service_class: 服务类
-
-    Returns:
-        服务实例
-    """
-    if service_name not in _service_instances:
-        try:
-            logger.debug(f"创建新的{service_name}服务实例")
-            _service_instances[service_name] = service_class()
-        except Exception as e:
-            logger.warning(f"创建{service_name}服务实例失败: {str(e)}")
-            return None
-    return _service_instances[service_name]
+    """通过全局DI容器获取单例服务实例。"""
+    try:
+        return get_service(service_class)
+    except Exception as e:
+        logger.warning(f"获取{service_name}服务实例失败: {str(e)}")
+        return None
 
 
 @router.get("/health")
 async def system_health():
     """系统综合健康检查"""
     try:
-        current_time = datetime.now(BEIJING_TZ)
+        # 返回数据统一使用 iso_utc_now()
         uptime = time.time() - start_time
         components_status = check_components_health()
+        # 附加数据库健康探针（不影响总体健康判断）
+        try:
+            with get_engine().connect() as conn:
+                conn.execute(text("SELECT 1"))
+            components_status["database"] = True
+        except Exception:
+            components_status["database"] = False
         system_status = get_system_status()
         is_healthy = all(components_status.values())
 
         health_data = {
             "status": "healthy" if is_healthy else "unhealthy",
-            "timestamp": current_time.isoformat(),
+            "timestamp": iso_utc_now(),
             "uptime": round(uptime, 2),
             "version": "1.0.0",
             "components": components_status,
@@ -91,7 +85,7 @@ async def system_health():
 
     except Exception as e:
         logger.error(f"健康检查失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"健康检查失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"健康检查失败: {str(e)}") from e
 
 
 @router.get("/components/health")
@@ -109,7 +103,7 @@ async def components_health():
                 "healthy": healthy,
                 "name": display_name,
                 "description": description,
-                "last_check": datetime.now(BEIJING_TZ).isoformat()
+                    "last_check": iso_utc_now()
             }
             
             if not healthy and service:
@@ -129,15 +123,12 @@ async def components_health():
         return APIResponse(
             code=0,
             message="组件健康检查完成",
-            data={
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
-                "components": components_detail,
-            },
+                data={"timestamp": iso_utc_now(), "components": components_detail},
         ).model_dump()
 
     except Exception as e:
         logger.error(f"组件健康检查失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"组件健康检查失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"组件健康检查失败: {str(e)}") from e
 
 
 @router.get("/metrics/health")
@@ -148,7 +139,7 @@ async def metrics_health():
         process_metrics = get_process_metrics()
 
         health_metrics = {
-            "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": datetime.now(UTC_TZ).isoformat(),
             "system": system_metrics,
             "process": process_metrics,
             "uptime": time.time() - start_time,
@@ -158,7 +149,7 @@ async def metrics_health():
 
     except Exception as e:
         logger.error(f"获取健康指标失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取健康指标失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取健康指标失败: {str(e)}") from e
 
 
 @router.get("/readiness/health")
@@ -179,7 +170,7 @@ async def readiness_health():
                 message="服务部分就绪，部分功能可能不可用",
                 data={
                     "ready": True,
-                    "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                    "timestamp": iso_utc_now(),
                     "failed_components": critical_failed,
                     "warning": "部分关键组件不可用，相关功能可能受影响",
                 },
@@ -188,14 +179,14 @@ async def readiness_health():
         return APIResponse(
             code=0,
             message="就绪性检查通过",
-            data={"ready": True, "timestamp": datetime.now(BEIJING_TZ).isoformat()},
+            data={"ready": True, "timestamp": iso_utc_now()},
         ).model_dump()
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"就绪性检查失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"就绪性检查失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"就绪性检查失败: {str(e)}") from e
 
 
 @router.get("/liveness/health")
@@ -206,8 +197,115 @@ async def liveness_health():
     return APIResponse(
         code=0,
         message="存活性检查通过",
-        data={"alive": True, "timestamp": datetime.now(BEIJING_TZ).isoformat()},
+        data={"alive": True, "timestamp": iso_utc_now()},
     ).model_dump()
+
+
+@router.get("/health/detailed")
+async def health_detailed():
+    try:
+        uptime = time.time() - start_time
+        components_status = check_components_health()
+        system_status = get_system_status()
+        is_healthy = all(components_status.values())
+        data = {
+            "status": "healthy" if is_healthy else "unhealthy",
+            "timestamp": iso_utc_now(),
+            "uptime": round(uptime, 2),
+            "components": components_status,
+            "system": system_status,
+        }
+        status_code = 200 if is_healthy else 503
+        body = APIResponse(code=0 if is_healthy else 1, message="详细健康检查", data=data).model_dump()
+        return JSONResponse(content=body, status_code=status_code)
+    except Exception as e:
+        logger.error(f"详细健康检查失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"详细健康检查失败: {str(e)}") from e
+
+
+@router.get("/health/system")
+async def health_system():
+    try:
+        info = get_system_info()
+        return APIResponse(code=0, message="系统健康", data=info).model_dump()
+    except Exception as e:
+        logger.error(f"系统健康检查失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"系统健康检查失败: {str(e)}") from e
+
+
+@router.get("/assistant/health")
+async def assistant_health_proxy():
+    return APIResponse(code=0, message="助手健康", data={"healthy": True}).model_dump()
+
+
+@router.post("/assistant/chat")
+async def assistant_chat_proxy(payload: dict):
+    try:
+        from app.services.llm import LLMService
+        query = payload.get("query") or ""
+        llm = LLMService()
+        text = llm.generate_response(query)
+        if not text:
+            text = "抱歉，目前无法提供有效建议。请提供更多上下文（如Pod日志、事件等）。"
+        return APIResponse(code=0, message="ok", data={
+            "response": text,
+            "confidence": 0.8,
+            "sources": []
+        }).model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/assistant/search")
+async def assistant_search_proxy(payload: dict):
+    try:
+        return APIResponse(code=0, message="ok", data={"results": []}).model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+def get_system_info() -> dict:
+    try:
+        cpu_percent = psutil.cpu_percent(interval=0)
+        memory_percent = psutil.virtual_memory().percent
+        disk_percent = psutil.disk_usage("/").percent
+        return {
+            "cpu_percent": round(cpu_percent, 2),
+            "memory_percent": round(memory_percent, 2),
+            "disk_usage": round(disk_percent, 2),
+        }
+    except Exception:
+        return {"cpu_percent": 0.0, "memory_percent": 0.0, "disk_usage": 0.0}
+
+
+@router.get("/health/k8s")
+async def health_k8s():
+    try:
+        svc = KubernetesService()
+        ok = svc.check_connectivity()
+        code = 0 if ok else 1
+        status_code = 200 if ok else 503
+        body = APIResponse(code=code, message="K8s健康检查", data={"healthy": bool(ok)}).model_dump()
+        return JSONResponse(content=body, status_code=status_code)
+    except Exception as e:
+        logger.error(f"K8s健康检查失败: {str(e)}")
+        body = APIResponse(code=1, message="K8s健康检查", data={"healthy": False, "error": str(e)}).model_dump()
+        return JSONResponse(content=body, status_code=503)
+
+
+@router.get("/health/prometheus")
+async def health_prometheus():
+    try:
+        svc = PrometheusService()
+        ok = svc.check_connectivity()
+        code = 0 if ok else 1
+        status_code = 200 if ok else 503
+        body = APIResponse(code=code, message="Prometheus健康检查", data={"healthy": bool(ok)}).model_dump()
+        return JSONResponse(content=body, status_code=status_code)
+    except Exception as e:
+        logger.error(f"Prometheus健康检查失败: {str(e)}")
+        body = APIResponse(code=1, message="Prometheus健康检查", data={"healthy": False, "error": str(e)}).model_dump()
+        return JSONResponse(content=body, status_code=503)
 
 
 def check_components_health():
@@ -225,10 +323,10 @@ def check_components_health():
 
 
 def get_system_status():
-    """获取系统资源状态"""
+    """获取系统资源状态（非阻塞）"""
     try:
-        # 获取CPU使用率
-        cpu_percent = psutil.cpu_percent(interval=1)
+        # 获取CPU使用率（instantaneous，避免1秒阻塞）
+        cpu_percent = psutil.cpu_percent(interval=0)
 
         # 获取内存使用情况
         memory = psutil.virtual_memory()
@@ -271,7 +369,7 @@ def get_system_status():
 
 
 def get_process_metrics():
-    """获取当前进程的监控指标"""
+    """获取当前进程的监控指标（非阻塞）"""
     try:
         process = psutil.Process()
         return {

@@ -12,10 +12,11 @@ Description: 统一错误处理工具
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import wraps
 from typing import Any, Dict, Optional, Tuple, Type, Union
 
+from app.utils.time_utils import iso_utc_now
 
 
 class AICloudOpsError(Exception):
@@ -30,7 +31,7 @@ class AICloudOpsError(Exception):
         self.message = message
         self.error_code = error_code
         self.details = details or {}
-        self.timestamp = datetime.now()
+        self.timestamp = datetime.now(timezone.utc)
         super().__init__(self.message)
 
 
@@ -88,13 +89,13 @@ class ErrorHandler:
         self, error: Exception, context: str
     ) -> Tuple[str, Dict[str, Any]]:
         """记录错误并返回格式化的错误信息"""
-        error_id = f"error_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+        error_id = f"error_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f')}"
         
         error_details = {
             "error_id": error_id,
             "error_type": type(error).__name__,
             "context": context,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": iso_utc_now(),
         }
 
         # 如果是自定义异常，添加额外信息

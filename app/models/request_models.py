@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.config.settings import config
 
-
 # 备注：通用列表请求模型未被当前API使用，移除以减小冗余
 
 
@@ -52,9 +51,8 @@ class RCARequest(BaseModel):
 
         # 如果没有提供时间范围，使用默认值
         if not self.start_time or not self.end_time:
-            # 使用北京时间（UTC+8）
-            tz = timezone(timedelta(hours=8))
-            now = datetime.now(tz)
+            # 使用 UTC
+            now = datetime.now(timezone.utc)
             if self.time_range_minutes:
                 self.end_time = now
                 self.start_time = self.end_time - timedelta(

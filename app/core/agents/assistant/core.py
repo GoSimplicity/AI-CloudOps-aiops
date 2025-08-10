@@ -133,8 +133,8 @@ class AssistantAgent:
         """初始化高级组件"""
         try:
             # 构建高级检索组件
-            from .retrieval.query_rewriter import QueryRewriter
             from .retrieval.document_ranker import DocumentRanker
+            from .retrieval.query_rewriter import QueryRewriter
             self.context_retriever = ContextAwareRetriever(
                 base_retriever=self.vector_store_manager,
                 query_rewriter=QueryRewriter(),
@@ -332,3 +332,17 @@ class AssistantAgent:
             logger.info("助手代理已关闭")
         except Exception as e:
             logger.error(f"关闭助手时出错: {e}")
+
+
+class AssistantCore:
+    def __init__(self):
+        self.agent = AssistantAgent()
+
+    async def process_query(self, query: str, session_id: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        # 简化：调用现有代理获取答案
+        result = await self.agent.get_answer(query, session_id=session_id)
+        return {
+            "response": result.get("answer") if isinstance(result, dict) else result,
+            "confidence": result.get("confidence", 0.8) if isinstance(result, dict) else 0.8,
+            "sources": result.get("sources", []) if isinstance(result, dict) else [],
+        }

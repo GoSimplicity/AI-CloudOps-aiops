@@ -10,7 +10,7 @@ Description: k8s资源操作的MCP工具，提供通用资源操作、标签和�
 """
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 import yaml
@@ -18,10 +18,11 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 from kubernetes.dynamic import DynamicClient
 
+from app.utils.time_utils import iso_utc_now
+
 from .k8s_base_tool import K8sBaseTool
 
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
+UTC_TZ = timezone.utc
 
 
 class K8sResourceTool(K8sBaseTool):
@@ -218,7 +219,7 @@ class K8sResourceTool(K8sBaseTool):
                 "operation": "describe_resource",
                 "resource_type": resource_type,
                 "resource_description": description,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -275,7 +276,7 @@ class K8sResourceTool(K8sBaseTool):
                 "namespace": namespace,
                 "added_labels": labels,
                 "new_labels": updated_resource.metadata.labels or {},
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -334,7 +335,7 @@ class K8sResourceTool(K8sBaseTool):
                 "namespace": namespace,
                 "removed_labels": removed_labels,
                 "new_labels": updated_resource.metadata.labels or {},
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -391,7 +392,7 @@ class K8sResourceTool(K8sBaseTool):
                 "namespace": namespace,
                 "added_annotations": annotations,
                 "new_annotations": updated_resource.metadata.annotations or {},
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -451,7 +452,7 @@ class K8sResourceTool(K8sBaseTool):
                 "namespace": namespace,
                 "removed_annotations": removed_annotations,
                 "new_annotations": updated_resource.metadata.annotations or {},
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -520,7 +521,7 @@ class K8sResourceTool(K8sBaseTool):
                 "message": f"已应用 {len(applied_resources)} 个资源，{len(errors)} 个失败",
                 "applied_resources": applied_resources,
                 "errors": errors,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -569,7 +570,7 @@ class K8sResourceTool(K8sBaseTool):
                 "resource_name": resource_name,
                 "namespace": namespace,
                 "yaml_content": yaml_content,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": datetime.now(UTC_TZ).isoformat(),
             }
 
         except Exception as e:

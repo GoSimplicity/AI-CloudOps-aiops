@@ -16,10 +16,11 @@ from typing import Any, Dict
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
+from app.utils.time_utils import iso_utc_now
+
 from .k8s_base_tool import K8sBaseTool
 
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
+UTC_TZ = timezone.utc
 
 
 class K8sPodTool(K8sBaseTool):
@@ -181,7 +182,7 @@ class K8sPodTool(K8sBaseTool):
                 "operation": "list_pods",
                 "total_count": len(pod_list),
                 "pods": pod_list,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -189,7 +190,7 @@ class K8sPodTool(K8sBaseTool):
                 "success": False,
                 "error": "获取Pod列表失败",
                 "message": str(e),
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": datetime.now(UTC_TZ).isoformat(),
             }
 
     async def _get_pod_details(
@@ -294,7 +295,7 @@ class K8sPodTool(K8sBaseTool):
                 "success": True,
                 "operation": "get_pod_details",
                 "pod_details": pod_details,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -342,7 +343,7 @@ class K8sPodTool(K8sBaseTool):
                 "message": f"Pod {pod_name} 在命名空间 {namespace} 中已成功删除",
                 "pod_name": pod_name,
                 "namespace": namespace,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -423,7 +424,7 @@ class K8sPodTool(K8sBaseTool):
                     {"kind": ref.kind, "name": ref.name, "controller": ref.controller}
                     for ref in owner_refs
                 ],
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -446,7 +447,7 @@ class K8sPodTool(K8sBaseTool):
                 }
 
             loop = asyncio.get_event_loop()
-            since_time = datetime.now(BEIJING_TZ) - timedelta(hours=time_window_hours)
+            since_time = datetime.now(UTC_TZ) - timedelta(hours=time_window_hours)
 
             # 获取命名空间内的所有事件
             events = await loop.run_in_executor(
@@ -505,7 +506,7 @@ class K8sPodTool(K8sBaseTool):
                 "time_window_hours": time_window_hours,
                 "total_events": len(pod_events),
                 "events": pod_events,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:

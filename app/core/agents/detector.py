@@ -10,13 +10,14 @@ Description: 基于真实K8s API的集群状态检测和问题识别Agent
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
+from app.core.agents.detector_helpers import DetectorHelpers
+from app.core.agents.detector_rules import DetectionRules
 from app.services.kubernetes import KubernetesService
 from app.services.prometheus import PrometheusService
-from app.core.agents.detector_rules import DetectionRules
-from app.core.agents.detector_helpers import DetectorHelpers
+from app.utils.time_utils import iso_utc_now
 
 logger = logging.getLogger("aiops.detector")
 
@@ -60,7 +61,7 @@ class K8sDetectorAgent:
             services = await self.k8s_service.get_services(namespace) or []
 
             issues = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": iso_utc_now(),
                 "namespace": namespace,
                 "summary": {
                     "total_issues": 0,
@@ -99,7 +100,7 @@ class K8sDetectorAgent:
 
         except Exception as e:
             logger.error(f"检测问题失败: {str(e)}")
-            return {"error": str(e), "timestamp": datetime.now().isoformat()}
+            return {"error": str(e), "timestamp": iso_utc_now()}
 
     async def detect_deployment_issues(
         self, deployment_name: str, namespace: str
@@ -119,7 +120,7 @@ class K8sDetectorAgent:
             issues = {
                 "deployment": deployment_name,
                 "namespace": namespace,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": iso_utc_now(),
                 "issues": [],
             }
 
@@ -164,7 +165,7 @@ class K8sDetectorAgent:
                                     ),
                                     "message": self._get_issue_message(pod, issue_type),
                                     "details": self._get_pod_details(pod),
-                                    "timestamp": datetime.now().isoformat(),
+                                    "timestamp": iso_utc_now(),
                                 }
                             )
                     except Exception as e:
@@ -225,7 +226,7 @@ class K8sDetectorAgent:
                                 "namespace": resource.get("metadata", {}).get("namespace"),
                                 "message": message_func(resource, issue_type),
                                 "details": details_func(resource),
-                                "timestamp": datetime.now().isoformat(),
+                                "timestamp": iso_utc_now(),
                             })
                     except Exception as e:
                         logger.warning(f"检测{resource_type}问题类型 {issue_type} 失败: {str(e)}")
@@ -299,7 +300,7 @@ class K8sDetectorAgent:
         creation_time = pod.get("metadata", {}).get("creation_timestamp")
         if creation_time:
             creation_dt = datetime.fromisoformat(creation_time.replace("Z", "+00:00"))
-            return datetime.now(creation_dt.tzinfo) - creation_dt > timedelta(minutes=5)
+            return datetime.now(timezone.utc).replace(tzinfo=creation_dt.tzinfo) - creation_dt > timedelta(minutes=5)
         return False
 
     def _has_replica_mismatch(self, deployment: Dict[str, Any]) -> bool:
@@ -423,7 +424,7 @@ class K8sDetectorAgent:
             )
 
             return {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": iso_utc_now(),
                 "namespace": namespace,
                 "nodes": len(nodes),
                 "deployments": {
@@ -437,3 +438,11 @@ class K8sDetectorAgent:
         except Exception as e:
             logger.error(f"获取集群概览失败: {str(e)}")
             return {"error": str(e)}
+
+
+class Detector:
+    def __init__(self):
+        self.agent = K8sDetectorAgent()
+
+    async def diagnose(self, namespace: str = "default"):
+        return await self.agent.get_cluster_overview(namespace=namespace)

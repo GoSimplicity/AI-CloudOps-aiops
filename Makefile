@@ -29,10 +29,12 @@ lint:
 	. .venv/bin/activate && ruff check .
 
 fmt:
-	. .venv/bin/activate && ruff check --fix .
+	. .venv/bin/activate && ruff check --fix . && ruff format .
 
 clean:
-	rm -rf __pycache__ .pytest_cache .ruff_cache logs/*
+	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+	find . -name "*.pyc" -delete 2>/dev/null || true
+	rm -rf .pytest_cache .ruff_cache logs/* data/.DS_Store || true
 
 k8s-apply:
 	kubectl apply -f deploy/kubernetes/app.yaml

@@ -11,10 +11,10 @@ Description: 提供统一的验证能力（就绪率、事件、指标）
 
 import asyncio
 import logging
-from datetime import datetime
 from typing import Any, Dict, List
 
 from app.services.kubernetes import KubernetesService
+from app.utils.time_utils import iso_utc_now
 
 logger = logging.getLogger("aiops.verifier")
 
@@ -68,7 +68,7 @@ class K8sVerifierAgent:
                 "total_pods": total,
                 "success_rate": round(success_rate * 100, 2),
                 "not_ready_pods": not_ready_pods[:10],
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:

@@ -9,11 +9,13 @@ License: Apache 2.0
 Description: 中间件模块初始化文件，配置CORS和错误处理中间件
 """
 
+from fastapi import FastAPI
+
 from .cors import setup_cors
 from .error_handler import setup_error_handlers
 
 
-def register_middleware(app):
+def register_middleware(app: FastAPI) -> None:
     """注册所有中间件"""
     setup_cors(app)
     setup_error_handlers(app)

@@ -19,6 +19,7 @@ from app.api.middleware import register_middleware
 from app.api.routes import register_routes
 from app.config.logging import setup_logging
 from app.config.settings import config
+from app.db import init_engine_and_session
 
 start_time = time.time()
 
@@ -30,6 +31,11 @@ async def lifespan(app: FastAPI):
     startup_time = time.time() - start_time
     logger.info(f"AIOps平台启动完成，耗时: {startup_time:.2f}秒")
     logger.info(f"服务地址: http://{config.host}:{config.port}")
+    # 在启动阶段预热数据库连接（失败不阻塞）
+    try:
+        init_engine_and_session()
+    except Exception:
+        pass
     
     yield
     

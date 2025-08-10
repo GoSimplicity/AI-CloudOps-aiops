@@ -11,20 +11,23 @@ Description: 负载预测API路由 - 提供统一的预测接口与趋势分析�
 
 import asyncio
 import logging
+import math
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, HTTPException
 
-from app.core.prediction.predictor import PredictionService
+from app.core.prediction.predictor import PredictionService, Predictor
+from app.db.base import session_scope
+from app.db.models import PredictionRecord
 from app.models.request_models import PredictionRequest
 from app.models.response_models import APIResponse, PredictionResponse
+from app.utils.time_utils import iso_utc_now
 from app.utils.validators import validate_qps
 
 logger = logging.getLogger("aiops.predict")
 
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
+
 
 router = APIRouter(tags=["prediction"])
 
@@ -62,7 +65,7 @@ async def _predict_internal(
             effective_qps = prom_qps
 
     # 执行预测
-    prediction_result = await prediction_service.predict(
+    prediction_result = await prediction_service.predict_async(
         current_qps=effective_qps,
         timestamp=timestamp,
         metric=metric,
@@ -80,6 +83,28 @@ async def _predict_internal(
         features=prediction_result.get("features"),
         schedule={"interval_minutes": interval_minutes} if interval_minutes else None,
     )
+    # 持久化预测请求与结果
+    try:
+        with session_scope() as session:
+            session.add(
+                PredictionRecord(
+                    current_qps=effective_qps,
+                    input_timestamp=(timestamp.isoformat() if timestamp else None),
+                    use_prom=use_prom,
+                    metric=metric,
+                    selector=selector,
+                    window=window,
+                    instances=response.instances,
+                    confidence=response.confidence,
+                    model_version=response.model_version,
+                    prediction_type=response.prediction_type,
+                    features=str(response.features) if response.features else None,
+                    schedule_interval_minutes=(interval_minutes if interval_minutes else None),
+                )
+            )
+    except Exception:
+        pass
+
     return APIResponse(code=0, message="预测成功", data=response.model_dump()).model_dump()
 
 
@@ -90,29 +115,94 @@ async def _predict_internal(
 
 
 @router.post("/predict")
-async def predict_post(request_data: PredictionRequest):
-    """统一预测接口（POST）"""
+async def predict_post(request_data: Dict[str, Any] = Body(..., description="预测请求参数")):
+    """统一预测接口（POST），兼容简化格式与原有格式"""
     try:
-        return await _predict_internal(
-            current_qps=request_data.current_qps,
-            timestamp=request_data.timestamp,
-            use_prom=getattr(request_data, "use_prom", False),
-            metric=getattr(request_data, "metric", None),
-            selector=getattr(request_data, "selector", None),
-            window=getattr(request_data, "window", "1m") or "1m",
-            interval_minutes=getattr(request_data, "interval_minutes", None),
-        )
+        # 优先识别原有/增强格式（基于current_qps/use_prom等字段）
+        recognized_keys = {
+            "current_qps", "timestamp", "include_confidence", "use_prom",
+            "metric", "selector", "window", "interval_minutes"
+        }
+        if set(request_data.keys()) & recognized_keys:
+            try:
+                pr = PredictionRequest(**request_data)
+            except Exception as ex:
+                raise HTTPException(status_code=422, detail="无效的请求参数") from ex
+            return await _predict_internal(
+                current_qps=pr.current_qps,
+                timestamp=pr.timestamp,
+                use_prom=pr.use_prom,
+                metric=pr.metric,
+                selector=pr.selector,
+                window=pr.window or "1m",
+                interval_minutes=pr.interval_minutes,
+            )
+
+        # 简化格式：必须包含 namespace、deployment、duration_minutes
+        if "namespace" in request_data or "deployment" in request_data:
+            namespace = (request_data.get("namespace") or "").strip()
+            deployment = (request_data.get("deployment") or "").strip()
+            duration = request_data.get("duration_minutes")
+            if not namespace or not deployment or not isinstance(duration, int) or duration <= 0:
+                raise HTTPException(status_code=422, detail="无效的参数：需要 namespace、deployment、duration_minutes>0")
+            # 使用Prometheus工作负载指标估算当前QPS（通过同步API，便于测试mock）
+            try:
+                from app.services.prometheus import PrometheusService
+                selector = f'namespace="{namespace}",deployment="{deployment}"'
+                promql = f"sum(rate(http_requests_total{{{selector}}}[1m]))"
+                end_dt = datetime.now(timezone.utc)
+                start_dt = end_dt - timedelta(minutes=duration)
+                prom = PrometheusService()
+                result = prom.query_range(
+                    query=promql,
+                    start=str(int(start_dt.timestamp())),
+                    end=str(int(end_dt.timestamp())),
+                    step="60"
+                )
+                values = []
+                if isinstance(result, dict):
+                    data = result.get("data", {})
+                    series = data.get("result", [])
+                    if isinstance(series, list) and series:
+                        first = series[0]
+                        seq = first.get("values", []) if isinstance(first, dict) else []
+                        for item in seq:
+                            try:
+                                _, v = item
+                                values.append(float(v))
+                            except Exception:
+                                continue
+                avg_qps = float(sum(values) / len(values)) if values else 0.0
+            except Exception:
+                avg_qps = 0.0
+            replicas = max(1, math.ceil(avg_qps / 30.0))
+            return APIResponse(code=0, message="预测成功", data={
+                "predicted_replicas": int(replicas),
+                "confidence": 0.6 if avg_qps > 1 else 0.3,
+                "average_qps": avg_qps
+            }).model_dump()
+
+        # 其他情况：参数无法识别
+        raise HTTPException(status_code=422, detail="无效的请求参数")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"POST预测失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"预测失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"预测失败: {str(e)}") from e
 
 
- 
-
-
- 
+@router.get("/predict")
+async def predict_get(namespace: str, deployment: str, duration_minutes: int):
+    try:
+        if not namespace or not deployment or duration_minutes <= 0:
+            raise HTTPException(status_code=422, detail="无效的参数")
+        res = Predictor().predict(namespace=namespace, deployment=deployment, duration_minutes=duration_minutes)
+        return APIResponse(code=0, message="预测成功", data=res).model_dump()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"GET预测失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"预测失败: {str(e)}") from e
 
 
 @router.post("/models/reload")
@@ -131,7 +221,7 @@ async def reload_models():
                 code=0,
                 message="模型重载成功",
                 data={
-                    "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                    "timestamp": iso_utc_now(),
                     "models_reloaded": True,
                 },
             ).model_dump()
@@ -140,14 +230,14 @@ async def reload_models():
                 code=500,
                 message="模型重载失败",
                 data={
-                    "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                    "timestamp": iso_utc_now(),
                     "models_reloaded": False,
                 },
             ).model_dump()
 
     except Exception as e:
         logger.error(f"模型重载失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"模型重载失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"模型重载失败: {str(e)}") from e
 
 
 @router.get("/models/info")
@@ -167,7 +257,7 @@ async def get_model_info():
 
     except Exception as e:
         logger.error(f"获取模型信息失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取模型信息失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取模型信息失败: {str(e)}") from e
 
 
 @router.get("/predict/health")
@@ -184,14 +274,14 @@ async def predict_health():
             message="预测服务健康检查完成",
             data={
                 "healthy": health_status,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": iso_utc_now(),
                 "service": "prediction",
             },
         ).model_dump()
 
     except Exception as e:
         logger.error(f"预测服务健康检查失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"预测服务健康检查失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"预测服务健康检查失败: {str(e)}") from e
 
 
  
@@ -232,7 +322,34 @@ async def trend_post(request_data: dict = Body(..., description="趋势预测请
         raise
     except Exception as e:
         logger.error(f"POST趋势预测失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"趋势预测失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"趋势预测失败: {str(e)}") from e
+
+
+@router.get("/predict/trend")
+async def predict_trend_get(namespace: Optional[str] = None, deployment: Optional[str] = None, metric: Optional[str] = None, hours: int = 24):
+    try:
+        result = await prediction_service.predict_trend(
+            hours_ahead=hours,
+            current_qps=None,
+            metric=metric,
+            selector=None,
+            window="1m",
+        )
+        return APIResponse(code=0, message="趋势预测成功", data=result).model_dump()
+    except Exception as e:
+        logger.error(f"趋势预测失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"趋势预测失败: {str(e)}") from e
+
+
+@router.get("/predict/model/info")
+async def predict_model_info():
+    try:
+        predictor = Predictor()
+        info = predictor.get_model_info()
+        return APIResponse(code=0, message="模型信息获取成功", data=info).model_dump()
+    except Exception as e:
+        logger.error(f"获取模型信息失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取模型信息失败: {str(e)}") from e
 
 
 @router.get("/predict/model/validate")
@@ -257,4 +374,4 @@ async def validate_model():
         ).model_dump()
     except Exception as e:
         logger.error(f"模型验证失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"模型验证失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"模型验证失败: {str(e)}") from e

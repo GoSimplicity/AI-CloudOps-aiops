@@ -10,10 +10,10 @@ Description: 提供最小可行的回滚能力（重启/撤销补丁/缩容）
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Dict
 
 from app.services.kubernetes import KubernetesService
+from app.utils.time_utils import iso_utc_now
 
 logger = logging.getLogger("aiops.rollback")
 
@@ -37,7 +37,7 @@ class K8sRollbackAgent:
                     "template": {
                         "metadata": {
                             "annotations": {
-                                "aiops.rollbackAt": datetime.now().isoformat(),
+                            "aiops.rollbackAt": iso_utc_now(),
                                 "aiops.rollbackReason": reason or "verification_failed",
                             }
                         }

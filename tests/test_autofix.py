@@ -9,16 +9,17 @@ License: Apache 2.0
 Description: Kubernetes自动修复功能测试脚本，验证AI驱动的自动修复功能
 """
 
-import requests
 import json
-import time
-import subprocess
-from datetime import datetime, timezone, timedelta
 import logging
+import subprocess
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
+import requests
+
 # 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
+UTC_TZ = timezone.utc
 
 # 配置日志
 logging.basicConfig(
@@ -495,7 +496,7 @@ def main():
 
     # 初始化测试结果
     results = {
-        "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+        "timestamp": datetime.now(UTC_TZ).isoformat(),
         "results": {},
         "environment_setup": False,
     }

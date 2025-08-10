@@ -73,7 +73,7 @@ class FileReadTool(BaseTool):
             }
 
         except Exception as e:
-            raise RuntimeError(f"读取文件失败: {str(e)}")
+            raise RuntimeError(f"读取文件失败: {str(e)}") from e
 
 
 class FileListTool(BaseTool):
@@ -138,7 +138,7 @@ class FileListTool(BaseTool):
             }
 
         except Exception as e:
-            raise RuntimeError(f"列出目录失败: {str(e)}")
+            raise RuntimeError(f"列出目录失败: {str(e)}") from e
 
 
 class FileStatsTool(BaseTool):
@@ -199,4 +199,4 @@ class FileStatsTool(BaseTool):
             return result
 
         except Exception as e:
-            raise RuntimeError(f"获取文件统计信息失败: {str(e)}")
+            raise RuntimeError(f"获取文件统计信息失败: {str(e)}") from e

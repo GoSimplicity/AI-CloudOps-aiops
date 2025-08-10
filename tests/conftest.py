@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import pytest
 import warnings
+from typing import Any
+
+import pytest
 import requests
 from fastapi.testclient import TestClient
-from typing import Any
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _silence_test_warnings():
     """全局抑制测试中的已知非功能性警告。

@@ -9,11 +9,12 @@ License: Apache 2.0
 Description: 应用程序配置管理模块
 """
 
-import os
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote_plus
 
 import yaml
 from dotenv import load_dotenv
@@ -362,6 +363,47 @@ class RedisConfig:
 
 
 @dataclass
+class DatabaseConfig:
+    """MySQL 数据库配置"""
+    host: str = field(
+        default_factory=lambda: get_env_or_config("DB_HOST", "database.host", "localhost")
+    )
+    port: int = field(
+        default_factory=lambda: get_env_or_config("DB_PORT", "database.port", 3306, int)
+    )
+    username: str = field(
+        default_factory=lambda: get_env_or_config("DB_USERNAME", "database.username", "root")
+    )
+    password: str = field(
+        default_factory=lambda: get_env_or_config("DB_PASSWORD", "database.password", "root")
+    )
+    name: str = field(
+        default_factory=lambda: get_env_or_config("DB_NAME", "database.name", "cloudops")
+    )
+    echo: bool = field(
+        default_factory=lambda: get_env_or_config("DB_ECHO", "database.echo", False, bool)
+    )
+    pool_size: int = field(
+        default_factory=lambda: get_env_or_config("DB_POOL_SIZE", "database.pool_size", 5, int)
+    )
+    max_overflow: int = field(
+        default_factory=lambda: get_env_or_config("DB_MAX_OVERFLOW", "database.max_overflow", 10, int)
+    )
+    pool_recycle: int = field(
+        default_factory=lambda: get_env_or_config("DB_POOL_RECYCLE", "database.pool_recycle", 1800, int)
+    )
+
+    @property
+    def sqlalchemy_url(self) -> str:
+        # 使用 PyMySQL 驱动，注意不影响已有主平台表，仅创建 cl_aiops_ 前缀表
+        # 为兼容特殊字符，用户名与密码进行URL编码
+        user = quote_plus(str(self.username or ""))
+        pwd = quote_plus(str(self.password or ""))
+        return (
+            f"mysql+pymysql://{user}:{pwd}@{self.host}:{self.port}/{self.name}?charset=utf8mb4"
+        )
+
+@dataclass
 class RAGConfig:
     """RAG配置"""
     vector_db_path: str = field(
@@ -445,6 +487,7 @@ class AppConfig:
     prediction: PredictionConfig = field(default_factory=PredictionConfig)
     notification: NotificationConfig = field(default_factory=NotificationConfig)
     redis: RedisConfig = field(default_factory=RedisConfig)
+    database: DatabaseConfig = field(default_factory=DatabaseConfig)
     rag: RAGConfig = field(default_factory=RAGConfig)
     tavily: TavilyConfig = field(default_factory=TavilyConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)

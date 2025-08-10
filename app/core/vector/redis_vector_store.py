@@ -269,26 +269,38 @@ class VectorStoreManager:
     def _initialize_redis(self):
         """初始化Redis连接"""
         try:
-            # 简化的Redis配置
+            # 读取全局配置，支持密码
+            try:
+                from app.config.settings import config as app_config
+                host = getattr(app_config.redis, "host", "localhost")
+                port = int(getattr(app_config.redis, "port", 6379))
+                db = int(getattr(app_config.redis, "db", 0))
+                password = getattr(app_config.redis, "password", None)
+                socket_timeout = float(getattr(app_config.redis, "socket_timeout", 5.0))
+            except Exception:
+                host, port, db, password, socket_timeout = "localhost", 6379, 0, None, 5.0
+
             self.redis_client = redis.Redis(
-                host='localhost',
-                port=6379,
+                host=host,
+                port=port,
+                db=db,
+                password=password,
                 decode_responses=False,
-                socket_timeout=5.0,
-                socket_connect_timeout=5.0
+                socket_timeout=socket_timeout,
+                socket_connect_timeout=socket_timeout,
             )
-            
+
             # 测试连接
             self.redis_client.ping()
-            
+
             self.vector_store = RedisVectorStore(
                 self.redis_client,
                 self.collection_name,
-                self.embedding_model
+                self.embedding_model,
             )
-            
+
             logger.info("Redis向量存储管理器初始化成功")
-            
+
         except Exception as e:
             logger.error(f"Redis连接失败: {e}")
             raise

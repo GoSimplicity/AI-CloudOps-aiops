@@ -10,8 +10,8 @@ Description: Prometheus服务模块 - 提供监控数据查询、时间序列数
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import requests
@@ -20,9 +20,6 @@ from app.config.settings import config
 
 logger = logging.getLogger("aiops.prometheus")
 
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
-
 
 class PrometheusService:
     def __init__(self):
@@ -30,10 +27,43 @@ class PrometheusService:
         self.timeout = config.prometheus.timeout
         logger.info(f"初始化Prometheus服务: {self.base_url}")
 
-    async def query_range(
+    # 新增：同步健康检查，供单元测试使用
+    def check_connectivity(self) -> bool:
+        try:
+            url = f"{self.base_url}/api/v1/labels"
+            response = requests.get(url, timeout=5)
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"Prometheus连通性检查失败: {str(e)}")
+            return False
+
+    # 新增：同步即时查询，供单元测试使用
+    def query(self, query: str) -> Optional[Dict[str, Any]]:
+        try:
+            url = f"{self.base_url}/api/v1/query"
+            resp = requests.get(url, params={"query": query}, timeout=self.timeout)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Prometheus同步查询失败: {str(e)}")
+            return None
+
+    # 新增：同步范围查询，供单元测试使用
+    def query_range(self, query: str, start: str, end: str, step: str = "1m") -> Optional[Dict[str, Any]]:
+        try:
+            url = f"{self.base_url}/api/v1/query_range"
+            params = {"query": query, "start": start, "end": end, "step": step}
+            resp = requests.get(url, params=params, timeout=self.timeout)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Prometheus同步范围查询失败: {str(e)}")
+            return None
+
+    async def query_range_async(
         self, query: str, start_time: datetime, end_time: datetime, step: str = "1m"
     ) -> Optional[pd.DataFrame]:
-        """查询Prometheus范围数据"""
+        """查询Prometheus范围数据（异步）"""
         try:
             url = f"{self.base_url}/api/v1/query_range"
             params = {
@@ -125,10 +155,10 @@ class PrometheusService:
             logger.error(f"查询Prometheus失败: {str(e)}", exc_info=True)
             return None
 
-    async def query_instant(
+    async def query_instant_async(
         self, query: str, timestamp: Optional[datetime] = None
     ) -> Optional[List[Dict]]:
-        """查询Prometheus即时数据"""
+        """查询Prometheus即时数据（异步）"""
         try:
             url = f"{self.base_url}/api/v1/query"
             params = {"query": query}
@@ -181,5 +211,17 @@ class PrometheusService:
         except Exception as e:
             logger.error(f"Prometheus健康检查失败: {str(e)}")
             return False
+
+    def get_metric_labels(self, metric: str) -> List[str]:
+        """获取指定指标的标签列表（简化实现）。"""
+        try:
+            result = self.query(metric)
+            if isinstance(result, dict) and result.get("status") == "success":
+                data = result.get("data")
+                if isinstance(data, list):
+                    return data
+            return []
+        except Exception:
+            return []
 
     # 指标元数据接口暂未被使用，删除以减少冗余

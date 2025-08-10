@@ -10,11 +10,11 @@ Description: 基于检测结果制定最优修复策略的Agent
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from app.services.llm import LLMService
 from app.core.agents.fix_registry import FixRegistry
+from app.services.llm import LLMService
+from app.utils.time_utils import iso_utc_now
 
 logger = logging.getLogger("aiops.strategist")
 
@@ -82,7 +82,7 @@ class K8sStrategistAgent:
                 return {"error": issues["error"]}
 
             strategy = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": iso_utc_now(),
                 "summary": {
                     "total_issues": issues["summary"]["total_issues"],
                     "fixable_issues": 0,

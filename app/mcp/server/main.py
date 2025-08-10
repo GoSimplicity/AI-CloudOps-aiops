@@ -32,11 +32,11 @@ try:
     responses_module = importlib.import_module("fastapi.responses")
     cors_module = importlib.import_module("fastapi.middleware.cors")
 
-    FastAPI = getattr(fastapi_module, "FastAPI")
-    HTTPException = getattr(fastapi_module, "HTTPException")
-    Request = getattr(fastapi_module, "Request")
-    StreamingResponse = getattr(responses_module, "StreamingResponse")
-    CORSMiddleware = getattr(cors_module, "CORSMiddleware")
+    FastAPI = fastapi_module.FastAPI
+    HTTPException = fastapi_module.HTTPException
+    Request = fastapi_module.Request
+    StreamingResponse = responses_module.StreamingResponse
+    CORSMiddleware = cors_module.CORSMiddleware
 except Exception as e:
     logging.error(f"缺少FastAPI依赖: {e}. 请安装 'fastapi' 和 'uvicorn' 包。")
     raise

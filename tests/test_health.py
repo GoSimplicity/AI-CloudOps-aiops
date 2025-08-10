@@ -9,11 +9,12 @@ License: Apache 2.0
 Description: 健康检查模块测试，验证系统健康状态和组件可用性
 """
 
-import os
-import sys
-import pytest
 import json
 import logging
+import os
+import sys
+
+import pytest
 
 # 添加项目路径到sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

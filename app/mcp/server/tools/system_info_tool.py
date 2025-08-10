@@ -104,4 +104,4 @@ class SystemInfoTool(BaseTool):
             return result
 
         except Exception as e:
-            raise RuntimeError(f"获取系统信息失败: {str(e)}")
+            raise RuntimeError(f"获取系统信息失败: {str(e)}") from e

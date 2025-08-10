@@ -5,7 +5,7 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV APP_MODULE=app.main:app
 ENV PIP_DEFAULT_TIMEOUT=100
-ENV TZ=Asia/Shanghai
+ENV TZ=UTC
 ENV ENV=production
 
 # 设置工作目录
@@ -23,10 +23,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY . .
 
 # 创建必要的目录
-RUN mkdir -p data/models data/sample logs config
+RUN mkdir -p data/models data/vector_db data/knowledge_base logs config
 
 FROM python:3.11-slim
-ENV TZ=Asia/Shanghai
+ENV TZ=UTC
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV APP_MODULE=app.main:app

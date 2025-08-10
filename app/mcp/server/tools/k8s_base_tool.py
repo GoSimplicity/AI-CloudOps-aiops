@@ -12,15 +12,16 @@ Description: Kubernetes工具的基类，提供通用的Kubernetes操作功能
 import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from kubernetes import client, config
 
+from app.utils.time_utils import iso_utc_now
+
 from ..mcp_server import BaseTool
 
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
+UTC_TZ = timezone.utc
 
 
 class K8sBaseTool(BaseTool):
@@ -50,7 +51,7 @@ class K8sBaseTool(BaseTool):
             return self._api_clients
 
         except Exception as e:
-            raise Exception(f"无法加载Kubernetes配置: {str(e)}")
+            raise Exception(f"无法加载Kubernetes配置: {str(e)}") from e
 
     def _create_api_clients(self) -> Dict[str, client.ApiClient]:
         """子类重写此方法来创建特定的API客户端"""
@@ -67,14 +68,14 @@ class K8sBaseTool(BaseTool):
                 "success": False,
                 "error": "操作超时",
                 "message": f"{self.name}执行时间超过60秒，已中止操作。",
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": iso_utc_now(),
             }
         except Exception as e:
             return {
                 "success": False,
                 "error": "执行失败",
                 "message": str(e),
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": iso_utc_now(),
             }
 
     async def _execute_internal(self, parameters: Dict[str, Any]) -> Any:
@@ -87,10 +88,8 @@ class K8sBaseTool(BaseTool):
         if not creation_timestamp:
             return "Unknown"
 
-        age = (
-            datetime.now(BEIJING_TZ).replace(tzinfo=creation_timestamp.tzinfo)
-            - creation_timestamp
-        )
+        # 使用 UTC 计算年龄
+        age = (datetime.now(UTC_TZ).replace(tzinfo=creation_timestamp.tzinfo) - creation_timestamp)
         days = age.days
         hours, remainder = divmod(age.seconds, 3600)
         minutes, _ = divmod(remainder, 60)

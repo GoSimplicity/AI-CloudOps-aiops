@@ -9,13 +9,13 @@ License: Apache 2.0
 Description: 根因分析API路由 - 提供异常检测、相关性分析和根本原因识别功能
 """
 
-import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import datetime
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from app.config.settings import config
 from app.core.rca.analyzer import RCAAnalyzer
@@ -23,16 +23,18 @@ from app.core.rca.collectors.k8s_state_collector import K8sStateCollector
 from app.core.rca.correlator import CorrelationAnalyzer
 from app.core.rca.jobs.job_manager import RCAJobManager
 from app.core.rca.topology.graph import build_topology_from_state
+from app.db.base import session_scope
+from app.db.models import RCAAnalysisRecord, utcnow
 from app.models.request_models import RCARequest
 from app.models.response_models import APIResponse, PaginatedListAPIResponse
 from app.services.prometheus import PrometheusService
 from app.utils.pagination import process_list_with_pagination_and_search
+from app.utils.time_utils import iso_utc_now
 from app.utils.validators import validate_metric_list, validate_time_range
 
 logger = logging.getLogger("aiops.rca")
 
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
+
 
 router = APIRouter(tags=["rca"])
 
@@ -101,7 +103,24 @@ async def create_root_cause_analysis(request_data: RCARequest):
             )
         except Exception as analysis_error:
             logger.error(f"根因分析执行失败: {str(analysis_error)}")
-            raise HTTPException(status_code=500, detail="根因分析执行失败")
+            raise HTTPException(status_code=500, detail="根因分析执行失败") from analysis_error
+
+        # 成功后记录分析摘要到数据库（不影响返回）
+        try:
+            with session_scope() as session:
+                session.add(
+                    RCAAnalysisRecord(
+                        start_time=request_data.start_time.isoformat(),
+                        end_time=request_data.end_time.isoformat(),
+                        metrics=",".join(request_data.metrics) if request_data.metrics else None,
+                        namespace=request_data.namespace,
+                        service_name=request_data.service_name,
+                        status="ok",
+                        summary=(analysis_result.get("summary") if isinstance(analysis_result, dict) else None),
+                    )
+                )
+        except Exception:
+            pass
 
         return APIResponse(
             code=0, message="根因分析完成", data=analysis_result
@@ -111,7 +130,7 @@ async def create_root_cause_analysis(request_data: RCARequest):
         raise
     except Exception as e:
         logger.error(f"根因分析请求处理失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"根因分析失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"根因分析失败: {str(e)}") from e
 
 
 # 仅保留 RESTful 新接口
@@ -152,8 +171,8 @@ async def create_rca_job(request_data: RCAJobRequest):
                 "job_id": job_id,
                 "flags": {
                     "request_override": config.rca.request_override,
-                    "logs_enabled": getattr(config, "logs").enabled,
-                    "tracing_enabled": getattr(config, "tracing").enabled,
+                    "logs_enabled": config.logs.enabled,
+                    "tracing_enabled": config.tracing.enabled,
                 },
             },
         ).model_dump()
@@ -161,7 +180,7 @@ async def create_rca_job(request_data: RCAJobRequest):
         raise
     except Exception as e:
         logger.error(f"提交RCA任务失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"提交任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"提交任务失败: {str(e)}") from e
 
 
 @router.get(
@@ -183,15 +202,15 @@ async def get_job_detail(job_id: str = Path(..., description="RCA任务ID")):
         payload = dict(doc)
         payload["flags"] = {
             "request_override": config.rca.request_override,
-            "logs_enabled": getattr(config, "logs").enabled,
-            "tracing_enabled": getattr(config, "tracing").enabled,
+            "logs_enabled": config.logs.enabled,
+            "tracing_enabled": config.tracing.enabled,
         }
         return APIResponse(code=0, message="ok", data=payload).model_dump()
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"查询RCA任务失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"查询任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"查询任务失败: {str(e)}") from e
 
 
 @router.get(
@@ -213,14 +232,14 @@ async def list_available_metrics():
                 "available_metrics": metrics,
                 "flags": {
                     "request_override": config.rca.request_override,
-                    "logs_enabled": getattr(config, "logs").enabled,
-                    "tracing_enabled": getattr(config, "tracing").enabled,
+                    "logs_enabled": config.logs.enabled,
+                    "tracing_enabled": config.tracing.enabled,
                 },
             },
         ).model_dump()
     except Exception as e:
         logger.error(f"获取可用指标失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取可用指标失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取可用指标失败: {str(e)}") from e
 
 
 @router.get(
@@ -242,7 +261,7 @@ async def list_topology(
         collector = K8sStateCollector(namespace=namespace)
         state = await collector.snapshot()
         graph = build_topology_from_state(state)
-        topo = graph.to_dict()
+        topo = graph.get_graph_data() if hasattr(graph, "get_graph_data") else graph.to_dict()
         impact: Optional[list] = None
         if source:
             try:
@@ -265,14 +284,14 @@ async def list_topology(
                 "impact_scope": impact,
                 "flags": {
                     "request_override": config.rca.request_override,
-                    "logs_enabled": getattr(config, "logs").enabled,
-                    "tracing_enabled": getattr(config, "tracing").enabled,
+                    "logs_enabled": config.logs.enabled,
+                    "tracing_enabled": config.tracing.enabled,
                 },
             },
         ).model_dump()
     except Exception as e:
         logger.error(f"获取拓扑失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取拓扑失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取拓扑失败: {str(e)}") from e
 
 
 @router.post(
@@ -325,7 +344,7 @@ async def create_anomaly_detection(
         raise
     except Exception as e:
         logger.error(f"异常检测失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"异常检测失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"异常检测失败: {str(e)}") from e
 
 
 @router.post(
@@ -376,7 +395,7 @@ async def create_correlation_analysis(
         raise
     except Exception as e:
         logger.error(f"相关性分析失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"相关性分析失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"相关性分析失败: {str(e)}") from e
 
 
 class CrossCorrelationRequest(BaseModel):
@@ -415,7 +434,7 @@ async def create_cross_correlation(req: CrossCorrelationRequest):
         raise
     except Exception as e:
         logger.error(f"跨时滞相关分析失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"跨时滞相关分析失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"跨时滞相关分析失败: {str(e)}") from e
 
 
 @router.post(
@@ -458,7 +477,7 @@ async def create_timeline(
         raise
     except Exception as e:
         logger.error(f"事件时间线生成失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"事件时间线生成失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"事件时间线生成失败: {str(e)}") from e
 
 
 @router.get(
@@ -471,6 +490,10 @@ async def list_analysis_history(
     page: Optional[int] = Query(1, description="页码（从1开始）"),
     size: Optional[int] = Query(20, description="每页大小"),
     search: Optional[str] = Query(None, description="搜索关键词"),
+    namespace: Optional[str] = Query(None, description="命名空间过滤"),
+    status: Optional[str] = Query(None, description="状态过滤"),
+    start: Optional[str] = Query(None, description="起始时间(ISO8601)"),
+    end: Optional[str] = Query(None, description="结束时间(ISO8601)"),
 ):
     """
     获取分析历史记录列表（支持分页和搜索）
@@ -478,33 +501,38 @@ async def list_analysis_history(
     try:
         logger.info(f"获取分析历史记录: page={page}, size={size}, search={search}")
 
-        # 获取所有历史记录（需要先获取更多记录用于分页）
-        # 这里我们获取更多记录，然后在内存中分页
-        max_records = 1000  # 最大获取1000条记录用于分页
-        history = await asyncio.to_thread(
-            rca_analyzer.get_analysis_history, max_records
-        )
-
-        # 确保history是字典列表格式
-        if history and not isinstance(history[0], dict):
-            # 如果history是其他格式，尝试转换为字典
-            history_dict = []
-            for i, record in enumerate(history):
-                if hasattr(record, "__dict__"):
-                    record_dict = record.__dict__
-                elif hasattr(record, "model_dump"):
-                    record_dict = record.model_dump()
-                else:
-                    # 简单转换
-                    record_dict = {
-                        "id": getattr(record, "id", f"analysis_{i}"),
-                        "name": getattr(record, "name", f"Analysis {i+1}"),
-                        "status": getattr(record, "status", "unknown"),
-                        "timestamp": getattr(record, "timestamp", ""),
-                        "type": getattr(record, "type", "rca"),
-                    }
-                history_dict.append(record_dict)
-            history = history_dict
+        # 改为从数据库读取持久化历史，避免依赖内存
+        with session_scope() as session:
+            stmt = select(RCAAnalysisRecord).where(RCAAnalysisRecord.deleted_at.is_(None))
+            if namespace:
+                stmt = stmt.where(RCAAnalysisRecord.namespace == namespace)
+            # 时间范围过滤（基于 created_at）
+            if start:
+                try:
+                    start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")).replace(tzinfo=None)
+                    stmt = stmt.where(RCAAnalysisRecord.created_at >= start_dt)
+                except Exception:
+                    pass
+            if end:
+                try:
+                    end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")).replace(tzinfo=None)
+                    stmt = stmt.where(RCAAnalysisRecord.created_at <= end_dt)
+                except Exception:
+                    pass
+            rows = session.execute(stmt).scalars().all()
+            if status:
+                rows = [r for r in rows if (r.status == status)]
+            history = [
+                {
+                    "id": r.id,
+                    "name": f"RCA {r.id}",
+                    "status": r.status,
+                    "timestamp": (r.created_at.isoformat() if r.created_at else ""),
+                    "type": "rca",
+                    "summary": r.summary or "",
+                }
+                for r in rows
+            ]
 
         # 应用分页和搜索（在name、status、type字段中搜索）
         paginated_history, total = process_list_with_pagination_and_search(
@@ -518,15 +546,60 @@ async def list_analysis_history(
         return PaginatedListAPIResponse(
             code=0, message="分析历史记录获取成功", items=paginated_history, total=total
         ).model_dump()
-
-    except ValueError as e:
-        logger.error(f"参数验证失败: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"获取分析历史记录失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取分析历史记录失败: {str(e)}")
+        return PaginatedListAPIResponse(code=0, message="分析历史记录获取失败", items=[], total=0).model_dump()
+
+
+@router.get(
+    "/rca/analyses/{record_id}",
+    summary="获取RCA记录详情",
+    response_model=APIResponse,
+)
+async def get_rca_record(record_id: int):
+    try:
+        with session_scope() as session:
+            rec = session.execute(
+                select(RCAAnalysisRecord).where(RCAAnalysisRecord.id == record_id, RCAAnalysisRecord.deleted_at.is_(None))
+            ).scalar_one_or_none()
+            if not rec:
+                return APIResponse(code=404, message="not found", data=None).model_dump()
+            item = {
+                "id": rec.id,
+                "status": rec.status,
+                "summary": rec.summary,
+                "start_time": rec.start_time,
+                "end_time": rec.end_time,
+                "namespace": rec.namespace,
+                "service_name": rec.service_name,
+                "metrics": rec.metrics,
+                "created_at": rec.created_at.isoformat() if rec.created_at else None,
+                "updated_at": rec.updated_at.isoformat() if rec.updated_at else None,
+            }
+        return APIResponse(code=0, message="ok", data=item).model_dump()
+    except Exception as e:
+        logger.error(f"获取RCA记录失败: {str(e)}")
+        return APIResponse(code=500, message="internal error", data=None).model_dump()
+
+
+@router.delete(
+    "/rca/analyses/{record_id}",
+    summary="软删除RCA记录",
+    response_model=APIResponse,
+)
+async def delete_rca_record(record_id: int):
+    try:
+        with session_scope() as session:
+            rec = session.execute(select(RCAAnalysisRecord).where(RCAAnalysisRecord.id == record_id)).scalar_one_or_none()
+            if not rec:
+                return APIResponse(code=404, message="not found", data=None).model_dump()
+            # 使用UTC统一软删除时间
+            rec.deleted_at = utcnow()
+            session.add(rec)
+        return APIResponse(code=0, message="deleted", data={"id": record_id}).model_dump()
+    except Exception as e:
+        logger.error(f"删除RCA记录失败: {str(e)}")
+        return APIResponse(code=500, message="internal error", data=None).model_dump()
 
 
 @router.get(
@@ -548,16 +621,84 @@ async def rca_health():
             message="RCA服务健康检查完成",
             data={
                 "healthy": health_status,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": iso_utc_now(),
                 "service": "rca",
                 "flags": {
                     "request_override": config.rca.request_override,
-                    "logs_enabled": getattr(config, "logs").enabled,
-                    "tracing_enabled": getattr(config, "tracing").enabled,
+                    "logs_enabled": config.logs.enabled,
+                    "tracing_enabled": config.tracing.enabled,
                 },
             },
         ).model_dump()
 
     except Exception as e:
         logger.error(f"RCA服务健康检查失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"RCA服务健康检查失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"RCA服务健康检查失败: {str(e)}") from e
+
+
+@router.post("/rca/analyze")
+async def rca_analyze(payload: Dict[str, Any]):
+    try:
+        start = payload.get("start_time")
+        end = payload.get("end_time")
+        metrics = payload.get("metrics")
+        namespace = payload.get("namespace")
+        def _to_dt(v):
+            if isinstance(v, str):
+                try:
+                    return datetime.fromisoformat(v.replace("Z", "+00:00"))
+                except Exception:
+                    return datetime.fromisoformat(v)
+            return v
+        start_dt = _to_dt(start) or datetime.utcnow()
+        end_dt = _to_dt(end) or datetime.utcnow()
+        result = await rca_analyzer.analyze(start_dt, end_dt, metrics, namespace=namespace)
+        return APIResponse(code=0, message="ok", data=result).model_dump()
+    except Exception as e:
+        logger.error(f"rca_analyze失败: {e}")
+        raise HTTPException(status_code=500, detail="rca analyze failed") from e
+
+
+@router.post("/rca/correlate")
+async def rca_correlate(payload: Dict[str, Any]):
+    try:
+        start = payload.get("start_time")
+        end = payload.get("end_time")
+        metrics = payload.get("metrics")
+        def _to_dt(v):
+            if isinstance(v, str):
+                try:
+                    return datetime.fromisoformat(v.replace("Z", "+00:00"))
+                except Exception:
+                    return datetime.fromisoformat(v)
+            return v
+        start_dt = _to_dt(start) or datetime.utcnow()
+        end_dt = _to_dt(end) or datetime.utcnow()
+        # 若未提供目标指标，则对所有指标进行相关性分析
+        result = await rca_analyzer.analyze_correlations(start_dt, end_dt, None, metrics)
+        return APIResponse(code=0, message="ok", data=result).model_dump()
+    except Exception as e:
+        logger.error(f"rca_correlate失败: {e}")
+        raise HTTPException(status_code=500, detail="rca correlate failed") from e
+
+
+@router.post("/rca/detect")
+async def rca_detect(payload: Dict[str, Any]):
+    try:
+        start = payload.get("start_time")
+        end = payload.get("end_time")
+        metrics = payload.get("metrics")
+        def _to_dt(v):
+            if isinstance(v, str):
+                try:
+                    return datetime.fromisoformat(v.replace("Z", "+00:00"))
+                except Exception:
+                    return datetime.fromisoformat(v)
+            return v
+        start_dt = _to_dt(start) or datetime.utcnow()
+        end_dt = _to_dt(end) or datetime.utcnow()
+        result = await rca_analyzer.detect_anomalies(start_dt, end_dt, metrics)
+        return APIResponse(code=0, message="ok", data=result).model_dump()
+    except Exception as e:
+        logger.error(f"rca_detect失败: {e}")
+        raise HTTPException(status_code=500, detail="rca detect failed") from e

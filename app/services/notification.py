@@ -11,17 +11,20 @@ Description: 通知服务模块 - 提供多渠道通知功能，支持飞书、�
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+import re
+import smtplib
+from datetime import datetime
+from email.mime.text import MIMEText
 from typing import Any, Dict, List, Optional
 
 import requests
 
 from app.config.settings import config
+from app.db.base import session_scope
+from app.db.models import NotificationRecord
+from app.utils.time_utils import UTC_TZ
 
 logger = logging.getLogger("aiops.notification")
-
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 class NotificationService:
@@ -29,6 +32,44 @@ class NotificationService:
         self.feishu_webhook = config.notification.feishu_webhook
         self.enabled = config.notification.enabled
         logger.info(f"通知服务初始化完成, 启用状态: {self.enabled}")
+
+    def send_webhook(self, url: str, payload: Dict[str, Any]) -> bool:
+        try:
+            resp = requests.post(url, json=payload, timeout=10)
+            return resp.status_code == 200
+        except Exception as e:
+            logger.error(f"Webhook发送失败: {str(e)}")
+            return False
+
+    def send_email(self, to: str, subject: str, body: str) -> bool:
+        try:
+            msg = MIMEText(body, "plain", "utf-8")
+            msg["Subject"] = subject
+            msg["From"] = config.notification.email_from
+            msg["To"] = to
+            with smtplib.SMTP(config.notification.smtp_server, config.notification.smtp_port) as server:
+                if getattr(config.notification, "smtp_tls", False):
+                    server.starttls()
+                if getattr(config.notification, "smtp_user", None):
+                    server.login(config.notification.smtp_user, config.notification.smtp_password)
+                server.sendmail(config.notification.email_from, [to], msg.as_string())
+            return True
+        except Exception as e:
+            logger.error(f"发送邮件失败: {str(e)}")
+            return False
+
+    def validate_webhook_url(self, url: str) -> bool:
+        try:
+            return bool(re.match(r"^https?://[\w\.-/]+$", url))
+        except Exception:
+            return False
+
+    def format_alert(self, alert_data: Dict[str, Any]) -> str:
+        sev = alert_data.get("severity", "info")
+        comp = alert_data.get("component", "unknown")
+        msg = alert_data.get("message", "")
+        ts = alert_data.get("timestamp", datetime.now(UTC_TZ).isoformat())
+        return f"[{sev}] {comp} - {msg} @ {ts}"
 
     async def send_feishu_message(
         self, message: str, title: str = "AIOps通知", color: str = "blue"
@@ -52,7 +93,7 @@ class NotificationService:
                         {
                             "tag": "div",
                             "text": {
-                                "content": f"**发送时间：** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                                "content": f"**发送时间：** {datetime.now(UTC_TZ).strftime('%Y-%m-%d %H:%M:%SZ')}",
                                 "tag": "lark_md",
                             },
                         },
@@ -76,16 +117,36 @@ class NotificationService:
                 response_data = response.json()
                 if response_data.get("code") == 0:
                     logger.info("飞书消息发送成功")
+                    try:
+                        with session_scope() as session:
+                            session.add(NotificationRecord(channel="feishu", title=title, message=message, status="ok", response=json.dumps(response_data, ensure_ascii=False)))
+                    except Exception:
+                        pass
                     return True
                 else:
                     logger.error(f"飞书消息发送失败: {response_data}")
+                    try:
+                        with session_scope() as session:
+                            session.add(NotificationRecord(channel="feishu", title=title, message=message, status="failed", response=json.dumps(response_data, ensure_ascii=False)))
+                    except Exception:
+                        pass
                     return False
             else:
                 logger.error(f"飞书消息发送失败，状态码：{response.status_code}")
+                try:
+                    with session_scope() as session:
+                        session.add(NotificationRecord(channel="feishu", title=title, message=message, status="http_error", response=str(response.text)))
+                except Exception:
+                    pass
                 return False
 
         except Exception as e:
             logger.error(f"发送飞书消息失败：{str(e)}")
+            try:
+                with session_scope() as session:
+                    session.add(NotificationRecord(channel="feishu", title=title, message=message, status="exception", error=str(e)))
+            except Exception:
+                pass
             return False
 
     async def send_rca_alert(

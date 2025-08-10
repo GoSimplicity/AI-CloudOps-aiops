@@ -37,8 +37,8 @@ class TimeTool(BaseTool):
                 },
                 "timezone": {
                     "type": "string",
-                    "description": "时区，例如'UTC'、'Asia/Shanghai'，默认为Asia/Shanghai",
-                    "default": "Asia/Shanghai",
+                    "description": "时区，例如'UTC'，默认为UTC",
+                    "default": "UTC",
                 },
             },
             "required": [],
@@ -49,21 +49,21 @@ class TimeTool(BaseTool):
         try:
             # 获取参数
             time_format = parameters.get("format", "iso")
-            timezone_str = parameters.get("timezone", "Asia/Shanghai")
+            timezone_str = parameters.get("timezone", "UTC")
 
             # 根据时区获取当前时间
-            if timezone_str == "Asia/Shanghai":
-                # 北京时间 (UTC+8)
-                tz = timezone(timedelta(hours=8))
-                now = datetime.now(tz)
-            elif timezone_str == "UTC":
+            if timezone_str == "UTC":
                 tz = timezone.utc
                 now = datetime.now(tz)
-            else:
-                # 默认使用北京时间
+            elif timezone_str in ["Asia/Shanghai", "CST"]:
+                # 兼容性支持，但推荐使用UTC
                 tz = timezone(timedelta(hours=8))
                 now = datetime.now(tz)
-                timezone_str = "Asia/Shanghai"
+            else:
+                # 默认使用UTC
+                tz = timezone.utc
+                now = datetime.now(tz)
+                timezone_str = "UTC"
 
             if time_format == "timestamp":
                 # 返回Unix时间戳
@@ -77,4 +77,5 @@ class TimeTool(BaseTool):
                 }
 
         except Exception as e:
-            raise RuntimeError(f"获取时间失败: {str(e)}")
+            raise RuntimeError(f"获取时间失败: {str(e)}") from e
+

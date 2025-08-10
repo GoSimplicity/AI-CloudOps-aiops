@@ -11,17 +11,18 @@ Description: 错误处理中间件 - 提供统一的HTTP错误响应格式和异
 
 import logging
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from app.common.exceptions import AppError
 from app.models.response_models import APIResponse
+from app.utils.time_utils import iso_utc_now
 
 logger = logging.getLogger("aiops.error_handler")
 
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
+UTC_TZ = timezone.utc
 
 
 def _safe_get_request_info(request: Request):
@@ -48,9 +49,7 @@ def _safe_get_request_info(request: Request):
 def _create_error_response(code: int, message: str, extra_data: dict = None):
     """创建统一的错误响应（与APIResponse结构一致）"""
     try:
-        data = {
-            "timestamp": datetime.now(BEIJING_TZ).isoformat(),
-        }
+        data = {"timestamp": iso_utc_now()}
 
         if extra_data:
             data.update(extra_data)
@@ -67,7 +66,7 @@ def _create_error_response(code: int, message: str, extra_data: dict = None):
             content=APIResponse(
                 code=500,
                 message="创建错误响应时发生内部错误",
-                data={"timestamp": datetime.now(BEIJING_TZ).isoformat()},
+                data={"timestamp": iso_utc_now()},
             ).model_dump(),
         )
 
@@ -126,7 +125,7 @@ async def validation_exception_handler(request: Request, exc: Exception):
 async def general_exception_handler(request: Request, exc: Exception):
     """处理一般异常"""
     try:
-        error_id = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
+        error_id = datetime.now(UTC_TZ).strftime("%Y%m%d_%H%M%S")
         request_info = _safe_get_request_info(request)
 
         logger.error(f"Unexpected error [{error_id}]: {request_info['url']}")
@@ -162,10 +161,25 @@ async def general_exception_handler(request: Request, exc: Exception):
 
     except Exception as handler_error:
         logger.error(f"通用错误处理器出错: {handler_error}")
-        error_id = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
+        error_id = datetime.now(UTC_TZ).strftime("%Y%m%d_%H%M%S")
         return _create_error_response(
             500, "服务器遇到严重错误", extra_data={"error_id": error_id}
         )
+
+
+async def app_error_handler(request: Request, exc: AppError):
+    """处理业务异常（应用内统一异常）。"""
+    try:
+        request_info = _safe_get_request_info(request)
+        logger.warning(
+            f"AppError {exc.status_code} at {request_info['path']}: {exc.message}"
+        )
+        return _create_error_response(
+            code=exc.status_code, message=exc.message, extra_data={"path": request_info["path"]}
+        )
+    except Exception as handler_error:
+        logger.error(f"业务异常处理器出错: {handler_error}")
+        return _create_error_response(500, "处理业务异常时发生错误")
 
 
 def setup_error_handlers(app):
@@ -173,6 +187,8 @@ def setup_error_handlers(app):
     try:
         # 添加HTTP异常处理器
         app.add_exception_handler(HTTPException, http_exception_handler)
+        # 添加业务异常处理器
+        app.add_exception_handler(AppError, app_error_handler)
 
         # 添加验证异常处理器
         try:

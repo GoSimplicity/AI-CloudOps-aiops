@@ -9,10 +9,11 @@ License: Apache 2.0
 Description: AIOps平台全量测试脚本，运行所有测试模块
 """
 
-import sys
-import pytest
 import logging
+import sys
 from pathlib import Path
+
+import pytest
 
 # 配置日志
 logging.basicConfig(

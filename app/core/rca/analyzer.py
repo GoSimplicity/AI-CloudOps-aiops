@@ -11,7 +11,7 @@ Description: 根因分析器 - 核心故障诊断引擎
 
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -29,11 +29,11 @@ from app.models.response_models import AnomalyInfo, RootCauseCandidate
 from app.services.kubernetes import KubernetesService
 from app.services.llm import LLMService
 from app.services.prometheus import PrometheusService
+from app.utils.time_utils import iso_utc_now
 
 logger = logging.getLogger("aiops.rca")
 
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
+UTC_TZ = timezone.utc
 
 
 class RCAAnalyzer:
@@ -165,7 +165,7 @@ class RCAAnalyzer:
                     RootCauseCandidate(**candidate).__dict__
                     for candidate in root_causes
                 ],
-                "analysis_time": datetime.now(BEIJING_TZ).isoformat(),
+            "analysis_time": iso_utc_now(),
                 "time_range": {
                     "start": start_time.isoformat(),
                     "end": end_time.isoformat(),
@@ -304,7 +304,7 @@ class RCAAnalyzer:
         for metric in metrics:
             try:
                 logger.debug(f"查询指标: {metric}")
-                data = await self.prometheus.query_range(
+                data = await self.prometheus.query_range_async(
                     metric, start_time, end_time, "1m"
                 )
 

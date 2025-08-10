@@ -15,10 +15,13 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
 from app.core.agents.assistant.models.config import assistant_config
+
 # Redis向量存储
 from app.core.vector.redis_vector_store import (
-    OptimizedRedisVectorStore,
-    RedisVectorStoreManager,
+    RedisVectorStore,
+)
+from app.core.vector.redis_vector_store import (
+    VectorStoreManager as BaseVectorStoreManager,
 )
 
 logger = logging.getLogger("aiops.assistant.vector_store_manager")
@@ -47,31 +50,45 @@ class VectorStoreManager:
 
         # 动态获取嵌入维度
         try:
-            test_embedding = embedding_model.embed_query("测试")
-            vector_dim = len(test_embedding)
-            logger.info(f"检测到嵌入维度: {vector_dim}")
+            if hasattr(embedding_model, 'embed_query'):
+                test_embedding = embedding_model.embed_query("测试")
+                vector_dim = len(test_embedding)
+                logger.info(f"检测到嵌入维度: {vector_dim}")
+            else:
+                # 如果embedding_model是字符串或没有embed_query方法，使用默认值
+                logger.warning("嵌入模型无embed_query方法，使用默认值1536")
+                vector_dim = 1536
         except Exception as e:
             logger.warning(f"无法检测嵌入维度，使用默认值1536: {e}")
             vector_dim = 1536
 
-        # 初始化优化的Redis向量存储管理器
-        self.redis_manager = RedisVectorStoreManager(
-            redis_config=redis_config,
-            collection_name=collection_name,
-            embedding_dimensions=vector_dim,
-            local_storage_path=vector_db_path,
-        )
-
-        # 使用优化的向量存储
-        self.optimized_store = OptimizedRedisVectorStore(
-            redis_config=redis_config,
+        # 初始化Redis向量存储管理器
+        self.redis_manager = BaseVectorStoreManager(
+            vector_db_path=vector_db_path,
             collection_name=collection_name,
             embedding_model=embedding_model,
-            vector_dim=vector_dim,
-            local_storage_path=vector_db_path,
-            use_faiss=True,
-            faiss_index_type="Flat",
         )
+
+        # 使用Redis向量存储
+        try:
+            import redis
+            redis_client = redis.Redis(
+                host=redis_config.get("host", "localhost"),
+                port=redis_config.get("port", 6379),
+                db=redis_config.get("db", 0),
+                password=redis_config.get("password", None),
+                decode_responses=redis_config.get("decode_responses", True),
+                socket_timeout=redis_config.get("socket_timeout", 5.0),
+                socket_connect_timeout=redis_config.get("socket_timeout", 5.0),
+            )
+            self.optimized_store = RedisVectorStore(
+                redis_client=redis_client,
+                collection_name=collection_name,
+                embedding_model=embedding_model,
+            )
+        except Exception as e:
+            logger.warning(f"Redis向量存储初始化失败，将使用基础存储: {e}")
+            self.optimized_store = None
 
         self.retriever = None
         os.makedirs(vector_db_path, exist_ok=True)

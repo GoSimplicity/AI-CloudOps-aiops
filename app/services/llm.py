@@ -16,14 +16,19 @@ import re
 from typing import Any, Dict, List, Optional, Union
 
 import ollama
+import requests
 from openai import OpenAI
 
 from app.config.settings import config
-from app.constants import (LLM_MAX_RETRIES, LLM_TEMPERATURE_MAX,
-                           LLM_TEMPERATURE_MIN)
-from app.utils.error_handlers import (ErrorHandler, ExternalServiceError,
-                                      ServiceError, ValidationError,
-                                      retry_on_exception, validate_field_range)
+from app.constants import LLM_MAX_RETRIES, LLM_TEMPERATURE_MAX, LLM_TEMPERATURE_MIN
+from app.utils.error_handlers import (
+    ErrorHandler,
+    ExternalServiceError,
+    ServiceError,
+    ValidationError,
+    retry_on_exception,
+    validate_field_range,
+)
 
 logger = logging.getLogger("aiops.llm")
 
@@ -117,7 +122,121 @@ class LLMService:
             "max_tokens": effective_max_tokens,
         }
 
-    async def generate_response(
+    # 兼容测试：提供同步便捷方法（使用requests.post，便于单元测试mock）
+    def generate_response(self, text: str, model: Optional[str] = None) -> Optional[str]:
+        try:
+            url = f"{config.llm.effective_base_url}/chat/completions"
+            payload = {
+                "model": model or self.model,
+                "messages": [{"role": "user", "content": text}],
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+            }
+            resp = requests.post(url, json=payload, timeout=15)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            if isinstance(data, dict) and data.get("choices"):
+                choice = data["choices"][0]
+                # 支持多种常见格式
+                if isinstance(choice, dict):
+                    msg = choice.get("message") or {}
+                    content = msg.get("content") if isinstance(msg, dict) else None
+                    if content:
+                        return content
+                    delta = choice.get("delta") or {}
+                    if isinstance(delta, dict) and delta.get("content"):
+                        return delta.get("content")
+            return None
+        except Exception:
+            return None
+
+    def stream_response(self, text: str):
+        url = f"{config.llm.effective_base_url}/chat/completions"
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": text}],
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": True,
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                try:
+                    decoded = line.decode("utf-8").strip()
+                    if not decoded.startswith("data:"):
+                        continue
+                    data_str = decoded.split("data:", 1)[1].strip()
+                    if data_str == "[DONE]":
+                        break
+                    obj = json.loads(data_str)
+                    choices = obj.get("choices") or []
+                    if choices and isinstance(choices[0], dict):
+                        delta = choices[0].get("delta") or {}
+                        content = delta.get("content")
+                        if content:
+                            yield content
+                except Exception:
+                    continue
+        except Exception:
+            # 失败时退化为一次性响应
+            single = self.generate_response(text)
+            if single:
+                yield single
+
+    def format_prompt(self, template: str, context: Dict[str, Any]) -> str:
+        try:
+            return template.format(**context)
+        except Exception:
+            return template
+
+    def extract_code_blocks(self, text: str) -> List[str]:
+        blocks = re.findall(r"```([\s\S]*?)```", text)
+        return [b.strip() for b in blocks]
+
+    def _call_openai_sync(self, messages: List[Dict[str, str]], model: str) -> Optional[str]:
+        client = (
+            getattr(self, "backup_client", None)
+            if self.provider.lower() == "ollama"
+            else self.client
+        )
+        if not client:
+            client = OpenAI(api_key=config.llm.api_key, base_url=config.llm.base_url)
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
+        return response.choices[0].message.content if response and hasattr(response, "choices") else None
+
+    async def generate_response_async(
+        self,
+        messages: List[Dict[str, str]],
+        system_prompt: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
+        temperature: Optional[float] = None,
+        stream: bool = False,
+        max_tokens: Optional[int] = None,
+        model: Optional[str] = None,
+    ) -> Union[str, Dict[str, Any]]:
+        # 将可选模型覆盖到实例，以复用现有实现
+        if model:
+            self.model = model
+        return await self._generate_response_async_impl(
+            messages=messages,
+            system_prompt=system_prompt,
+            response_format=response_format,
+            temperature=temperature,
+            stream=stream,
+            max_tokens=max_tokens,
+        )
+
+    # 原异步实现改名为内部实现
+    async def _generate_response_async_impl(
         self,
         messages: List[Dict[str, str]],
         system_prompt: Optional[str] = None,
@@ -151,7 +270,7 @@ class LLMService:
             raise
         except Exception as e:
             error_msg, _ = self.error_handler.log_and_return_error(e, "LLM响应生成")
-            raise ServiceError(error_msg, "LLMService", "generate_response")
+            raise ServiceError(error_msg, "LLMService", "generate_response") from e
 
     @retry_on_exception(
         max_retries=LLM_MAX_RETRIES, delay=1.0, exceptions=(ExternalServiceError,)
@@ -193,7 +312,7 @@ class LLMService:
                 raise ExternalServiceError(
                     f"所有LLM提供商均不可用: 主要({str(e)}), 备用({str(backup_error)})",
                     "LLM",
-                )
+                ) from backup_error
 
         raise ServiceError("未知的LLM提供商配置", "LLMService")
 
@@ -312,7 +431,7 @@ class LLMService:
             messages = [{"role": "user", "content": context}]
             response_format = {"type": "json_object"}
             
-            response = await self.generate_response(
+            response = await self.generate_response_async(
                 messages=messages,
                 system_prompt=system_prompt,
                 response_format=response_format,
@@ -323,7 +442,7 @@ class LLMService:
                 try:
                     return await self._extract_json_from_k8s_analysis(response, messages)
                 except Exception:
-                    alternative_response = await self.generate_response(
+                    alternative_response = await self.generate_response_async(
                         messages=messages, system_prompt=system_prompt, temperature=0.1
                     )
                     if alternative_response:
@@ -371,7 +490,7 @@ class LLMService:
                 {"role": "user", "content": fix_prompt},
             ]
 
-            fixed_response = await self.generate_response(
+            fixed_response = await self.generate_response_async(
                 messages=fix_messages,
                 temperature=0.1,
                 response_format={"type": "json_object"},
@@ -410,7 +529,7 @@ class LLMService:
 """
             messages = [{"role": "user", "content": content}]
 
-            response = await self.generate_response(
+            response = await self.generate_response_async(
                 messages=messages, system_prompt=system_prompt, temperature=0.3
             )
             return response
@@ -430,7 +549,7 @@ class LLMService:
             content = f"部署: {deployment}\n操作: {json.dumps(actions_taken, ensure_ascii=False)}\n结果: {result}\n\n请生成简明的修复说明。"
             messages = [{"role": "user", "content": content}]
 
-            response = await self.generate_response(
+            response = await self.generate_response_async(
                 messages=messages, system_prompt=system_prompt, temperature=0.3
             )
             return response

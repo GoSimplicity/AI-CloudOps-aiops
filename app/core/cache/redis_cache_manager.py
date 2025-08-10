@@ -128,7 +128,7 @@ class RedisCacheManager:
 
         except Exception as e:
             logger.error(f"Redis缓存管理器初始化失败: {e}")
-            raise RuntimeError(f"无法连接到Redis缓存: {e}")
+            raise RuntimeError(f"无法连接到Redis缓存: {e}") from e
 
     def _reset_stats(self):
         """重置统计信息"""

@@ -12,12 +12,12 @@ Description: 执行具体修复操作的Agent
 import asyncio
 import logging
 import time
-from datetime import datetime
 from typing import Any, Dict, List
 
+from app.config.settings import config
 from app.services.kubernetes import KubernetesService
 from app.services.notification import NotificationService
-from app.config.settings import config
+from app.utils.time_utils import iso_utc_now
 
 logger = logging.getLogger("aiops.executor")
 
@@ -38,7 +38,7 @@ class K8sExecutorAgent:
 
             result = {
                 "execution_id": execution_id,
-                "timestamp": datetime.now().isoformat(),
+        "timestamp": iso_utc_now(),
                 "strategy_id": strategy.get("id"),
                 "target": strategy.get("target"),
                 "success": False,
@@ -290,7 +290,7 @@ class K8sExecutorAgent:
                         "template": {
                             "metadata": {
                                 "annotations": {
-                                    "kubectl.kubernetes.io/restartedAt": datetime.now().isoformat()
+                "kubectl.kubernetes.io/restartedAt": iso_utc_now()
                                 }
                             }
                         }

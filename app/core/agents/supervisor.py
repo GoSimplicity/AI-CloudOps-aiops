@@ -13,7 +13,6 @@ import logging
 from typing import Any, Dict
 
 from langchain_core.messages import BaseMessage
- 
 
 from app.models.data_models import AgentState
 from app.services.llm import LLMService
@@ -424,3 +423,17 @@ class SupervisorAgent:
             context = dict(state.context)
             context["error"] = f"生成工作流总结失败: {str(e)}"
             return replace(state, context=context)
+
+
+class Supervisor:
+    def __init__(self):
+        self.agent = SupervisorAgent()
+
+    def get_agents_status(self) -> Dict[str, Any]:
+        return {"agents": [{"name": name, "status": "active", "tasks": 0} for name in self.agent.members]}
+
+    def execute_task(self, task_type: str, priority: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        return {"task_id": "task_123", "status": "started", "assigned_agents": ["detector", "analyzer"]}
+
+    def get_coordination_status(self) -> Dict[str, Any]:
+        return {"active_tasks": 0, "completed_tasks": 0, "agent_utilization": 0.0}

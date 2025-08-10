@@ -10,16 +10,17 @@ Description: k8s日志查看的MCP工具，提供Pod和容器日志的查看和�
 """
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
+from app.utils.time_utils import iso_utc_now
+
 from .k8s_base_tool import K8sBaseTool
 
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
+UTC_TZ = timezone.utc
 
 
 class K8sLogsTool(K8sBaseTool):
@@ -247,7 +248,7 @@ class K8sLogsTool(K8sBaseTool):
                     "since_time": since_time,
                     "limit_bytes": limit_bytes,
                 },
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -308,7 +309,7 @@ class K8sLogsTool(K8sBaseTool):
                     "since_time": since_time,
                     "limit_bytes": limit_bytes,
                 },
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -375,7 +376,7 @@ class K8sLogsTool(K8sBaseTool):
                 "non_empty_lines": len(non_empty_lines),
                 "log_size_bytes": len(log_content.encode()) if log_content else 0,
                 "note": "这是容器重启前的日志",
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -441,7 +442,7 @@ class K8sLogsTool(K8sBaseTool):
                 "recent_logs": "\n".join(recent_lines),
                 "lines_returned": len(recent_lines),
                 "requested_lines": tail_lines,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -498,7 +499,7 @@ class K8sLogsTool(K8sBaseTool):
                     "matching_lines": [],
                     "total_matches": 0,
                     "message": "没有找到日志内容",
-                    "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
                 }
 
             # 搜索匹配的行
@@ -533,7 +534,7 @@ class K8sLogsTool(K8sBaseTool):
                 "total_matches": len(matching_lines),
                 "returned_matches": len(limited_matches),
                 "total_lines_searched": len(log_lines),
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": datetime.now(UTC_TZ).isoformat(),
             }
 
         except Exception as e:

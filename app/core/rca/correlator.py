@@ -60,6 +60,16 @@ class CorrelationAnalyzer:
             logger.error(f"相关性分析失败: {str(e)}")
             return {}
 
+
+class Correlator:
+    """测试兼容别名：提供与 CorrelationAnalyzer 相同的接口，便于单元测试 patch。"""
+
+    def __init__(self, correlation_threshold: float = None):
+        self._impl = CorrelationAnalyzer(correlation_threshold)
+
+    async def analyze_correlations(self, metrics_data: Dict[str, pd.DataFrame]) -> Dict[str, List[Tuple[str, float]]]:
+        return await self._impl.analyze_correlations(metrics_data)
+
     async def analyze_correlations_with_cross_lag(
         self, metrics_data: Dict[str, pd.DataFrame], max_lags: int = 10
     ) -> Dict[str, Any]:

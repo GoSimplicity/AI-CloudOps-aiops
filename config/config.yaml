@@ -89,6 +89,18 @@ redis:
   max_connections: 10
   socket_timeout: 5
 
+# MySQL 数据库（仅用于本服务 cl_ 前缀表，不影响主平台表）
+database:
+  host: localhost
+  port: 3306
+  username: root
+  password: root
+  name: cloudops
+  echo: false
+  pool_size: 5
+  max_overflow: 10
+  pool_recycle: 1800
+
 # RAG助手配置
 rag:
   vector_db_path: data/vector_db

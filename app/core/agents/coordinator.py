@@ -11,16 +11,17 @@ Description: 协调检测、策略、执行和验证的完整工作流
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+from app.config.settings import config
 from app.core.agents.detector import K8sDetectorAgent
 from app.core.agents.executor import K8sExecutorAgent
+from app.core.agents.rollback import K8sRollbackAgent
 from app.core.agents.strategist import K8sStrategistAgent
 from app.core.agents.verifier import K8sVerifierAgent
-from app.core.agents.rollback import K8sRollbackAgent
 from app.services.notification import NotificationService
-from app.config.settings import config
+from app.utils.time_utils import iso_utc_now
 
 logger = logging.getLogger("aiops.coordinator")
 
@@ -58,7 +59,7 @@ class K8sCoordinatorAgent:
             logger.info(f"🚀 开始K8s多Agent修复工作流: {deployment}/{namespace}")
 
             workflow_id = f"workflow_{int(asyncio.get_event_loop().time())}"
-            start_time = datetime.now()
+            start_time = datetime.now(timezone.utc)
 
             # 步骤1: 检测问题
             logger.info("🔍 步骤1: 检测问题...")
@@ -151,7 +152,7 @@ class K8sCoordinatorAgent:
                     "deployment": deployment,
                     "namespace": namespace,
                     "start_time": start_time.isoformat(),
-                    "end_time": datetime.now().isoformat(),
+            "end_time": iso_utc_now(),
                     "issues_detected": len(issues["issues"]),
                     "strategies_created": len(strategy.get("strategies", [])),
                     "executions": len(execution_results),
@@ -190,7 +191,7 @@ class K8sCoordinatorAgent:
             logger.info(f"🚀 开始批量修复工作流: {namespace}")
 
             workflow_id = f"batch_{int(asyncio.get_event_loop().time())}"
-            start_time = datetime.now()
+            start_time = datetime.now(timezone.utc)
 
             # 检测所有问题
             all_issues = await self.detector.detect_all_issues(namespace)
@@ -223,7 +224,7 @@ class K8sCoordinatorAgent:
                 "workflow_id": workflow_id,
                 "namespace": namespace,
                 "start_time": start_time.isoformat(),
-                "end_time": datetime.now().isoformat(),
+            "end_time": iso_utc_now(),
                 "initial_issues": all_issues["summary"]["total_issues"],
                 "fixable_issues": strategy["summary"]["fixable_issues"],
                 "executed_strategies": len(execution_results),
@@ -267,7 +268,7 @@ class K8sCoordinatorAgent:
 
             report = {
                 "workflow_id": workflow_id,
-                "timestamp": datetime.now().isoformat(),
+        "timestamp": iso_utc_now(),
                 "success": remaining_issues < total_issues,
                 "summary": {
                     "total_issues": total_issues,
@@ -365,14 +366,27 @@ class K8sCoordinatorAgent:
                     "strategist": strategist_healthy,
                     "executor": executor_healthy,
                 },
-                "timestamp": datetime.now().isoformat(),
+        "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
             return {
                 "healthy": False,
                 "error": str(e),
-                "timestamp": datetime.now().isoformat(),
+        "timestamp": iso_utc_now(),
             }
 
     # 备注：历史版本中的 reset_workflow 未在代码中被调用，已移除以保持代码整洁
+
+
+class Coordinator:
+    def __init__(self):
+        self.agent = K8sCoordinatorAgent()
+
+    async def fix_deployment(self, namespace: str, deployment: str, issues: List[str]):
+        return await self.agent.run_full_workflow(deployment=deployment, namespace=namespace)
+
+    async def execute_workflow(self, workflow_type: str, namespace: str, target: str):
+        if workflow_type == "full_autofix":
+            return await self.agent.run_batch_workflow(namespace=namespace)
+        return {"workflow_id": "wf_0", "status": "unsupported"}

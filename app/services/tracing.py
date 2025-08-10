@@ -12,7 +12,7 @@ Description: Trace服务模块 - 提供从Jaeger Query API拉取Trace/Span的能
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -20,9 +20,6 @@ import requests
 from app.config.settings import config
 
 logger = logging.getLogger("aiops.tracing")
-
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 class TracingService:
@@ -38,6 +35,53 @@ class TracingService:
 
     def is_enabled(self) -> bool:
         return self.enabled
+
+    def check_connectivity(self) -> bool:
+        try:
+            url = f"{self.base_url.rstrip('/')}/api/services"
+            resp = requests.get(url, timeout=5)
+            return resp.status_code == 200
+        except Exception as e:
+            logger.error(f"Tracing连通性检查失败: {str(e)}")
+            return False
+
+    def get_traces(self, service: str, start_time: datetime, end_time: datetime) -> List[Dict[str, Any]]:
+        try:
+            params = {
+                "service": service,
+                "start": self._format_time_us(start_time),
+                "end": self._format_time_us(end_time),
+                "limit": 20,
+            }
+            url = f"{self.base_url.rstrip('/')}/api/traces"
+            resp = requests.get(url, params=params, timeout=self.timeout)
+            if resp.status_code != 200:
+                return []
+            data = resp.json() or {}
+            return data.get("data") or []
+        except Exception as e:
+            logger.error(f"获取trace失败: {str(e)}")
+            return []
+
+    def analyze_performance(self, trace_data: Dict[str, Any]) -> Dict[str, Any]:
+        spans = trace_data.get("spans", []) or []
+        total_duration = sum(int((s or {}).get("duration", 0)) for s in spans)
+        slowest = None
+        if spans:
+            slowest = max(spans, key=lambda s: int((s or {}).get("duration", 0)))
+        return {
+            "total_duration": total_duration,
+            "slowest_span": slowest or {},
+            "span_count": len(spans),
+        }
+
+    def find_error_spans(self, trace_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        error_spans: List[Dict[str, Any]] = []
+        for s in trace_data.get("spans", []) or []:
+            tags = (s or {}).get("tags", []) or []
+            if any((t or {}).get("key") in ("error", "otel.status_code") and (t or {}).get("value") in (True, "ERROR") for t in tags):
+                error_spans.append(s)
+        return error_spans
 
     def _format_time_us(self, dt: datetime) -> int:
         # Jaeger HTTP API时间以微秒为单位（epoch）

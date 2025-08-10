@@ -7,7 +7,7 @@
 
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from app.core.agents.assistant.models.base import SessionData
@@ -25,7 +25,7 @@ class SessionManager:
         session_id = str(uuid.uuid4())
         session_data = SessionData(
             session_id=session_id,
-            created_at=datetime.now().isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
             history=[],
             metadata={},
             context_summary="",
@@ -56,7 +56,7 @@ class SessionManager:
                 {
                     "role": role,
                     "content": content,
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             )
 

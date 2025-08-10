@@ -10,16 +10,17 @@ Description: k8s资源监控的MCP工具，提供节点和Pod的资源使用情�
 """
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
+from app.utils.time_utils import iso_utc_now
+
 from .k8s_base_tool import K8sBaseTool
 
-# 北京时区
-BEIJING_TZ = timezone(timedelta(hours=8))
+UTC_TZ = timezone.utc
 
 
 class K8sMonitorTool(K8sBaseTool):
@@ -175,7 +176,7 @@ class K8sMonitorTool(K8sBaseTool):
                 "operation": "get_node_metrics",
                 "node_count": len(nodes_data),
                 "nodes": nodes_data,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -285,7 +286,7 @@ class K8sMonitorTool(K8sBaseTool):
                 "operation": "get_pod_metrics",
                 "pod_count": len(pods_data),
                 "pods": pods_data,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -333,7 +334,7 @@ class K8sMonitorTool(K8sBaseTool):
                 "operation": "get_resource_quotas",
                 "quota_count": len(quotas_data),
                 "quotas": quotas_data,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -392,7 +393,7 @@ class K8sMonitorTool(K8sBaseTool):
                 "operation": "get_limit_ranges",
                 "limit_range_count": len(limit_ranges_data),
                 "limit_ranges": limit_ranges_data,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -473,7 +474,7 @@ class K8sMonitorTool(K8sBaseTool):
                 "total_pods": len(pods_usage),
                 "top_cpu_pods": top_cpu_pods,
                 "top_memory_pods": top_memory_pods,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+            "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -532,7 +533,7 @@ class K8sMonitorTool(K8sBaseTool):
                 "total_nodes": len(nodes_usage),
                 "top_cpu_nodes": top_cpu_nodes,
                 "top_memory_nodes": top_memory_nodes,
-                "timestamp": datetime.now(BEIJING_TZ).isoformat(),
+                "timestamp": datetime.now(UTC_TZ).isoformat(),
             }
 
         except Exception as e:
