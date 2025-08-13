@@ -8,6 +8,7 @@ License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
 import asyncio
+import json
 import logging
 import math
 import threading
@@ -156,7 +157,10 @@ class AssistantAgent:
             )
             loaded = self.vector_store_manager.load_existing_db()
             if not loaded:
-                documents = self.document_loader.load_documents()
+                # 首次初始化时：从文件+数据库加载知识
+                file_documents = self.document_loader.load_documents()
+                db_documents = self._load_documents_from_db()
+                documents = (file_documents or []) + (db_documents or [])
                 if documents:
                     logger.info("首次运行：构建向量库...")
                     # 异步添加
@@ -524,14 +528,35 @@ class AssistantAgent:
         )
         return state
 
-    # --------------------------- 对外API（保持不变） --------------------------- #
-
     async def refresh_knowledge_base(self) -> Dict[str, Any]:
         try:
             t0 = time.time()
-            documents = self.document_loader.load_documents()
+            # 文件与数据库文档合并刷新，避免仅刷新目录文档
+            file_documents = self.document_loader.load_documents()
+            db_documents = self._load_documents_from_db()
+            documents = (file_documents or []) + (db_documents or [])
             if not documents:
                 return {"status": "warning", "message": "未找到文档"}
+
+            # 先按记录ID清理旧向量，避免旧内容与新内容并存
+            try:
+                cleared = 0
+                for d in db_documents or []:
+                    rid = None
+                    try:
+                        rid = str(d.metadata.get("record_id")) if d.metadata and d.metadata.get("record_id") is not None else None
+                    except Exception:
+                        rid = None
+                    if rid:
+                        try:
+                            cleared += int(self.vector_store_manager.delete_by_record_id(rid) or 0)
+                        except Exception:
+                            continue
+                if cleared:
+                    logger.info(f"刷新知识库：按记录ID清理旧向量 {cleared} 条")
+            except Exception as _ex:
+                logger.warning(f"刷新知识库：清理旧向量失败：{_ex}")
+
             await self.vector_store_manager.add_documents(documents)
             return {
                 "status": "success",
@@ -542,6 +567,38 @@ class AssistantAgent:
         except Exception as e:
             logger.error(f"刷新知识库失败: {e}")
             return {"status": "error", "message": f"刷新失败: {str(e)}"}
+
+    def _load_documents_from_db(self) -> List[Document]:
+        """从数据库加载知识库文档为 Document 列表。"""
+        try:
+            from sqlalchemy import select
+            from app.db.base import get_session
+            from app.db.models import DocumentRecord
+
+            with get_session() as db:
+                rows = (
+                    db.execute(
+                        select(DocumentRecord).where(DocumentRecord.deleted_at.is_(None))
+                    )
+                    .scalars()
+                    .all()
+                )
+
+            docs: List[Document] = []
+            for r in rows:
+                try:
+                    metadata = json.loads(r.metadata_json) if r.metadata_json else {}
+                except Exception:
+                    metadata = {}
+                metadata = metadata or {}
+                metadata.setdefault("source", "database")
+                metadata.setdefault("title", r.title)
+                metadata.setdefault("record_id", str(r.id))
+                docs.append(Document(page_content=r.content or "", metadata=metadata))
+            return docs
+        except Exception as e:
+            logger.error(f"加载数据库文档失败: {e}")
+            return []
 
     def add_document(self, content: str, metadata: Dict[str, Any] = None) -> bool:
         try:

@@ -111,3 +111,31 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"相似性搜索失败: {e}")
             return []
+
+    async def keyword_search(self, query: str, k: int = 4) -> List[Document]:
+        """关键字检索透传到底层（用于Hybrid模式）。"""
+        try:
+            return await self.redis_manager.keyword_search(query, k)
+        except Exception as e:
+            logger.error(f"关键字搜索失败: {e}")
+            return []
+
+    def delete_by_record_id(self, record_id: str) -> int:
+        """按数据库记录ID删除对应向量文档。"""
+        try:
+            if not getattr(self.redis_manager, "vector_store", None):
+                return 0
+            return int(self.redis_manager.vector_store.delete_by_record_id(str(record_id)))
+        except Exception as e:
+            logger.error(f"按记录ID删除失败: {e}")
+            return 0
+
+    def delete_by_title(self, title: str) -> int:
+        """按标题删除（用于早期未带record_id的文档清理）。"""
+        try:
+            if not getattr(self.redis_manager, "vector_store", None):
+                return 0
+            return int(self.redis_manager.vector_store.delete_by_title(title))
+        except Exception as e:
+            logger.error(f"按标题删除失败: {e}")
+            return 0

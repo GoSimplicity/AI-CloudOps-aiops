@@ -12,6 +12,7 @@ import logging
 import pickle
 import time
 from typing import Any, Dict, List, Optional
+import json
 
 import numpy as np
 import redis
@@ -36,6 +37,8 @@ class RedisVectorStore:
         self.vector_prefix = f"vec:{collection_name}"
         self.metadata_prefix = f"meta:{collection_name}"
         self.vector_index_key = f"{self.vector_prefix}:index"
+        # 记录ID倒排索引前缀（用于DB记录的幂等更新与清理）
+        self.rid_index_prefix = f"rid:{collection_name}"
         
         # 内存缓存（避免每次检索反复从Redis取向量）
         self._vector_cache: Dict[str, np.ndarray] = {}
@@ -44,6 +47,42 @@ class RedisVectorStore:
         self._last_index_load_ts = 0.0
         
         logger.info(f"Redis向量存储初始化完成: {collection_name}")
+
+    def _normalize_metadata_value(self, value: Any) -> str:
+        """将元数据值规范化为可写入Redis的字符串。
+
+        - 基本类型直接转字符串
+        - bytes 尝试按 utf-8 解码，否则使用 repr
+        - 复杂类型用 JSON 序列化（非ASCII不转义），无法序列化则用 str
+        - None 记录为空字符串
+        """
+        try:
+            if value is None:
+                return ""
+            if isinstance(value, (str, int, float, bool)):
+                return str(value)
+            if isinstance(value, bytes):
+                try:
+                    return value.decode("utf-8")
+                except Exception:
+                    return repr(value)
+            # 复杂结构尽量用 JSON 表示，保持可读性
+            return json.dumps(value, ensure_ascii=False, default=str)
+        except Exception:
+            return str(value)
+
+    def _serialize_metadata(self, metadata: Dict[str, Any]) -> Dict[str, str]:
+        """将 Document.metadata 转换为适合 hset(mapping=...) 的字典。"""
+        if not metadata:
+            return {}
+        serialized: Dict[str, str] = {}
+        for k, v in metadata.items():
+            try:
+                key_str = str(k)
+            except Exception:
+                key_str = json.dumps(k, ensure_ascii=False, default=str)
+            serialized[key_str] = self._normalize_metadata_value(v)
+        return serialized
 
     def _generate_doc_id(self, content: str) -> str:
         """生成文档ID"""
@@ -68,7 +107,7 @@ class RedisVectorStore:
 
                 # 存储元数据
                 meta_key = f"{self.metadata_prefix}:{doc_id}"
-                pipe.hset(meta_key, mapping=doc.metadata)
+                pipe.hset(meta_key, mapping=self._serialize_metadata(doc.metadata))
 
                 # 生成并存储向量
                 if self.embedding_model:
@@ -93,7 +132,10 @@ class RedisVectorStore:
                     try:
                         doc_id = self._generate_doc_id(doc.page_content)
                         self.redis_client.set(f"{self.doc_prefix}:{doc_id}", doc.page_content)
-                        self.redis_client.hset(f"{self.metadata_prefix}:{doc_id}", mapping=doc.metadata)
+                        self.redis_client.hset(
+                            f"{self.metadata_prefix}:{doc_id}",
+                            mapping=self._serialize_metadata(doc.metadata),
+                        )
                         if self.embedding_model:
                             embedding = await self.embedding_model.aembed_query(doc.page_content)
                             vector_bytes = pickle.dumps(np.array(embedding))
@@ -168,6 +210,61 @@ class RedisVectorStore:
         except Exception as e:
             logger.error(f"相似性搜索失败: {e}")
             return []
+
+    def _get_all_doc_ids(self) -> List[str]:
+        try:
+            if self.redis_client.exists(self.vector_index_key):
+                raw_ids = self.redis_client.smembers(self.vector_index_key)
+                return [rid.decode() if isinstance(rid, bytes) else str(rid) for rid in raw_ids]
+            return []
+        except Exception:
+            return []
+
+    def _find_doc_ids_by_field(self, field: str, value: str) -> List[str]:
+        """通过元数据字段精确匹配查找文档ID（全量扫描索引）。"""
+        try:
+            doc_ids = self._get_all_doc_ids()
+            if not doc_ids:
+                return []
+            pipe = self.redis_client.pipeline()
+            for doc_id in doc_ids:
+                pipe.hget(f"{self.metadata_prefix}:{doc_id}", field)
+            raw = pipe.execute()
+            matched: List[str] = []
+            for i, v in enumerate(raw):
+                if v is None:
+                    continue
+                try:
+                    vs = v.decode() if isinstance(v, bytes) else str(v)
+                except Exception:
+                    continue
+                if vs == value:
+                    matched.append(doc_ids[i])
+            return matched
+        except Exception:
+            return []
+
+    def delete_by_record_id(self, record_id: str) -> int:
+        """按数据库记录ID删除对应的文档（若存在）。"""
+        try:
+            ids = self._find_doc_ids_by_field("record_id", str(record_id))
+            if not ids:
+                return 0
+            self.delete_documents(ids)
+            return len(ids)
+        except Exception:
+            return 0
+
+    def delete_by_title(self, title: str) -> int:
+        """按标题删除（用于迁移前数据清理的兜底操作）。"""
+        try:
+            ids = self._find_doc_ids_by_field("title", title)
+            if not ids:
+                return 0
+            self.delete_documents(ids)
+            return len(ids)
+        except Exception:
+            return 0
 
     def _build_documents_from_ids(self, ranked_ids: List[tuple]) -> List[Document]:
         """根据排名好的 (doc_id, score) 列表批量构建Document列表"""
@@ -289,6 +386,14 @@ class RedisVectorStore:
                 pipe.delete(f"{self.vector_prefix}:{doc_id}")
                 pipe.delete(f"{self.metadata_prefix}:{doc_id}")
                 pipe.srem(self.vector_index_key, doc_id)
+                # 从 rid 索引集合中清除（如存在）
+                try:
+                    rid_val = self.redis_client.hget(f"{self.metadata_prefix}:{doc_id}", "record_id")
+                    if rid_val is not None:
+                        rid_str = rid_val.decode() if isinstance(rid_val, bytes) else str(rid_val)
+                        pipe.srem(f"{self.rid_index_prefix}:{rid_str}", doc_id)
+                except Exception:
+                    pass
             pipe.execute()
             logger.info(f"删除了 {len(doc_ids)} 个文档")
             # 同步更新缓存
@@ -302,6 +407,16 @@ class RedisVectorStore:
                             pass
         except Exception as e:
             logger.error(f"删除文档失败: {e}")
+
+    def delete_by_content(self, content: str) -> bool:
+        """根据原始内容删除对应文档（通过内容哈希命中）。"""
+        try:
+            doc_id = hashlib.md5(content.encode()).hexdigest()
+            self.delete_documents([doc_id])
+            return True
+        except Exception as e:
+            logger.error(f"按内容删除文档失败: {e}")
+            return False
 
     def get_document_count(self) -> int:
         """获取文档数量"""

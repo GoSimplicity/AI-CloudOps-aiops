@@ -302,6 +302,27 @@ async def run_async_func_safely(func, *args, **kwargs):
         raise
 
 
+def run_async_func_in_background(func, *args, **kwargs) -> None:
+    """
+    将异步函数放到后台线程执行，不阻塞当前请求。
+    - 在新线程中创建事件循环并运行到完成
+    - 后台线程为 daemon，进程退出时自动结束
+    """
+    def _bg_target():
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(func(*args, **kwargs))
+            finally:
+                loop.close()
+        except Exception as ex:
+            logger.error(f"后台异步任务执行失败: {str(ex)}")
+
+    t = threading.Thread(target=_bg_target, daemon=True)
+    t.start()
+
+
 # 统一响应
 
 
@@ -448,20 +469,25 @@ async def assistant_session_create(body: AutoAssistantSessionReq):
 
 @router.post("/assistant/knowledge/refresh")
 async def assistant_knowledge_refresh():
-    """重新加载知识库到向量存储。"""
+    """触发知识库刷新为异步后台任务，立即返回不阻塞。"""
     try:
         agent = get_assistant_agent()
         if agent is None:
             raise HTTPException(status_code=500, detail="智能小助手服务未正确初始化")
 
-        # 清空缓存并刷新
+        # 清空缓存
         try:
             agent.clear_cache()
         except Exception:
             pass
 
-        result = await run_async_func_safely(agent.refresh_knowledge_base)
-        return create_success_response("知识库刷新成功", {"timestamp": iso_utc_now(), **(result or {})})
+        # 后台执行刷新任务
+        run_async_func_in_background(agent.refresh_knowledge_base)
+
+        return create_success_response(
+            "知识库刷新任务已启动",
+            {"timestamp": iso_utc_now(), "status": "started"},
+        )
     except HTTPException:
         raise
     except Exception as ex:
@@ -484,22 +510,36 @@ async def assistant_knowledge_create(body: AutoAssistantDocumentReq):
         title = body.title or f"Document_{int(time.time())}"
         metadata = body.metadata or {}
 
-        # 先入向量库
-        # 优先使用异步接口，避免阻塞
-        added = await run_async_func_safely(agent.add_document_async, content, metadata)
+        # 先入向量库（带上将来用于幂等更新/删除的标识字段，DB入库后无法提前知道ID，这里先写标题兜底）
+        meta_for_vec = {**(metadata or {}), "title": title}
+        added = await run_async_func_safely(agent.add_document_async, content, meta_for_vec)
         if not added:
             raise HTTPException(status_code=500, detail="添加到向量库失败")
 
         # DB 入库
         try:
             with session_scope() as db:
-                db.add(
-                    DocumentRecord(
-                        title=title,
-                        content=content,
-                        metadata_json=json.dumps(metadata, ensure_ascii=False) if metadata else None,
-                    )
+                rec = DocumentRecord(
+                    title=title,
+                    content=content,
+                    metadata_json=json.dumps(metadata, ensure_ascii=False) if metadata else None,
                 )
+                db.add(rec)
+                db.flush()
+                # 回写 record_id 到向量库：删除基于标题的临时向量，改为使用记录ID重建，避免后续多版本
+                try:
+                    # 删除旧(title)映射
+                    try:
+                        _ = agent.vector_store_manager.delete_by_title(title)
+                    except Exception:
+                        pass
+                    # 新建带 record_id 的文档
+                    _ = asyncio.get_running_loop()
+                    # 已在事件循环：走异步添加
+                    _ = await agent.add_document_async(content, {**(metadata or {}), "record_id": str(rec.id), "title": title})
+                except RuntimeError:
+                    # 无事件循环：走安全包装
+                    _ = await run_async_func_safely(agent.add_document_async, content, {**(metadata or {}), "record_id": str(rec.id), "title": title})
         except Exception:
             pass
 
@@ -530,7 +570,7 @@ async def assistant_knowledge_create(body: AutoAssistantDocumentReq):
 
 @router.put("/assistant/knowledge/update/{id}")
 async def assistant_knowledge_update(id: int, body: AssistantDocumentUpdateReq):
-    """更新知识（更新DB；向量库更新采用追加或建议后续刷新）。"""
+    """更新知识：先更新DB，再对向量库执行幂等更新，移除旧版本，仅保留新内容。"""
     try:
         with session_scope() as db:
             from sqlalchemy import select
@@ -546,11 +586,23 @@ async def assistant_knowledge_update(id: int, body: AssistantDocumentUpdateReq):
                 rec.metadata_json = json.dumps(body.metadata, ensure_ascii=False)
             db.add(rec)
 
-        # 简单策略：若更新了内容，尝试再追加一次到向量库以提升召回；如需精确删除请使用 refresh
+        # 若更新了内容：删除该记录ID历史向量，随后写入新内容，避免旧内容残留
         try:
             if body.content:
                 agent = get_assistant_agent()
-                _ = await run_async_func_safely(agent.add_document_async, body.content, body.metadata or {})
+                # 先移除旧版本
+                try:
+                    deleted = agent.vector_store_manager.delete_by_record_id(str(id))
+                    logger.info(f"知识更新：删除记录ID={id} 关联向量 {deleted} 条")
+                except Exception as _ex:
+                    logger.warning(f"删除旧向量失败（记录ID={id}）：{_ex}")
+
+                # 再追加新版本（携带 record_id 和 title 以便后续幂等清理）
+                metadata = body.metadata or {}
+                metadata = {**metadata, "record_id": str(id)}
+                if body.title is not None:
+                    metadata.setdefault("title", body.title)
+                _ = await run_async_func_safely(agent.add_document_async, body.content, metadata)
         except Exception:
             pass
 
