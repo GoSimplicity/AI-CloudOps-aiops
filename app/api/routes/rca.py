@@ -30,8 +30,6 @@ from app.models.request_models import (
     AutoRCACorrelationReq,
     AutoRCAAnomalyReq,
     AutoRCATimelineReq,
-    RCARecordCreateReq,
-    RCARecordUpdateReq,
     RCARecordListReq,
 )
 from app.models.response_models import APIResponse, PaginatedListAPIResponse
@@ -127,7 +125,6 @@ async def list_rca_records(params: RCARecordListReq = Depends()):
                     end_time=r.end_time,
                     metrics=r.metrics,
                     namespace=r.namespace,
-                    service_name=r.service_name,
                     status=r.status,
                     summary=r.summary,
                     created_at=r.created_at.isoformat() if r.created_at else None,
@@ -145,39 +142,6 @@ async def list_rca_records(params: RCARecordListReq = Depends()):
         ).model_dump()
 
 
-@router.post("/rca/records/create")
-async def create_rca_record(payload: RCARecordCreateReq):
-    try:
-        with session_scope() as session:
-            rec = RCAAnalysisRecord(
-                start_time=payload.start_time,
-                end_time=payload.end_time,
-                metrics=payload.metrics,
-                namespace=payload.namespace,
-                service_name=payload.service_name,
-                status=payload.status or "ok",
-                summary=payload.summary,
-            )
-            session.add(rec)
-            session.flush()
-            entity = RCARecordEntity(
-                id=rec.id,
-                start_time=rec.start_time,
-                end_time=rec.end_time,
-                metrics=rec.metrics,
-                namespace=rec.namespace,
-                service_name=rec.service_name,
-                status=rec.status,
-                summary=rec.summary,
-                created_at=rec.created_at.isoformat() if rec.created_at else None,
-                updated_at=rec.updated_at.isoformat() if rec.updated_at else None,
-            )
-        return APIResponse(
-            code=0, message="created", data=entity.model_dump()
-        ).model_dump()
-    except Exception as e:
-        logger.error(f"create_rca_record 失败: {e}")
-        raise HTTPException(status_code=500, detail="create record failed") from e
 
 
 @router.get("/rca/records/detail/{record_id}")
@@ -195,7 +159,6 @@ async def get_rca_record_db(record_id: int):
                 end_time=r.end_time,
                 metrics=r.metrics,
                 namespace=r.namespace,
-                service_name=r.service_name,
                 status=r.status,
                 summary=r.summary,
                 created_at=r.created_at.isoformat() if r.created_at else None,
@@ -207,46 +170,6 @@ async def get_rca_record_db(record_id: int):
         raise HTTPException(status_code=500, detail="get record failed") from e
 
 
-@router.put("/rca/records/update/{record_id}")
-async def update_rca_record(record_id: int, payload: RCARecordUpdateReq):
-    try:
-        with session_scope() as session:
-            r = session.get(RCAAnalysisRecord, record_id)
-            if not r or r.deleted_at is not None:
-                return APIResponse(
-                    code=404, message="not found", data=None
-                ).model_dump()
-            for field in (
-                "start_time",
-                "end_time",
-                "metrics",
-                "namespace",
-                "service_name",
-                "status",
-                "summary",
-            ):
-                value = getattr(payload, field)
-                if value is not None:
-                    setattr(r, field, value)
-            session.add(r)
-            entity = RCARecordEntity(
-                id=r.id,
-                start_time=r.start_time,
-                end_time=r.end_time,
-                metrics=r.metrics,
-                namespace=r.namespace,
-                service_name=r.service_name,
-                status=r.status,
-                summary=r.summary,
-                created_at=r.created_at.isoformat() if r.created_at else None,
-                updated_at=r.updated_at.isoformat() if r.updated_at else None,
-            )
-        return APIResponse(
-            code=0, message="updated", data=entity.model_dump()
-        ).model_dump()
-    except Exception as e:
-        logger.error(f"update_rca_record 失败: {e}")
-        raise HTTPException(status_code=500, detail="update record failed") from e
 
 
 @router.delete("/rca/records/delete/{record_id}")
@@ -303,14 +226,14 @@ async def create_root_cause_analysis(request_data: AutoRCAAnalyzeReq):
 
         # 调用根因分析服务
         try:
-            analysis_result = await rca_analyzer.analyze(
+                analysis_result = await rca_analyzer.analyze(
                 request_data.start_time,
                 request_data.end_time,
                 request_data.metrics,
                 include_logs=request_data.include_logs,
-                include_traces=request_data.include_traces,
+                include_traces=None,
                 namespace=request_data.namespace,
-                service_name=request_data.service_name,
+                service_name=None,
             )
         except Exception as analysis_error:
             logger.error(f"根因分析执行失败: {str(analysis_error)}")
@@ -329,7 +252,7 @@ async def create_root_cause_analysis(request_data: AutoRCAAnalyzeReq):
                         if request_data.metrics
                         else None,
                         namespace=request_data.namespace,
-                        service_name=request_data.service_name,
+                        service_name=None,
                         status="ok",
                         summary=(
                             analysis_result.get("summary")
@@ -393,7 +316,7 @@ async def create_rca_job(request_data: AutoRCAJobReq):
             flags={
                 "request_override": config.rca.request_override,
                 "logs_enabled": config.logs.enabled,
-                "tracing_enabled": config.tracing.enabled,
+                "tracing_enabled": False,
             },
         )
         return APIResponse(
@@ -426,7 +349,7 @@ async def get_job_detail(job_id: str = Path(..., description="RCA任务ID")):
         payload["flags"] = {
             "request_override": config.rca.request_override,
             "logs_enabled": config.logs.enabled,
-            "tracing_enabled": config.tracing.enabled,
+            "tracing_enabled": False,
         }
         entity = RCAJobDetailEntity(data=payload)
         return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
@@ -454,7 +377,7 @@ async def list_available_metrics():
             flags={
                 "request_override": config.rca.request_override,
                 "logs_enabled": config.logs.enabled,
-                "tracing_enabled": config.tracing.enabled,
+                "tracing_enabled": False,
             },
         )
         return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
@@ -509,7 +432,7 @@ async def list_topology(
             flags={
                 "request_override": config.rca.request_override,
                 "logs_enabled": config.logs.enabled,
-                "tracing_enabled": config.tracing.enabled,
+                "tracing_enabled": False,
             },
         )
         return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
@@ -803,7 +726,6 @@ async def get_rca_record(record_id: int):
                 end_time=rec.end_time,
                 metrics=rec.metrics,
                 namespace=rec.namespace,
-                service_name=rec.service_name,
                 status=rec.status,
                 summary=rec.summary,
                 created_at=rec.created_at.isoformat() if rec.created_at else None,
@@ -866,7 +788,7 @@ async def rca_health():
                 "flags": {
                     "request_override": config.rca.request_override,
                     "logs_enabled": config.logs.enabled,
-                    "tracing_enabled": config.tracing.enabled,
+                    "tracing_enabled": False,
                 },
             },
         ).model_dump()

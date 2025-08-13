@@ -84,6 +84,9 @@ class RCAAnalyzer:
                     else (include_traces and config.tracing.enabled)
                 )
 
+            # 项目目前仅支持基于K8s的事件与状态分析，暂不支持Trace分析
+            should_collect_traces = False
+
             metrics_data = await self._collect_metrics_data(
                 start_time, end_time, metrics
             )

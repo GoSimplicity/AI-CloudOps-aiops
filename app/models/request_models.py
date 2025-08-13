@@ -32,13 +32,13 @@ class RCARequest(BaseModel):
         None, ge=1, le=config.rca.max_time_range, description="时间范围（分钟）"
     )
     include_logs: bool = Field(default=False, description="是否包含容器日志证据")
-    include_traces: bool = Field(
-        default=False, description="是否包含Trace/OTel/Jaeger证据"
-    )
+    # include_traces: bool = Field(
+    #     default=False, description="是否包含Trace/OTel/Jaeger证据（暂时禁用）"
+    # )
     namespace: Optional[str] = Field(
         default=None, description="目标命名空间，缺省为配置默认"
     )
-    service_name: Optional[str] = Field(default=None, description="Trace服务名过滤")
+    # service_name: Optional[str] = Field(default=None, description="Trace服务名过滤（暂时禁用）")
 
     @field_validator("start_time", "end_time", mode="before")
     def parse_datetime(cls, v):
@@ -313,27 +313,6 @@ class PredictionRecordListReq(PaginationReq):
     prediction_type: Optional[str] = None
 
 
-# === RCA 模块：DB 级 CRUD 请求模型 ===
-
-
-class RCARecordCreateReq(BaseModel):
-    start_time: str
-    end_time: str
-    metrics: Optional[str] = None
-    namespace: Optional[str] = None
-    service_name: Optional[str] = None
-    status: Optional[str] = "ok"
-    summary: Optional[str] = None
-
-
-class RCARecordUpdateReq(BaseModel):
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
-    metrics: Optional[str] = None
-    namespace: Optional[str] = None
-    service_name: Optional[str] = None
-    status: Optional[str] = None
-    summary: Optional[str] = None
 
 
 class RCARecordListReq(PaginationReq):

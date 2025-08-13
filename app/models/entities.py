@@ -233,7 +233,7 @@ class RCARecordEntity(BaseModel):
     end_time: str
     metrics: Optional[str] = None
     namespace: Optional[str] = None
-    service_name: Optional[str] = None
+    # service_name: Optional[str] = None  # 暂时禁用 Trace 相关字段
     status: Optional[str] = None
     summary: Optional[str] = None
     created_at: Optional[str] = None
