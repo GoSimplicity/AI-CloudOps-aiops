@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops MCP k8sIngress管理工具
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: k8sIngress管理的MCP工具，提供Ingress路由的查看、创建、管理功能
+Description: 基于Redis的向量存储和检索系统
 """
-
 import asyncio
 from datetime import timezone
 from typing import Any, Dict

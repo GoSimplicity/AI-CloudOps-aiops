@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 预测服务详细测试 - 提升核心预测模块的测试覆盖率
+Description: 基于Redis的向量存储和检索系统
 """
-
 import asyncio
 from datetime import datetime, timezone
 from unittest.mock import patch

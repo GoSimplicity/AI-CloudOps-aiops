@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops MCP k8s应用伸缩工具
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: k8s应用伸缩的MCP工具，提供Deployment、ReplicaSet等的伸缩功能
+Description: 基于Redis的向量存储和检索系统
 """
-
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, List

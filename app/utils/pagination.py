@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-分页和搜索工具模块
-提供列表数据的分页和搜索功能
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: 基于Redis的向量存储和检索系统
 """
-
 from typing import Any, Dict, List, Optional, Tuple
 
 

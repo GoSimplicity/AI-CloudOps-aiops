@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 智能助手模块 - 统一入口
+Description: 基于Redis的向量存储和检索系统
 """
-
 from .core import AssistantAgent
 from .models import FallbackChatModel, FallbackEmbeddings, SessionData
 from .models.config import AssistantConfig, assistant_config

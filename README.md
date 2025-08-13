@@ -29,12 +29,12 @@ docker compose up -d --build
 
 ## 预测
 
-- POST `/api/v1/predict`
+- POST `/api/v1/predict/create`
   - 简化：`{namespace, deployment, duration_minutes}` → 用 Prometheus 同步 `query_range` 估算平均 QPS，`ceil(avg_qps/30)` 给出 `predicted_replicas`
   - 扩展：`PredictionRequest`（`current_qps/use_prom/metric/selector/window/...`）→ 异步预测
   - 无法识别的请求返回 422
-- POST `/api/v1/predict/trend` 趋势预测
-- GET `/api/v1/predict/model/info`、`/api/v1/predict/model/validate`、`/api/v1/predict/health`
+- POST `/api/v1/predict/trend/create` 趋势预测
+- GET `/api/v1/predict/model/info/detail`、`/api/v1/predict/model/validate/detail`、`/api/v1/predict/health/detail`
 
 ## 根因分析（RCA）
 
@@ -47,11 +47,12 @@ docker compose up -d --build
 - POST `/api/v1/autofix/notify` 使用 `NotificationService.send_webhook(url, payload)`
 - GET/DELETE `/api/v1/autofix/records/{id}`、GET `/api/v1/autofix/health`、GET `/api/v1/history`
 
-## 助手与多智能体/存储
+## 助手与多智能体
 
-- 助手：GET `/api/v1/assistant/health`、POST `/api/v1/assistant/chat`、POST `/api/v1/assistant/search`
-- 多智能体：GET `/api/v1/multi-agent/status`、POST `/api/v1/multi-agent/execute`、GET `/api/v1/multi-agent/coordination`
-- 存储：GET `/api/v1/storage/health`、POST `/api/v1/storage/upload`、GET `/api/v1/storage/documents`、DELETE `/api/v1/storage/documents/{doc_id}`
+- 助手：GET `/api/v1/assistant/health/detail`、POST `/api/v1/assistant/chat/create`、POST `/api/v1/assistant/search/list`
+- 多智能体：GET `/api/v1/multi-agent/status/detail`、POST `/api/v1/multi-agent/execute`、GET `/api/v1/multi-agent/coordination/detail`
+
+说明：`storage` 模块已移除，相关端点不再提供。
 
 ## 测试与质量
 

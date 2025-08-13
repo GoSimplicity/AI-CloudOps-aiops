@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops K8s工具基类
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: Kubernetes工具的基类，提供通用的Kubernetes操作功能
+Description: 基于Redis的向量存储和检索系统
 """
-
 import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor

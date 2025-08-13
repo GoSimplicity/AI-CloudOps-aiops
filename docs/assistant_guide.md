@@ -1,158 +1,183 @@
-# AI-CloudOps 智能小助手使用指南
+```mermaid
+graph TD
+  A["API /assistant/chat"] --> B["GetOrCreate Session"]
+  B --> C{"Mode"}
+  C -- "MCP" --> MC["MCP Client (tools)\nexecute/tools"]
+  MC --> Z["Persist History + Response"]
 
-## 1. 简介
+  C -- "RAG" --> C0["Cache Lookup (Redis)\nkey=session+question"]
+  C0 -- "Hit" --> Z
+  C0 -- "Miss" --> D["Normalize Query\n(clean, dedupe, detect lang)"]
+  D --> E["Intent & Safety Gate\n(classify: info/howto/troubleshoot; PII/PII-safe)"]
+  E --> F["Multi-Query Rewrite\n(LangGraph node)"]
+  F --> G["Hybrid Retrieve (optional)\n(Vector kNN + keyword)"]
+  G --> H["Re-rank (optional)\n(Cross-Encoder/BGE/Jina) + TF-IDF fallback"]
+  H --> I["Context Compression\n(MMR + summarization)"]
+  I --> J["Answer Synthesis\n(LLM w/ citations)"]
+  J --> K["Attribution & Grounding Check\n(source coverage, quote match)"]
+  K --> L{"Confidence < threshold?"}
+  L -- "Yes" --> F
+  L -- "No" --> M["Calibrate Confidence\n(signal fusion)"]
+  M --> N["Cache Write (Redis)"]
+  N --> Z
 
-智能小助手是 AIOps 平台的一个核心模块，提供基于检索增强生成（RAG）的问答能力。它可以回答关于系统架构、功能特点、操作指南等问题，同时支持网络搜索增强功能，以提供更全面、准确的回答。
-
-本指南将帮助您了解如何使用智能小助手，以及如何扩展其知识库和功能。
-
-## 2. 主要功能
-
-智能小助手提供以下核心功能：
-
-- **知识库问答**：基于向量检索的本地知识库问答
-- **上下文会话**：支持多轮对话，保持上下文连贯性
-- **网络搜索增强**：可选的网络搜索功能，增强回答的广度和时效性
-- **推荐后续问题**：智能推荐相关的后续问题，引导用户深入了解
-- **相关度评分**：提供回答相关度的评分，帮助用户判断回答质量
-- **源文档引用**：展示回答依据的源文档，增加回答的可信度
-
-## 3. 使用方法
-
-### 3.1 WebUI 使用
-
-1. 启动 AIOps 平台后，访问 Web 界面
-2. 在左侧导航栏选择"智能小助手"
-3. 在输入框中输入您的问题，点击发送或按回车
-4. 查看智能小助手的回答及相关推荐
-
-### 3.2 API 调用（统一响应 APIResponse）
-
-智能小助手提供了 REST API 接口，可以方便地集成到其他系统中：
-
-```bash
-# 创建新会话
-curl -X POST http://localhost:8080/api/v1/sessions/create
-
-# 发送问题（不使用会话）
-curl -X POST http://localhost:8080/api/v1/queries/create \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "AIOps平台有哪些核心功能？",
-    "use_web_search": false
-  }'
-
-# 发送问题（使用会话）
-curl -X POST http://localhost:8080/api/v1/queries/create \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "它的根因分析功能如何工作？",
-    "session_id": "会话ID",
-    "use_web_search": true
-  }'
-
-# 刷新知识库
-curl -X POST http://localhost:8080/api/v1/knowledge/refresh
+  subgraph "LangGraph StateGraph"
+    D --> E --> F --> G --> H --> I --> J --> K --> L --> M --> N
+  end
 ```
 
-### 3.3 WebSocket 流式接口
-
-对于需要实时响应的场景，智能小助手还提供了 WebSocket 流式接口：
-
-```javascript
-// 前端示例代码
-const ws = new WebSocket("ws://localhost:8080/api/v1/assistant/stream");
-
-// 发送问题
-ws.send(
-  JSON.stringify({
-    question: "AIOps平台是什么？",
-    session_id: "可选会话ID",
-    use_web_search: false,
-  })
-);
-
-// 接收流式回答
-ws.onmessage = function (event) {
-  const data = JSON.parse(event.data);
-  if (data.type === "content") {
-    // 处理内容块
-    console.log(data.content);
-  } else if (data.type === "end") {
-    // 处理回答结束
-    console.log("回答完成", data.metadata);
+```mermaid
+classDiagram
+  class AssistantState {
+    +str session_id
+    +str question
+    +list~Message~ history
+    +list~str~ queries
+    +list~Document~ retrieved_docs
+    +list~(Document,float)~ reranked
+    +list~Document~ compressed_ctx
+    +str draft_answer
+    +float confidence
+    +dict telemetry
   }
-};
+
+  class Nodes {
+    +normalize_query()
+    +intent_and_safety()
+    +rewrite_queries()
+    +hybrid_retrieve()
+    +rerank()
+    +compress_context()
+    +synthesize_answer()
+    +grounding_check()
+    +calibrate_confidence()
+    +cache_read_write()
+  }
+
+  AssistantState <.. Nodes: read/write
 ```
 
-## 4. 知识库扩展
+### 流程图
 
-智能小助手的知识库位于`data/knowledge_base`目录下，您可以通过以下方式扩展知识库：
+```mermaid
+graph TD
+  A["API /assistant/chat"] --> B["GetOrCreate Session"]
+  B --> C{"Mode"}
+  C -- "MCP" --> MC["MCP Client (tools)\nexecute/tools"]
+  MC --> Z["Persist History + Response"]
 
-### 4.1 添加 Markdown 文档
+  C -- "RAG" --> C0["Cache Lookup (Redis)\nkey=session+question"]
+  C0 -- "Hit" --> Z
+  C0 -- "Miss" --> D["Normalize Query\n(clean, dedupe, detect lang)"]
+  D --> E["Intent & Safety Gate\n(classify: info/howto/troubleshoot; PII/PII-safe)"]
+  E --> F["Multi-Query Rewrite\n(LangGraph node)"]
+  F --> G["Hybrid Retrieve (optional)\n(Vector kNN + keyword)"]
+  G --> H["Re-rank (optional)\n(Cross-Encoder/BGE/Jina) + TF-IDF fallback"]
+  H --> I["Context Compression\n(MMR + summarization)"]
+  I --> J["Answer Synthesis\n(LLM w/ citations)"]
+  J --> K["Attribution & Grounding Check\n(source coverage, quote match)"]
+  K --> L{"Confidence < threshold?"}
+  L -- "Yes" --> F
+  L -- "No" --> M["Calibrate Confidence\n(signal fusion)"]
+  M --> N["Cache Write (Redis)"]
+  N --> Z
 
-1. 创建 Markdown 格式的知识文档（.md 文件）
-2. 将文档放入`data/knowledge_base`目录
-3. 调用刷新知识库 API 或重启服务
-
-### 4.2 通过 API 动态添加知识
-
-```bash
-curl -X POST http://localhost:8080/api/v1/assistant/add-document \
-  -H "Content-Type: application/json" \
-  -d '{
-    "content": "AIOps平台是一个智能运维平台，专注于...",
-    "metadata": {
-      "source": "用户手册",
-      "author": "运维团队"
-    }
-  }'
+  subgraph "LangGraph StateGraph"
+    D --> E --> F --> G --> H --> I --> J --> K --> L --> M --> N
+  end
 ```
 
-## 5. 配置说明
+### 知识入库流水线
 
-智能小助手的配置位于`.env`文件或环境变量中，主要配置项包括：
+```mermaid
+graph TD
+  U["/assistant/knowledge/create | upload | update | refresh"] --> P1["Parse & Split\n(token-aware chunker)"]
+  P1 --> P2{"Doc Type"}
+  P2 -- "Text/MD" --> C1["Clean Markdown\n(remove boilerplate)"]
+  P2 -- "Others" --> C2["Light OCR/Extract"]
+  C1 --> E1
+  C2 --> E1
+  E1["Embedding Encode\n(Async batch)\nOpenAI/Ollama fallback"] --> V["VectorStore Upsert\n(Chroma/FAISS)\ncollection=assistant"]
+  V --> R1["Build BM25 Index\n(optional Whoosh/Lucene)"]
+  V --> R2["DocRanker.fit()\n(TFIDF model state)"]
+  R1 --> M1["Metadata Sync -> DB: DocumentRecord"]
+  R2 --> M1
+  M1 --> O["Warm Cache Keys\n(top queries heuristics)"]
+```
 
-| 配置项                   | 说明              | 默认值              |
-| ------------------------ | ----------------- | ------------------- |
-| RAG_VECTOR_DB_PATH       | 向量数据库路径    | data/vector_db      |
-| RAG_KNOWLEDGE_BASE_PATH  | 知识库路径        | data/knowledge_base |
-| RAG_CHUNK_SIZE           | 文档分块大小      | 1000                |
-| RAG_TOP_K                | 检索文档数量      | 4                   |
-| RAG_SIMILARITY_THRESHOLD | 相似度阈值        | 0.7                 |
-| TAVILY_API_KEY           | 网络搜索 API 密钥 | -                   |
+### LangGraph 全局状态
 
-## 6. 最佳实践
+```mermaid
+classDiagram
+  class AssistantState {
+    +str session_id
+    +str question
+    +list~Message~ history
+    +list~str~ queries
+    +list~Document~ retrieved_docs
+    +list~(Document,float)~ reranked
+    +list~Document~ compressed_ctx
+    +str draft_answer
+    +float confidence
+    +dict telemetry
+  }
 
-1. **明确提问**：提供具体、明确的问题，可以获得更准确的回答
-2. **利用会话功能**：多轮对话时使用同一会话 ID，保持上下文连贯性
-3. **合理使用网络搜索**：对于知识库中可能没有的最新信息，开启网络搜索功能
-4. **查看相关度评分**：根据相关度评分判断回答的质量和可信度
-5. **关注源文档**：查看回答的来源文档，了解信息的出处
+  class Nodes {
+    +normalize_query()
+    +intent_and_safety()
+    +rewrite_queries()
+    +hybrid_retrieve()
+    +rerank()
+    +compress_context()
+    +synthesize_answer()
+    +grounding_check()
+    +calibrate_confidence()
+    +cache_read_write()
+  }
 
-## 7. 故障排查
+  AssistantState <.. Nodes: read/write
+```
 
-| 问题         | 可能原因           | 解决方案                 |
-| ------------ | ------------------ | ------------------------ |
-| 回答不准确   | 知识库缺少相关信息 | 扩充知识库或开启网络搜索 |
-| 相关度评分低 | 问题超出知识范围   | 调整问题或使用网络搜索   |
-| 响应缓慢     | LLM 服务负载高     | 检查 LLM 服务状态或配置  |
-| 会话失效     | 会话超时或服务重启 | 创建新会话并重新提问     |
+### 配置项（与流程联动）
 
-## 8. 常见问题
+```yaml
+rag:
+  retrieve:
+    k: 12                    # 检索候选数量（默认12）
+    score_threshold: 0.0     # 相似阈值（默认0.0）
+    hybrid_enabled: false    # 可选：向量+关键词混合
+  reranker:
+    enabled: false           # 可选：交叉重排模型
+    model: bge-reranker-base
+    top_k: 20
+  iteration:
+    max_loops: 1             # 自我迭代最多轮次
+    retry_confidence_threshold: 0.6
+  compression:
+    mmr_top_k: 6             # 上下文去冗文档数
+    mmr_lambda: 0.7
+  answer:
+    max_chars: 300           # 生成答案最大字数
+    source_limit: 4          # 返回来源上限
+```
 
-**Q: 如何判断回答的质量？**
-A: 可以通过相关度评分和源文档引用来判断，分数越高，回答越可靠。
+说明：默认仅启用向量检索 + TF-IDF 排序的精简稳定路径；Hybrid 与 Re-rank 为可选增强，开启后对 RAG 召回与排序进行进一步优化。
 
-**Q: 智能小助手支持哪些语言？**
-A: 智能小助手主要支持中文交流，但也能理解简单的英文问题。
+### 关键设计与实现要点
 
-**Q: 如何提高回答的准确性？**
-A: 提供明确的问题，扩充专业领域的知识库，根据场景适当开启网络搜索。
+- 核心节点
+  - normalize_query: 清洗、归一化、语言检测、去重。
+  - intent_and_safety: 问题意图分类（info/howto/troubleshoot/overview），轻量安全检验（避免注入、PII）。
+  - rewrite_queries: 多变体改写（同义词/术语拼接/关键词组合），保留 ≤ 12 个候选。
+  - hybrid_retrieve: 向量检索 + 关键词/BM25 混合召回，扩大覆盖面。
+  - rerank: 交叉重排（可选 bge-reranker/jina-reranker）结合 TF-IDF 排序器，融合分数。
+  - compress_context: MMR 去冗 + 结构化摘要，限制上下文长度。
+  - synthesize_answer: 带来源引用的生成，平台类问题追加平台聚焦提示。
+  - grounding_check: 引用定位与覆盖率检查，必要时回退到 rewrite 节点循环一次。
+  - calibrate_confidence: 基于召回质量、重排分、覆盖率、答案长度等打分。
+  - cache_read_write: Redis 按 session+question+history 哈希缓存。
 
-## 9. 联系与支持
-
-如有任何问题或需求，请联系 AIOps 平台管理团队：
-
-- 邮箱：13664854532@163.com
-- 问题追踪：https://github.com/GoSimplicity/AI-CloudOps/issues
+- RAG 提质策略
+  - 多路召回（向量+BM25+关键词）、交叉重排、引用覆盖校验、置信度校准、低置信度自我迭代一跳。
+  - 平台概览/架构类问题的专门 prompt 附加，确保平台内容优先。
+  - 无召回时的最佳实践回退（保留你现有的优势，但作为 LangGraph 的降级分支）。

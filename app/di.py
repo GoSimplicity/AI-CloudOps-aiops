@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 简易依赖注入容器 - 提供按类型的单例获取，集中管理可复用服务实例
+Description: 基于Redis的向量存储和检索系统
 """
-
 from __future__ import annotations
 
 from threading import RLock

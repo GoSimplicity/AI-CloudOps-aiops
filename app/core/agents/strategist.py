@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
-K8s修复策略Agent - 专门负责制定修复策略
-Author: AI Assistant
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 基于检测结果制定最优修复策略的Agent
+Description: 基于Redis的向量存储和检索系统
 """
-
 import logging
 from typing import Any, Dict, List, Optional
 

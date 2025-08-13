@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-拓扑构建器：基于 K8s 状态构建资源依赖图（轻量占位实现）
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: 基于Redis的向量存储和检索系统
 """
-
 from __future__ import annotations
 
 from typing import Dict, List, Tuple

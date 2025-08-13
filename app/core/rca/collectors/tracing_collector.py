@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: Trace采集器 - 从Jaeger Query API拉取分布式链路追踪数据
+Description: 基于Redis的向量存储和检索系统
 """
-
 from __future__ import annotations
 
 from datetime import datetime

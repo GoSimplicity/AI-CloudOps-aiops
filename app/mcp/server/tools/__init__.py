@@ -1,11 +1,10 @@
 """
-AI-CloudOps-aiops MCP工具集合
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: MCP服务器工具模块
+Description: 基于Redis的向量存储和检索系统
 """
-
 from .calculator_tool import CalculatorTool, StatisticsTool, UnitConverterTool
 from .file_tool import FileListTool, FileReadTool, FileStatsTool
 from .k8s_base_tool import K8sBaseTool

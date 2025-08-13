@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
-K8s执行Agent - 执行修复操作
-Author: AI Assistant
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 执行具体修复操作的Agent
+Description: 基于Redis的向量存储和检索系统
 """
-
 import asyncio
 import logging
 import time
@@ -145,7 +143,7 @@ class K8sExecutorAgent:
                         logs = await self.k8s_service.get_recent_pod_logs(namespace=namespace, label_selector=f"app={name}", max_pods=3, tail_lines=tail, include_previous=False)
                         return {"success": True, "message": f"已收集日志 Pod={len(logs)}"}
                     if action == "validate_image_pull":
-                        pods = await self.k8s_service.get_pods(namespace=namespace, label_selector=f"app={name}")
+                        pods = await self.k8s_service.get_pods_async(namespace=namespace, label_selector=f"app={name}")
                         affected = []
                         for pod in pods or []:
                             pod_name = ((pod.get("metadata", {}) or {}).get("name") or "")
@@ -222,7 +220,7 @@ class K8sExecutorAgent:
                             "details": {"affected": affected[:20]},
                         }
                     if action == "validate_mount":
-                        pods = await self.k8s_service.get_pods(namespace=namespace, label_selector=f"app={name}")
+                        pods = await self.k8s_service.get_pods_async(namespace=namespace, label_selector=f"app={name}")
                         found = False
                         for pod in pods:
                             status = (pod.get("status", {}) or {})
@@ -319,7 +317,7 @@ class K8sExecutorAgent:
             
             # 检查状态
             if target.get("resource_type") == "deployment":
-                pods = await self.k8s_service.get_pods(namespace=namespace, label_selector=f"app={name}")
+                pods = await self.k8s_service.get_pods_async(namespace=namespace, label_selector=f"app={name}")
                 healthy_pods = sum(1 for pod in pods if pod.get("status", {}).get("phase") == "Running")
                 
                 return {

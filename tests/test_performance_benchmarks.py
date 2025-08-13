@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 性能基准测试 - 确保系统在各种负载条件下的性能表现
+Description: 基于Redis的向量存储和检索系统
 """
-
 import statistics
 import threading
 import time
@@ -72,30 +70,20 @@ class TestAPIPerformance:
     
     def test_prediction_endpoint_performance(self, client):
         """测试预测端点性能"""
-        payload = {
-            "namespace": "default",
-            "deployment": "test-app",
-            "current_qps": 100.0
-        }
-        
-        # 单次预测性能
+        # 改为测试趋势列表接口的性能
+        # 单次
         start_time = time.time()
-        response = client.post("/api/v1/predict", json=payload)
+        response = client.get("/api/v1/predict/trend/list", params={"hours_ahead": 6, "current_qps": 120.0})
         end_time = time.time()
-        
         assert response.status_code == 200
-        assert (end_time - start_time) < 2.0  # 2秒内完成预测
-        
-        # 多次预测性能稳定性
+        assert (end_time - start_time) < 2.0
+
+        # 多次稳定性
         response_times = []
         for i in range(20):
-            test_payload = payload.copy()
-            test_payload["deployment"] = f"test-app-{i}"
-            
             start_time = time.time()
-            response = client.post("/api/v1/predict", json=test_payload)
+            response = client.get("/api/v1/predict/trend/list", params={"hours_ahead": 6, "current_qps": 80.0 + i})
             end_time = time.time()
-            
             response_times.append(end_time - start_time)
             assert response.status_code == 200
         
@@ -142,16 +130,9 @@ class TestAPIPerformance:
     def test_high_load_prediction_requests(self, client):
         """测试高负载预测请求"""
         def make_prediction_request(request_id):
-            payload = {
-                "namespace": "load-test",
-                "deployment": f"app-{request_id}",
-                "current_qps": 50.0 + request_id
-            }
-            
             start_time = time.time()
-            response = client.post("/api/v1/predict", json=payload)
+            response = client.get("/api/v1/predict/trend/list", params={"hours_ahead": 6, "current_qps": 50.0 + request_id})
             end_time = time.time()
-            
             return {
                 "id": request_id,
                 "status_code": response.status_code,
@@ -462,12 +443,7 @@ class TestScalabilityBenchmarks:
     @pytest.mark.parametrize("request_load", [10, 50, 100, 200])
     def test_prediction_scalability_with_load(self, client, request_load):
         """测试不同请求负载下的预测API可扩展性"""
-        payload = {
-            "namespace": "scalability-test",
-            "deployment": "load-test-app",
-            "current_qps": 100.0
-        }
-        
+        # 使用趋势列表接口模拟负载
         successful_requests = 0
         total_response_time = 0
         
@@ -477,13 +453,9 @@ class TestScalabilityBenchmarks:
         max_workers = min(10, request_load // 5 + 1)
         
         def make_prediction_request(request_id):
-            test_payload = payload.copy()
-            test_payload["deployment"] = f"app-{request_id}"
-            
             req_start = time.time()
-            response = client.post("/api/v1/predict", json=test_payload)
+            response = client.get("/api/v1/predict/trend/list", params={"hours_ahead": 3, "current_qps": 100.0})
             req_end = time.time()
-            
             return {
                 "success": response.status_code == 200,
                 "response_time": req_end - req_start

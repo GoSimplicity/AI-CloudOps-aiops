@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
-K8s验证Agent - 在执行修复后进行效果验证与回归检测
-Author: AI Assistant
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 提供统一的验证能力（就绪率、事件、指标）
+Description: 基于Redis的向量存储和检索系统
 """
-
 import asyncio
 import logging
 from typing import Any, Dict, List
@@ -35,7 +33,7 @@ class K8sVerifierAgent:
         try:
             await asyncio.sleep(max(0, min(wait_seconds, 60)))
 
-            pods = await self.k8s_service.get_pods(namespace=namespace, label_selector=f"app={name}")
+            pods = await self.k8s_service.get_pods_async(namespace=namespace, label_selector=f"app={name}")
             total = len(pods)
             running_ready = 0
             not_ready_pods: List[str] = []

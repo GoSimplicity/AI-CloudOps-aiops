@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 主管代理 - 协调多个智能代理进行问题解决
+Description: 基于Redis的向量存储和检索系统
 """
-
 import logging
 from typing import Any, Dict
 
@@ -100,7 +98,7 @@ class SupervisorAgent:
 
             # 调用LLM服务进行智能路由决策
             messages = [{"role": "user", "content": full_prompt}]
-            response_text = await self.llm_service.generate_response(messages)
+            response_text = await self.llm_service.generate_response_async(messages)
 
             if not response_text:
                 logger.error("LLM响应为空")
@@ -216,7 +214,7 @@ class SupervisorAgent:
                 }
             ]
 
-            response = await self.llm_service.generate_response(messages)
+            response = await self.llm_service.generate_response_async(messages)
 
             try:
                 import json

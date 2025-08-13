@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: Redis缓存管理器 - 基于Redis的智能缓存管理系统，支持自动过期、LRU清理和数据压缩
+Description: 基于Redis的向量存储和检索系统
 """
-
 import gzip
 import hashlib
 import json
@@ -445,19 +443,34 @@ class RedisCacheManager:
             logger.error(f"缓存健康检查失败: {e}")
             return {"status": "unhealthy", "error": str(e), "redis_connected": False}
 
-    def shutdown(self):
-        """关闭缓存管理器"""
+    def shutdown(self, *, silent: bool = False):
+        """关闭缓存管理器
+
+        说明：
+        - 测试/进程退出阶段，logging 可能已关闭，避免在析构期间写日志导致 I/O on closed file。
+        - 通过 `silent=True` 抑制日志输出，仅执行资源释放。
+        """
         self._shutdown = True
         try:
             self.connection_pool.disconnect()
-            logger.info("Redis缓存管理器已关闭")
+            if not silent:
+                try:
+                    logger.info("Redis缓存管理器已关闭")
+                except Exception:
+                    # 进程退出阶段可能触发 logging 关闭，静默处理
+                    pass
         except Exception as e:
-            logger.warning(f"关闭Redis缓存连接时出错: {e}")
+            if not silent:
+                try:
+                    logger.warning(f"关闭Redis缓存连接时出错: {e}")
+                except Exception:
+                    pass
 
     def __del__(self):
         """清理资源"""
         if not self._shutdown:
             try:
-                self.shutdown()
+                # 在析构阶段静默释放，避免日志系统已关闭时写日志
+                self.shutdown(silent=True)
             except Exception:
                 pass

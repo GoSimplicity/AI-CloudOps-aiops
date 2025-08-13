@@ -65,10 +65,10 @@ python app/main.py
 
 #### HTTP接口
 
-- 查询: `POST /api/v1/queries/create`
-- 创建会话: `POST /api/v1/sessions/create`
-- 刷新知识库: `POST /api/v1/knowledge/refresh`
-- 添加文档: `POST /api/v1/documents/create`
+- 查询: `POST /api/v1/assistant/qa/create`
+- 创建会话: `POST /api/v1/assistant/runtime/sessions/create`
+- 刷新知识库: `POST /api/v1/assistant/knowledge/refresh/create`
+- 添加文档: `POST /api/v1/assistant/documents/create`
 
 详细接口文档请参考 [docs/assistant_guide.md](docs/assistant_guide.md)
 
@@ -77,6 +77,7 @@ python app/main.py
 连接URL: `ws://localhost:8080/api/v1/assistant/stream`
 
 客户端发送格式:
+
 ```json
 {
   "question": "AIOps平台有哪些功能？",
@@ -93,8 +94,9 @@ python app/main.py
 系统会自动加载`data/knowledge_base`目录下的所有`.md`和`.txt`文档。
 
 更新知识库:
+
 1. 在该目录中添加或修改文档
-2. 调用API刷新知识库: `POST /api/v1/assistant/refresh`
+2. 调用API刷新知识库: `POST /api/v1/assistant/knowledge/refresh/create`
 
 ## 4. 测试工具
 
@@ -107,6 +109,7 @@ python app/main.py
 - `scripts/test_all.py`: 全面测试所有功能
 
 运行测试:
+
 ```bash
 # 全面测试
 python scripts/test_all.py
@@ -129,27 +132,36 @@ python scripts/interactive_assistant.py
 ## 6. 常见问题和解决方案
 
 ### 6.1 模块导入问题
+
 如果遇到"No module named 'app'"错误，请确保正确设置PYTHONPATH：
+
 ```bash
 export PYTHONPATH=$PYTHONPATH:$(pwd)/..
 ```
+
 或使用提供的`scripts/start.sh`脚本启动。
 
 ### 6.2 依赖问题
+
 如果缺少依赖，请安装完整的requirements.txt：
+
 ```bash
 pip install -r requirements.txt
 ```
 
 ### 6.3 知识库加载问题
+
 如果知识库文档未正确加载：
+
 1. 确认文档存放在`data/knowledge_base`目录下
 2. 确认文件格式为`.md`或`.txt`
-3. 调用`/api/v1/assistant/refresh`刷新知识库
+3. 调用`/api/v1/assistant/knowledge/refresh/create`刷新知识库
 4. 检查日志文件获取详细错误信息
 
 ### 6.4 连接WebSocket错误
+
 如果无法连接WebSocket：
+
 1. 确认服务已正常启动
 2. 检查连接URL是否正确（ws://localhost:8080/api/v1/assistant/stream）
 3. 检查发送的消息格式是否正确

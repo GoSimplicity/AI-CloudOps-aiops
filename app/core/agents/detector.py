@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
-K8s错误检测Agent - 专门负责检测Kubernetes集群中的各种问题
-Author: AI Assistant
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 基于真实K8s API的集群状态检测和问题识别Agent
+Description: 基于Redis的向量存储和检索系统
 """
-
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
@@ -55,10 +53,10 @@ class K8sDetectorAgent:
         try:
             namespace = namespace or "default"
 
-            # 获取所有资源
-            deployments = await self.k8s_service.get_deployments(namespace) or []
-            pods = await self.k8s_service.get_pods(namespace) or []
-            services = await self.k8s_service.get_services(namespace) or []
+            # 获取所有资源（使用异步版本，返回清洗后的字典对象）
+            deployments = await self.k8s_service.get_deployments_async(namespace) or []
+            pods = await self.k8s_service.get_pods_async(namespace) or []
+            services = await self.k8s_service.get_services_async(namespace) or []
 
             issues = {
                 "timestamp": iso_utc_now(),
@@ -113,7 +111,7 @@ class K8sDetectorAgent:
             if not deployment:
                 return {"error": f"未找到部署: {deployment_name}"}
 
-            pods = await self.k8s_service.get_pods(
+            pods = await self.k8s_service.get_pods_async(
                 namespace=namespace, label_selector=f"app={deployment_name}"
             )
 
@@ -402,10 +400,10 @@ class K8sDetectorAgent:
         try:
             namespace = namespace or "default"
 
-            nodes = await self.k8s_service.get_nodes()
-            deployments = await self.k8s_service.get_deployments(namespace)
-            pods = await self.k8s_service.get_pods(namespace)
-            services = await self.k8s_service.get_services(namespace)
+            nodes = await self.k8s_service.get_nodes_async()
+            deployments = await self.k8s_service.get_deployments_async(namespace)
+            pods = await self.k8s_service.get_pods_async(namespace)
+            services = await self.k8s_service.get_services_async(namespace)
 
             # 计算资源使用情况
             total_pods = len(pods)

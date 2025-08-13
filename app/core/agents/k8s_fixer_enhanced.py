@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
-增强版Kubernetes智能修复代理
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 增强版的Kubernetes集群问题诊断和自动修复代理
+Description: 基于Redis的向量存储和检索系统
 """
-
 import asyncio
 import logging
 import time
@@ -77,7 +74,7 @@ class EnhancedK8sFixerAgent:
             if not deployment:
                 return {}
 
-            pods = await self.k8s_service.get_pods(
+            pods = await self.k8s_service.get_pods_async(
                 namespace=namespace, label_selector=f"app={name}"
             )
 
@@ -253,7 +250,7 @@ class EnhancedK8sFixerAgent:
         try:
             await asyncio.sleep(10)  # 等待修复生效
             
-            pods = await self.k8s_service.get_pods(
+            pods = await self.k8s_service.get_pods_async(
                 namespace=namespace, label_selector=f"app={deployment_name}"
             )
             

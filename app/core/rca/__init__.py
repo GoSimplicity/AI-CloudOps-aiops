@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 根因分析模块初始化文件，提供智能故障诊断和根因分析功能
+Description: 基于Redis的向量存储和检索系统
 """
-
 from .analyzer import RCAAnalyzer
 from .correlator import CorrelationAnalyzer
 from .detector import AnomalyDetector

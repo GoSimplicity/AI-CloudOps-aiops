@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops MCP文件操作工具
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 文件和目录操作的MCP工具
+Description: 基于Redis的向量存储和检索系统
 """
-
 import os
 from typing import Any, Dict
 

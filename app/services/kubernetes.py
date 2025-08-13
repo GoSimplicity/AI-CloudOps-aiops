@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: Kubernetes服务模块 - 提供Kubernetes集群管理、Pod操作和自动化修复功能
+Description: 基于Redis的向量存储和检索系统
 """
-
 import logging
 import os
 import time
@@ -122,13 +120,32 @@ class KubernetesService:
 
     def _ensure_initialized(self):
         """确保Kubernetes客户端已初始化"""
-        if not self.initialized:
-            self._try_init()
+        # 已初始化直接返回
+        if self.initialized:
+            return True
+
+        # 单元测试或上层可注入 mock API 客户端：
+        # 若检测到注入的 `core_v1_api`/`apps_v1_api`，则视为可用，避免真实集群依赖
+        if getattr(self, "core_v1_api", None) or getattr(self, "apps_v1_api", None):
+            return True
+
+        # 尝试初始化真实客户端
+        self._try_init()
         if not self.initialized:
             logger.warning("Kubernetes未初始化，相关功能将返回模拟数据或空值")
             logger.info("提示：请确保Kubernetes集群正在运行，或检查kubeconfig配置")
 
         return self.initialized  # 返回实际的初始化状态
+
+    def get_nodes(self) -> List[Any]:
+        """获取节点列表（同步，便于简单统计与单元测试）。"""
+        if not self._ensure_initialized():
+            return []
+        try:
+            nodes = self.core_v1.list_node()
+            return nodes.items or []
+        except Exception:
+            return []
 
     async def get_deployment(self, name: str, namespace: str = None) -> Optional[Dict]:
         """获取Deployment信息"""
@@ -370,6 +387,61 @@ class KubernetesService:
         except Exception as e:
             logger.error(f"获取Deployment状态失败: {str(e)}")
             return None
+
+    async def get_nodes_async(self) -> List[Dict[str, Any]]:
+        """获取节点列表（异步版本，返回字典）。"""
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法获取节点列表")
+            return []
+        try:
+            nodes = self.core_v1.list_node()
+            node_list: List[Dict[str, Any]] = []
+            for n in nodes.items or []:
+                node_dict = n.to_dict() if hasattr(n, "to_dict") else {}
+                node_dict = self._clean_metadata(node_dict)
+                node_list.append(node_dict)
+            return node_list
+        except Exception as e:
+            logger.error(f"获取节点列表失败: {str(e)}")
+            return []
+
+    async def patch_deployment(
+        self,
+        name: str,
+        patch: Dict[str, Any],
+        namespace: Optional[str] = None,
+        *,
+        dry_run: bool = False,
+        field_manager: str = "aiops",
+    ) -> bool:
+        """对 Deployment 执行 JSON Merge Patch。
+
+        说明：
+        - 统一由各 Agent 调用；若 dry_run=True 则仅做服务端验证。
+        - 返回是否成功。
+        """
+        if not self._ensure_initialized():
+            logger.warning("Kubernetes未初始化，无法Patch Deployment")
+            return False
+        try:
+            ns = namespace or config.k8s.namespace
+            kwargs: Dict[str, Any] = {
+                "name": name,
+                "namespace": ns,
+                "body": patch,
+                "field_manager": field_manager,
+            }
+            if dry_run:
+                kwargs["dry_run"] = "All"
+            # 使用 AppsV1Api 的 patch_namespaced_deployment
+            resp = self.apps_v1.patch_namespaced_deployment(**kwargs)
+            return resp is not None
+        except ApiException as e:
+            logger.error(f"Patch Deployment失败: {name}, ns={namespace}, err={str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"Patch Deployment异常: {name}, ns={namespace}, err={str(e)}")
+            return False
 
     async def get_deployments_async(self, namespace: str = None) -> List[Dict]:
         """获取所有Deployment列表（异步版本）"""

@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 应用程序配置管理模块
+Description: 基于Redis的向量存储和检索系统
 """
-
 import json
 import os
 from dataclasses import dataclass, field
@@ -415,26 +413,44 @@ class RAGConfig:
     knowledge_base_path: str = field(
         default_factory=lambda: get_env_or_config("RAG_KNOWLEDGE_BASE_PATH", "rag.knowledge_base_path", "data/knowledge_base")
     )
-    chunk_size: int = field(
-        default_factory=lambda: get_env_or_config("RAG_CHUNK_SIZE", "rag.chunk_size", 1000, int)
+    # 仅保留当前使用字段
+
+    # LangGraph/RAG 细粒度控制
+    retrieve_k: int = field(
+        default_factory=lambda: get_env_or_config("RAG_RETRIEVE_K", "rag.retrieve.k", 12, int)
     )
-    chunk_overlap: int = field(
-        default_factory=lambda: get_env_or_config("RAG_CHUNK_OVERLAP", "rag.chunk_overlap", 200, int)
+    score_threshold: float = field(
+        default_factory=lambda: get_env_or_config("RAG_SCORE_THRESHOLD", "rag.retrieve.score_threshold", 0.0, float)
     )
-    top_k: int = field(
-        default_factory=lambda: get_env_or_config("RAG_TOP_K", "rag.top_k", 4, int)
+    hybrid_enabled: bool = field(
+        default_factory=lambda: get_env_or_config("RAG_HYBRID_ENABLED", "rag.retrieve.hybrid_enabled", False, bool)
     )
-    similarity_threshold: float = field(
-        default_factory=lambda: get_env_or_config("RAG_SIMILARITY_THRESHOLD", "rag.similarity_threshold", 0.7, float)
+    reranker_enabled: bool = field(
+        default_factory=lambda: get_env_or_config("RAG_RERANKER_ENABLED", "rag.reranker.enabled", False, bool)
     )
-    max_context_length: int = field(
-        default_factory=lambda: get_env_or_config("RAG_MAX_CONTEXT_LENGTH", "rag.max_context_length", 4000, int)
+    reranker_model: str = field(
+        default_factory=lambda: get_env_or_config("RAG_RERANKER_MODEL", "rag.reranker.model", "bge-reranker-base")
     )
-    temperature: float = field(
-        default_factory=lambda: get_env_or_config("RAG_TEMPERATURE", "rag.temperature", 0.1, float)
+    reranker_top_k: int = field(
+        default_factory=lambda: get_env_or_config("RAG_RERANKER_TOP_K", "rag.reranker.top_k", 20, int)
     )
-    cache_expiry: int = field(
-        default_factory=lambda: get_env_or_config("RAG_CACHE_EXPIRY", "rag.cache_expiry", 3600, int)
+    iter_max_loops: int = field(
+        default_factory=lambda: get_env_or_config("RAG_ITER_MAX_LOOPS", "rag.iteration.max_loops", 1, int)
+    )
+    retry_confidence_threshold: float = field(
+        default_factory=lambda: get_env_or_config("RAG_RETRY_CONFIDENCE_THRESHOLD", "rag.iteration.retry_confidence_threshold", 0.6, float)
+    )
+    mmr_top_k: int = field(
+        default_factory=lambda: get_env_or_config("RAG_MMR_TOP_K", "rag.compression.mmr_top_k", 6, int)
+    )
+    mmr_lambda: float = field(
+        default_factory=lambda: get_env_or_config("RAG_MMR_LAMBDA", "rag.compression.mmr_lambda", 0.7, float)
+    )
+    answer_max_chars: int = field(
+        default_factory=lambda: get_env_or_config("RAG_ANSWER_MAX_CHARS", "rag.answer.max_chars", 300, int)
+    )
+    source_limit: int = field(
+        default_factory=lambda: get_env_or_config("RAG_SOURCE_LIMIT", "rag.answer.source_limit", 4, int)
     )
 
 

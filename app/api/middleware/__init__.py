@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 中间件模块初始化文件，配置CORS和错误处理中间件
+Description: 基于Redis的向量存储和检索系统
 """
-
 from fastapi import FastAPI
 
 from .cors import setup_cors

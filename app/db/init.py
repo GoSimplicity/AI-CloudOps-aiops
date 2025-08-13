@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-数据库初始化：创建引擎、会话工厂、并提供建表方法
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: 基于Redis的向量存储和检索系统
 """
-
 from sqlalchemy import text
 
 from .base import Base, get_engine

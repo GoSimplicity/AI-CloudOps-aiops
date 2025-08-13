@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 时间工具模块 - 统一时区为UTC，提供标准化的时间获取与格式化
+Description: 基于Redis的向量存储和检索系统
 """
-
 from __future__ import annotations
 
 from datetime import datetime, timezone

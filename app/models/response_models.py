@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: API响应模型 - 定义所有API端点的标准化响应结构，确保一致的格式和类型
+Description: 基于Redis的向量存储和检索系统
 """
-
 from typing import Any, Dict, Generic, List, Optional, TypeVar
 
 from pydantic import BaseModel

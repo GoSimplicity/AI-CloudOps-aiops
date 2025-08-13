@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-定义 cl_aiops_ 前缀的数据表模型：
-- cl_aiops_queries: 问答请求与结果快照
-- cl_aiops_rca_analyses: RCA 分析记录
-- cl_aiops_autofix_jobs: 自动修复任务记录
-- cl_aiops_predictions: 预测请求与结果记录
-- cl_aiops_notifications: 通知发送记录
-- cl_aiops_sessions: 助手会话记录
-- cl_aiops_documents: 文档记录
-
-每表包含 id, created_at, updated_at, deleted_at 基础字段。
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: 基于Redis的向量存储和检索系统
 """
-
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -112,4 +105,24 @@ class DocumentRecord(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class WorkflowRecord(Base, TimestampMixin):
+    __tablename__ = "cl_aiops_workflows"
+
+    workflow_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    namespace: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    target: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON 字符串
+
+
+class HealthSnapshotRecord(Base, TimestampMixin):
+    __tablename__ = "cl_aiops_health_snapshots"
+
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    components: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON 字符串
+    system: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON 字符串
+    version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    uptime: Mapped[Optional[float]] = mapped_column(nullable=True)
 

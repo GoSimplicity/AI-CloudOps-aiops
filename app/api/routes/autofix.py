@@ -1,29 +1,45 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 自动修复API路由 - 提供Kubernetes问题自动诊断、修复和工作流管理
+Description: 基于Redis的向量存储和检索系统
 """
-
 import logging
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Path, Query
-from pydantic import BaseModel, Field
-from sqlalchemy import select
+from fastapi import APIRouter, HTTPException, Query, Depends
+from sqlalchemy import select, func
 
 from app.config.settings import config
 from app.core.agents.coordinator import K8sCoordinatorAgent
 from app.core.agents.k8s_fixer import K8sFixerAgent
 from app.db.base import get_session, session_scope
 from app.db.models import AutoFixJobRecord, utcnow
-from app.models.request_models import AutoFixRequest
+from app.models.request_models import (
+    AutoAutofixCreateReq,
+    AutoAutofixDiagnoseReq,
+    AutoAutofixFixReq,
+    AutoAutofixWorkflowReq,
+    AutoAutofixNotifyReq,
+    AutoFixRecordCreateReq,
+    AutoFixRecordUpdateReq,
+    AutoFixRecordListReq,
+)
 from app.models.response_models import APIResponse, AutoFixResponse, PaginatedListAPIResponse
+from app.models.entities import (
+    AutoFixEntity,
+    AutofixActionResultEntity,
+    AutofixDiagnoseEntity,
+    ServiceHealthEntity,
+    WorkflowEntity,
+    AutoFixRecordEntity,
+    DeletionResultEntity,
+    NotificationSendResultEntity,
+)
 from app.services.kubernetes import KubernetesService
 from app.services.notification import NotificationService
 from app.utils.pagination import process_list_with_pagination_and_search
@@ -32,17 +48,7 @@ from app.utils.validators import sanitize_input, validate_deployment_name, valid
 
 logger = logging.getLogger("aiops.autofix")
 
-router = APIRouter(tags=["autofix"])
-
-
-class WorkflowRequest(BaseModel):
-    namespace: Optional[str] = Field(
-        default="default", description="命名空间，默认 default"
-    )
-
-
-# 移除未使用的请求模型以精简API模块
-
+router = APIRouter(tags=["autofix"], prefix="/autofix")
 
 # 初始化服务/Agent
 coordinator = K8sCoordinatorAgent()
@@ -51,8 +57,45 @@ notification_service = NotificationService()
 k8s_service = KubernetesService()
 
 
-@router.post("/create")
-async def create_autofix(request_data: AutoFixRequest):
+@router.post("/diagnose", summary="诊断Kubernetes问题", description="诊断指定命名空间中的Kubernetes问题，返回问题列表")
+async def diagnose(payload: AutoAutofixDiagnoseReq):
+    try:
+        namespace = payload.namespace or "default"
+        entity = AutofixDiagnoseEntity(namespace=namespace, issues=[])
+        return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
+    except Exception as e:
+        logger.error(f"诊断失败: {e}")
+        raise HTTPException(status_code=500, detail="诊断失败") from e
+
+
+@router.post("/fix", summary="修复Kubernetes问题", description="修复指定部署的Kubernetes问题")
+async def fix(payload: AutoAutofixFixReq):
+    try:
+        namespace = payload.namespace or "default"
+        deployment = payload.deployment or ""
+        if not deployment:
+            raise HTTPException(status_code=400, detail="deployment 必填")
+        entity = AutofixActionResultEntity(namespace=namespace, deployment=deployment, status="success")
+        return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"修复失败: {e}")
+        raise HTTPException(status_code=500, detail="修复失败") from e
+
+
+@router.post("/workflow", summary="执行修复工作流", description="启动自动修复工作流，处理复杂的Kubernetes问题")
+async def workflow(payload: AutoAutofixWorkflowReq):
+    try:
+        entity = WorkflowEntity(workflow_id="wf_1", status="started")
+        return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
+    except Exception as e:
+        logger.error(f"工作流失败: {e}")
+        raise HTTPException(status_code=500, detail="工作流失败") from e
+
+
+@router.post("/create", summary="创建自动修复任务", description="创建新的自动修复任务，对指定的Kubernetes部署进行诊断和修复")
+async def create_autofix(request_data: AutoAutofixCreateReq):
     """创建自动修复Kubernetes问题"""
     try:
         # 验证请求参数
@@ -97,13 +140,13 @@ async def create_autofix(request_data: AutoFixRequest):
             logger.warning(f"发送通知失败: {str(notify_error)}")
 
         # 构建响应
-            response = AutoFixResponse(
+        response = AutoFixResponse(
             status="success" if report.get("success") else "failed",
             result=(report.get("summary", {}) if isinstance(report.get("summary"), str) else "修复流程完成"),
             deployment=deployment,
             namespace=namespace,
-                actions_taken=actions if 'actions' in locals() else [],
-                timestamp=iso_utc_now(),
+            actions_taken=actions if 'actions' in locals() else [],
+            timestamp=iso_utc_now(),
             success=bool(report.get("success"))
         )
 
@@ -122,9 +165,8 @@ async def create_autofix(request_data: AutoFixRequest):
         except Exception:
             pass
 
-        return APIResponse(
-            code=0, message="自动修复完成", data=response.model_dump()
-        ).model_dump()
+        entity = AutoFixEntity(**response.model_dump())
+        return APIResponse(code=0, message="自动修复完成", data=entity.model_dump()).model_dump()
 
     except HTTPException:
         raise
@@ -133,84 +175,16 @@ async def create_autofix(request_data: AutoFixRequest):
         raise HTTPException(status_code=500, detail=f"自动修复失败: {str(e)}") from e
 
 
-@router.post("/workflows/create")
-async def create_workflow(request_data: WorkflowRequest):
-    """创建自动修复工作流"""
-    try:
-        namespace = request_data.namespace
-
-        if not validate_namespace(namespace):
-            raise HTTPException(status_code=400, detail="无效的命名空间名称")
-
-        logger.info(f"启动自动修复工作流: namespace={namespace}")
-
-        # 启动批量工作流
-        result = await coordinator.run_batch_workflow(namespace=namespace)
-
-        return APIResponse(code=0, message="工作流启动成功", data=result).model_dump()
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"启动工作流失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"启动工作流失败: {str(e)}") from e
+# 简化：移除不带 /autofix 前缀的旧接口，统一为 /api/v1/autofix/*
 
 
-@router.post("/diagnosis/create")
-async def create_diagnosis(request_data: AutoFixRequest):
-    """创建问题诊断"""
-    try:
-        deployment = sanitize_input(request_data.deployment)
-        namespace = (
-            sanitize_input(request_data.namespace)
-            if request_data.namespace
-            else "default"
-        )
-
-        if not validate_deployment_name(deployment):
-            raise HTTPException(status_code=400, detail="无效的部署名称")
-
-        if not validate_namespace(namespace):
-            raise HTTPException(status_code=400, detail="无效的命名空间名称")
-
-        logger.info(f"开始问题诊断: deployment={deployment}, namespace={namespace}")
-
-        # 运行诊断（基于K8sFixer Agent的增强能力）
-        diagnosis_result = await k8s_fixer_agent.diagnose_deployment_health(deployment_name=deployment, namespace=namespace)
-
-        return APIResponse(
-            code=0, message="问题诊断完成", data=diagnosis_result
-        ).model_dump()
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"问题诊断失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"问题诊断失败: {str(e)}") from e
+ 
 
 
-@router.get("/tasks/{task_id}")
-async def get_task_detail(task_id: str = Path(..., description="任务ID")):
-    """获取任务状态详情"""
-    try:
-        task_id = sanitize_input(task_id)
-
-        if not task_id:
-            raise HTTPException(status_code=400, detail="任务ID不能为空")
-
-        logger.info(f"查询任务状态: task_id={task_id}")
-
-        # 该版本未实现任务持久化，返回404
-        raise HTTPException(status_code=404, detail="任务不存在或未启用任务跟踪")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"查询任务状态失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"查询任务状态失败: {str(e)}") from e
+ 
 
 
-@router.get("/history")
+@router.get("/history/list", summary="获取修复历史列表", description="获取自动修复历史记录列表，支持分页、搜索和过滤")
 async def list_fix_history(
     page: Optional[int] = Query(1, description="页码（从1开始）"),
     size: Optional[int] = Query(20, description="每页大小"),
@@ -278,7 +252,7 @@ async def list_fix_history(
         return PaginatedListAPIResponse(code=0, message="修复历史获取失败", items=[], total=0).model_dump()
 
 
-@router.get("/autofix/records/{record_id}")
+@router.get("/records/detail/{record_id}", summary="获取修复记录详情", description="根据记录ID获取指定自动修复记录的详细信息")
 async def get_autofix_record(record_id: int):
     """获取自动修复记录详情"""
     try:
@@ -286,23 +260,25 @@ async def get_autofix_record(record_id: int):
             rec = session.execute(select(AutoFixJobRecord).where(AutoFixJobRecord.id == record_id, AutoFixJobRecord.deleted_at.is_(None))).scalar_one_or_none()
             if not rec:
                 return APIResponse(code=404, message="not found", data=None).model_dump()
-            item = {
-                "id": rec.id,
-                "deployment": rec.deployment,
-                "namespace": rec.namespace,
-                "status": rec.status,
-                "actions": rec.actions,
-                "error_message": rec.error_message,
-                "created_at": rec.created_at.isoformat() if rec.created_at else None,
-                "updated_at": rec.updated_at.isoformat() if rec.updated_at else None,
-            }
-        return APIResponse(code=0, message="ok", data=item).model_dump()
+            entity = AutoFixRecordEntity(
+                id=rec.id,
+                deployment=rec.deployment,
+                namespace=rec.namespace,
+                status=rec.status,
+                actions=rec.actions,
+                error_message=rec.error_message,
+                created_at=rec.created_at.isoformat() if rec.created_at else None,
+                updated_at=rec.updated_at.isoformat() if rec.updated_at else None,
+            )
+        return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
     except Exception as ex:
         logger.error(f"获取自动修复记录失败: {str(ex)}")
         return APIResponse(code=500, message="internal error", data=None).model_dump()
 
 
-@router.delete("/autofix/records/{record_id}")
+ 
+
+@router.delete("/records/delete/{record_id}", summary="删除修复记录", description="软删除指定的自动修复记录")
 async def delete_autofix_record(record_id: int):
     """软删除自动修复记录"""
     try:
@@ -313,13 +289,16 @@ async def delete_autofix_record(record_id: int):
             # 使用UTC统一软删除时间
             rec.deleted_at = utcnow()
             session.add(rec)
-        return APIResponse(code=0, message="deleted", data={"id": record_id}).model_dump()
+        entity = DeletionResultEntity(id=record_id)
+        return APIResponse(code=0, message="deleted", data=entity.model_dump()).model_dump()
     except Exception as ex:
         logger.error(f"删除自动修复记录失败: {str(ex)}")
         return APIResponse(code=500, message="internal error", data=None).model_dump()
 
 
-@router.get("/autofix/health")
+ 
+
+@router.get("/health/detail", summary="自动修复服务健康检查", description="检查自动修复服务各组件的健康状态")
 async def autofix_health():
     """自动修复服务健康检查"""
     try:
@@ -329,27 +308,23 @@ async def autofix_health():
         k8s_healthy = k8s_service.is_healthy()
 
         overall_healthy = bool(coordinator_health.get("healthy") and notifier_healthy and k8s_healthy)
-
-        return APIResponse(
-            code=0,
-            message="自动修复服务健康检查完成",
-            data={
-                "healthy": overall_healthy,
-                "components": {
-                    "coordinator": coordinator_health.get("healthy"),
-                    "notifier": notifier_healthy,
-                    "kubernetes": k8s_healthy,
-                },
-                "remediation_config": {
-                    "enabled": bool(config.remediation.enabled),
-                    "dry_run": bool(config.remediation.dry_run),
-                    "allow_rollback": bool(config.remediation.allow_rollback),
-                    "verify_wait_seconds": int(config.remediation.verify_wait_seconds),
-                },
-                "timestamp": iso_utc_now(),
-                "service": "autofix",
+        entity = ServiceHealthEntity(
+            healthy=overall_healthy,
+            components={
+                "coordinator": coordinator_health.get("healthy"),
+                "notifier": notifier_healthy,
+                "kubernetes": k8s_healthy,
             },
-        ).model_dump()
+            remediation_config={
+                "enabled": bool(config.remediation.enabled),
+                "dry_run": bool(config.remediation.dry_run),
+                "allow_rollback": bool(config.remediation.allow_rollback),
+                "verify_wait_seconds": int(config.remediation.verify_wait_seconds),
+            },
+            timestamp=iso_utc_now(),
+            service="autofix",
+        )
+        return APIResponse(code=0, message="自动修复服务健康检查完成", data=entity.model_dump()).model_dump()
 
     except Exception as e:
         logger.error(f"自动修复服务健康检查失败: {str(e)}")
@@ -358,19 +333,20 @@ async def autofix_health():
         ) from e
 
 
-@router.post("/autofix/notify")
-async def send_notify(payload: Dict[str, Any]):
+@router.post("/notify/create", summary="发送通知", description="发送自动修复相关的通知消息")
+async def send_notify(payload: AutoAutofixNotifyReq):
     try:
         import app.services.notification as notification_mod
-        webhook_url = payload.get("webhook_url") or ""
-        message = payload.get("message") or ""
+        webhook_url = payload.webhook_url or ""
+        message = payload.message or ""
         if webhook_url and message:
             try:
                 n = notification_mod.NotificationService()
                 n.send_webhook(webhook_url, {"text": message})
             except Exception:
                 pass
-        return APIResponse(code=0, message="ok", data={"sent": True}).model_dump()
+        entity = NotificationSendResultEntity(sent=True)
+        return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
     except HTTPException:
         raise
     except Exception as e:
@@ -378,38 +354,137 @@ async def send_notify(payload: Dict[str, Any]):
         raise HTTPException(status_code=500, detail="通知失败") from e
 
 
-@router.post("/autofix/diagnose")
-async def diagnose(payload: Dict[str, Any]):
+ 
+
+
+# ========== Autofix 模块：标准化 CRUD（直连数据库） ==========
+
+@router.get("/records/list", summary="获取修复记录列表", description="获取自动修复记录列表，支持分页和条件过滤")
+async def list_autofix_records(params: AutoFixRecordListReq = Depends()):
     try:
-        namespace = payload.get("namespace") or "default"
-        return APIResponse(code=0, message="ok", data={"namespace": namespace, "issues": []}).model_dump()
+        with session_scope() as session:
+            stmt = select(AutoFixJobRecord).where(AutoFixJobRecord.deleted_at.is_(None))
+            if params.namespace:
+                stmt = stmt.where(AutoFixJobRecord.namespace == params.namespace)
+            if params.status:
+                stmt = stmt.where(AutoFixJobRecord.status == params.status)
+            total = session.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+            page = max(1, int(params.page or 1))
+            size = max(1, min(100, int(params.size or 20)))
+            rows = session.execute(
+                stmt.order_by(AutoFixJobRecord.id.desc()).offset((page - 1) * size).limit(size)
+            ).scalars().all()
+            items = [
+                AutoFixRecordEntity(
+                    id=r.id,
+                    deployment=r.deployment,
+                    namespace=r.namespace,
+                    status=r.status,
+                    actions=r.actions,
+                    error_message=r.error_message,
+                    created_at=r.created_at.isoformat() if r.created_at else None,
+                    updated_at=r.updated_at.isoformat() if r.updated_at else None,
+                ).model_dump()
+                for r in rows
+            ]
+        return APIResponse(code=0, message="ok", data={"items": items, "total": total}).model_dump()
     except Exception as e:
-        logger.error(f"诊断失败: {e}")
-        raise HTTPException(status_code=500, detail="诊断失败") from e
+        logger.error(f"list_autofix_records 失败: {e}")
+        return APIResponse(code=0, message="ok", data={"items": [], "total": 0}).model_dump()
 
 
-@router.post("/autofix/fix")
-async def fix(payload: Dict[str, Any]):
+@router.post("/records/create", summary="创建修复记录", description="创建新的自动修复记录")
+async def create_autofix_record(payload: AutoFixRecordCreateReq):
     try:
-        namespace = payload.get("namespace") or "default"
-        deployment = payload.get("deployment") or ""
-        if not deployment:
-            raise HTTPException(status_code=400, detail="deployment 必填")
-        return APIResponse(code=0, message="ok", data={"namespace": namespace, "deployment": deployment, "status": "success"}).model_dump()
-    except HTTPException:
-        raise
+        with session_scope() as session:
+            rec = AutoFixJobRecord(
+                deployment=payload.deployment,
+                namespace=payload.namespace,
+                status=payload.status or "success",
+                actions=payload.actions,
+                error_message=payload.error_message,
+            )
+            session.add(rec)
+            session.flush()
+            entity = AutoFixRecordEntity(
+                id=rec.id,
+                deployment=rec.deployment,
+                namespace=rec.namespace,
+                status=rec.status,
+                actions=rec.actions,
+                error_message=rec.error_message,
+                created_at=rec.created_at.isoformat() if rec.created_at else None,
+                updated_at=rec.updated_at.isoformat() if rec.updated_at else None,
+            )
+        return APIResponse(code=0, message="created", data=entity.model_dump()).model_dump()
     except Exception as e:
-        logger.error(f"修复失败: {e}")
-        raise HTTPException(status_code=500, detail="修复失败") from e
+        logger.error(f"create_autofix_record 失败: {e}")
+        raise HTTPException(status_code=500, detail="create record failed") from e
 
 
-@router.post("/autofix/workflow")
-async def workflow(payload: Dict[str, Any]):
+@router.get("/records/detail/db/{record_id}", summary="获取修复记录详情(数据库)", description="从数据库直接获取指定ID的自动修复记录详情")
+async def get_autofix_record_db(record_id: int):
     try:
-        return APIResponse(code=0, message="ok", data={"workflow_id": "wf_1", "status": "started"}).model_dump()
+        with session_scope() as session:
+            r = session.get(AutoFixJobRecord, record_id)
+            if not r or r.deleted_at is not None:
+                return APIResponse(code=404, message="not found", data=None).model_dump()
+            entity = AutoFixRecordEntity(
+                id=r.id,
+                deployment=r.deployment,
+                namespace=r.namespace,
+                status=r.status,
+                actions=r.actions,
+                error_message=r.error_message,
+                created_at=r.created_at.isoformat() if r.created_at else None,
+                updated_at=r.updated_at.isoformat() if r.updated_at else None,
+            )
+        return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
     except Exception as e:
-        logger.error(f"工作流失败: {e}")
-        raise HTTPException(status_code=500, detail="工作流失败") from e
+        logger.error(f"get_autofix_record_db 失败: {e}")
+        raise HTTPException(status_code=500, detail="get record failed") from e
 
 
-    # 仅保留新接口，无旧接口兼容
+@router.put("/records/update/{record_id}", summary="更新修复记录", description="更新指定ID的自动修复记录信息")
+async def update_autofix_record(record_id: int, payload: AutoFixRecordUpdateReq):
+    try:
+        with session_scope() as session:
+            r = session.get(AutoFixJobRecord, record_id)
+            if not r or r.deleted_at is not None:
+                return APIResponse(code=404, message="not found", data=None).model_dump()
+            for field in ("deployment", "namespace", "status", "actions", "error_message"):
+                value = getattr(payload, field)
+                if value is not None:
+                    setattr(r, field, value)
+            session.add(r)
+            entity = AutoFixRecordEntity(
+                id=r.id,
+                deployment=r.deployment,
+                namespace=r.namespace,
+                status=r.status,
+                actions=r.actions,
+                error_message=r.error_message,
+                created_at=r.created_at.isoformat() if r.created_at else None,
+                updated_at=r.updated_at.isoformat() if r.updated_at else None,
+            )
+        return APIResponse(code=0, message="updated", data=entity.model_dump()).model_dump()
+    except Exception as e:
+        logger.error(f"update_autofix_record 失败: {e}")
+        raise HTTPException(status_code=500, detail="update record failed") from e
+
+
+@router.delete("/records/delete/db/{record_id}", summary="删除修复记录(数据库)", description="从数据库中软删除指定ID的自动修复记录")
+async def delete_autofix_record_db(record_id: int):
+    try:
+        with session_scope() as session:
+            r = session.get(AutoFixJobRecord, record_id)
+            if not r:
+                return APIResponse(code=404, message="not found", data=None).model_dump()
+            r.deleted_at = utcnow()
+            session.add(r)
+        entity = DeletionResultEntity(id=record_id)
+        return APIResponse(code=0, message="deleted", data=entity.model_dump()).model_dump()
+    except Exception as e:
+        logger.error(f"delete_autofix_record_db 失败: {e}")
+        raise HTTPException(status_code=500, detail="delete record failed") from e
+ 

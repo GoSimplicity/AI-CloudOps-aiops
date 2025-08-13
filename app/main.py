@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 主应用模块 - 提供FastAPI应用的创建和初始化功能
+Description: 基于Redis的向量存储和检索系统
 """
-
 import logging
 import time
 from contextlib import asynccontextmanager

@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 通知服务模块 - 提供多渠道通知功能，支持飞书、邮件等通知方式的集成
+Description: 基于Redis的向量存储和检索系统
 """
-
 import json
 import logging
 import re
@@ -74,7 +72,10 @@ class NotificationService:
     async def send_feishu_message(
         self, message: str, title: str = "AIOps通知", color: str = "blue"
     ) -> bool:
-        """发送飞书消息"""
+        """发送飞书消息。
+
+        说明：统一在此构造卡片并发送，避免在其它方法中出现不可达代码。
+        """
         if not self.enabled or not self.feishu_webhook:
             logger.warning("通知服务未启用或未配置Webhook")
             return False
@@ -148,6 +149,19 @@ class NotificationService:
             except Exception:
                 pass
             return False
+
+    async def send_notification(self, title: str, message: str, level: str = "info") -> bool:
+        """统一通知入口，按级别选择卡片颜色并发送飞书通知。
+
+        - level: info/warning/error → blue/yellow/red
+        """
+        color_map = {
+            "info": "blue",
+            "warning": "yellow",
+            "error": "red",
+        }
+        color = color_map.get((level or "info").lower(), "blue")
+        return await self.send_feishu_message(message=message, title=title, color=color)
 
     async def send_rca_alert(
         self,

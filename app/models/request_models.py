@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: API请求模型 - 定义用于验证和解析传入API请求的Pydantic模型，包含适当的验证规则
+Description: 基于Redis的向量存储和检索系统
 """
-
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -33,8 +31,12 @@ class RCARequest(BaseModel):
         None, ge=1, le=config.rca.max_time_range, description="时间范围（分钟）"
     )
     include_logs: bool = Field(default=False, description="是否包含容器日志证据")
-    include_traces: bool = Field(default=False, description="是否包含Trace/OTel/Jaeger证据")
-    namespace: Optional[str] = Field(default=None, description="目标命名空间，缺省为配置默认")
+    include_traces: bool = Field(
+        default=False, description="是否包含Trace/OTel/Jaeger证据"
+    )
+    namespace: Optional[str] = Field(
+        default=None, description="目标命名空间，缺省为配置默认"
+    )
     service_name: Optional[str] = Field(default=None, description="Trace服务名过滤")
 
     @field_validator("start_time", "end_time", mode="before")
@@ -83,11 +85,19 @@ class PredictionRequest(BaseModel):
     include_confidence: bool = Field(default=True, description="是否包含置信度")
     # Prometheus 取数相关可选参数
     use_prom: bool = Field(default=False, description="是否从Prometheus读取当前QPS")
-    metric: Optional[str] = Field(default=None, description="Prometheus指标名，如http_requests_total")
-    selector: Optional[str] = Field(default=None, description="Prometheus标签选择器，如job=\"svc\"")
-    window: Optional[str] = Field(default="1m", description="Prometheus速率窗口，如1m/5m")
+    metric: Optional[str] = Field(
+        default=None, description="Prometheus指标名，如http_requests_total"
+    )
+    selector: Optional[str] = Field(
+        default=None, description='Prometheus标签选择器，如job="svc"'
+    )
+    window: Optional[str] = Field(
+        default="1m", description="Prometheus速率窗口，如1m/5m"
+    )
     # 周期执行控制（单位：分钟）
-    interval_minutes: Optional[int] = Field(default=None, ge=1, le=1440, description="预测任务的建议执行周期（分钟）")
+    interval_minutes: Optional[int] = Field(
+        default=None, ge=1, le=1440, description="预测任务的建议执行周期（分钟）"
+    )
 
     @field_validator("current_qps")
     def validate_qps(cls, v):
@@ -96,4 +106,399 @@ class PredictionRequest(BaseModel):
         return v
 
 
-# 备注：助手请求模型未被路由使用（助手路由内有独立模型），移除冗余定义
+# === 统一 AutoXXXReq 请求模型（供所有接口使用） ===
+
+
+# Assistant 请求
+class AutoAssistantQueryReq(BaseModel):
+    question: str
+    session_id: Optional[str] = None
+    mode: Optional[str] = "normal"
+
+
+class AutoAssistantSessionReq(BaseModel):
+    session_id: Optional[str] = None
+
+
+class AutoAssistantDocumentReq(BaseModel):
+    content: str
+    title: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class AutoAssistantChatReq(BaseModel):
+    query: str
+    session_id: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
+    mode: Optional[int] = Field(default=1, ge=1, le=2, description="聊天模式：1=RAG，2=MCP")
+
+
+class AutoAssistantSearchReq(BaseModel):
+    query: str
+
+
+# Autofix 请求
+class AutoAutofixDiagnoseReq(BaseModel):
+    namespace: Optional[str] = Field(default="default")
+    deployment: Optional[str] = None
+
+
+class AutoAutofixFixReq(BaseModel):
+    namespace: str = Field(default="default")
+    deployment: str
+    # 兼容测试/工作流里可能传入的可选字段（不参与业务校验）
+    issues: Optional[List[str]] = None
+    auto_approve: Optional[bool] = None
+
+
+class AutoAutofixWorkflowReq(BaseModel):
+    workflow_type: Optional[str] = None
+    namespace: Optional[str] = "default"
+    target: Optional[str] = None
+
+
+class AutoAutofixCreateReq(AutoFixRequest):
+    pass
+
+
+class AutoAutofixNotifyReq(BaseModel):
+    webhook_url: Optional[str] = None
+    message: Optional[str] = None
+
+
+# Prediction 请求
+class AutoPredictReq(PredictionRequest):
+    pass
+
+
+class AutoTrendReq(BaseModel):
+    hours_ahead: int = 24
+    current_qps: Optional[float] = None
+    use_prom: bool = False
+    metric: Optional[str] = None
+    selector: Optional[str] = None
+    window: Optional[str] = "1m"
+
+
+# Multi-Agent 请求
+class AutoMultiAgentRepairReq(BaseModel):
+    deployment: str
+    namespace: Optional[str] = "default"
+
+
+class AutoMultiAgentRepairAllReq(BaseModel):
+    namespace: Optional[str] = "default"
+
+
+class AutoMultiAgentClusterReq(BaseModel):
+    cluster_name: Optional[str] = "default"
+
+
+class AutoMultiAgentExecuteReq(BaseModel):
+    task_type: str
+    priority: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+
+    # 兼容返回任务ID/状态的上层逻辑，虽由服务端生成，但保留可选占位不影响校验
+    # 注意：这些字段不会被接口作为输入使用，仅为了保持模型通用性（不在API中读取）。
+    task_id: Optional[str] = None
+    status: Optional[str] = None
+
+
+# === 列表/查询类请求（用于覆盖GET查询参数的结构化模型，便于统一文档/使用） ===
+
+
+# === 通用分页与过滤参数 ===
+
+
+class PaginationReq(BaseModel):
+    page: Optional[int] = 1
+    size: Optional[int] = 20
+
+
+# === Assistant 模块：DB 级 CRUD 请求模型 ===
+
+
+class AssistantQueryCreateReq(BaseModel):
+    session_id: Optional[str] = None
+    question: str
+    answer: Optional[str] = None
+    mode: Optional[str] = None
+
+
+class AssistantQueryUpdateReq(BaseModel):
+    session_id: Optional[str] = None
+    question: Optional[str] = None
+    answer: Optional[str] = None
+    mode: Optional[str] = None
+
+
+class AssistantSessionCreateReq(BaseModel):
+    session_id: str
+    note: Optional[str] = None
+
+
+class AssistantSessionUpdateReq(BaseModel):
+    session_id: Optional[str] = None
+    note: Optional[str] = None
+
+
+class AssistantDocumentCreateReq(BaseModel):
+    title: str
+    content: str
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class AssistantDocumentUpdateReq(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class AssistantQueryListReq(PaginationReq):
+    session_id: Optional[str] = None
+    mode: Optional[str] = None
+    q: Optional[str] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+
+
+class AssistantSessionListReq(PaginationReq):
+    session_id: Optional[str] = None
+
+
+class AssistantDocumentListReq(PaginationReq):
+    title: Optional[str] = None
+
+
+# === Prediction 模块：DB 级 CRUD 请求模型 ===
+
+
+class PredictionRecordCreateReq(BaseModel):
+    current_qps: Optional[float] = None
+    input_timestamp: Optional[str] = None
+    use_prom: Optional[bool] = None
+    metric: Optional[str] = None
+    selector: Optional[str] = None
+    window: Optional[str] = None
+    instances: Optional[int] = None
+    confidence: Optional[float] = None
+    model_version: Optional[str] = None
+    prediction_type: Optional[str] = None
+    features: Optional[Dict[str, Any]] = None
+    schedule_interval_minutes: Optional[int] = None
+
+
+class PredictionRecordUpdateReq(BaseModel):
+    current_qps: Optional[float] = None
+    input_timestamp: Optional[str] = None
+    use_prom: Optional[bool] = None
+    metric: Optional[str] = None
+    selector: Optional[str] = None
+    window: Optional[str] = None
+    instances: Optional[int] = None
+    confidence: Optional[float] = None
+    model_version: Optional[str] = None
+    prediction_type: Optional[str] = None
+    features: Optional[Dict[str, Any]] = None
+    schedule_interval_minutes: Optional[int] = None
+
+
+class PredictionRecordListReq(PaginationReq):
+    metric: Optional[str] = None
+    model_version: Optional[str] = None
+    prediction_type: Optional[str] = None
+
+
+# === RCA 模块：DB 级 CRUD 请求模型 ===
+
+
+class RCARecordCreateReq(BaseModel):
+    start_time: str
+    end_time: str
+    metrics: Optional[str] = None
+    namespace: Optional[str] = None
+    service_name: Optional[str] = None
+    status: Optional[str] = "ok"
+    summary: Optional[str] = None
+
+
+class RCARecordUpdateReq(BaseModel):
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    metrics: Optional[str] = None
+    namespace: Optional[str] = None
+    service_name: Optional[str] = None
+    status: Optional[str] = None
+    summary: Optional[str] = None
+
+
+class RCARecordListReq(PaginationReq):
+    namespace: Optional[str] = None
+    status: Optional[str] = None
+    search: Optional[str] = None
+
+
+# === Autofix 模块：DB 级 CRUD 请求模型 ===
+
+
+class AutoFixRecordCreateReq(BaseModel):
+    deployment: str
+    namespace: str = "default"
+    status: Optional[str] = "success"
+    actions: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class AutoFixRecordUpdateReq(BaseModel):
+    deployment: Optional[str] = None
+    namespace: Optional[str] = None
+    status: Optional[str] = None
+    actions: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class AutoFixRecordListReq(PaginationReq):
+    namespace: Optional[str] = None
+    status: Optional[str] = None
+    search: Optional[str] = None
+
+
+# === Multi-Agent 模块：DB 级 CRUD 请求模型 ===
+
+
+class WorkflowRecordCreateReq(BaseModel):
+    workflow_id: str
+    status: str
+    namespace: Optional[str] = None
+    target: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+
+class WorkflowRecordUpdateReq(BaseModel):
+    workflow_id: Optional[str] = None
+    status: Optional[str] = None
+    namespace: Optional[str] = None
+    target: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+
+class WorkflowRecordListReq(PaginationReq):
+    namespace: Optional[str] = None
+    status: Optional[str] = None
+    search: Optional[str] = None
+
+
+# === Health 模块：DB 级 CRUD 请求模型 ===
+
+
+class HealthSnapshotCreateReq(BaseModel):
+    status: str
+    components: Optional[Dict[str, Any]] = None
+    system: Optional[Dict[str, Any]] = None
+    version: Optional[str] = None
+    uptime: Optional[float] = None
+
+
+class HealthSnapshotUpdateReq(BaseModel):
+    status: Optional[str] = None
+    components: Optional[Dict[str, Any]] = None
+    system: Optional[Dict[str, Any]] = None
+    version: Optional[str] = None
+    uptime: Optional[float] = None
+
+
+class HealthSnapshotListReq(PaginationReq):
+    status: Optional[str] = None
+
+
+# RCA 请求
+class AutoRCAAnalyzeReq(RCARequest):
+    pass
+
+
+class AutoRCAJobReq(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    metrics: Optional[List[str]] = None
+    namespace: Optional[str] = None
+
+    @staticmethod
+    def _parse_dt(v: Any) -> Any:
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except Exception:
+                return datetime.fromisoformat(v)
+        return v
+
+    @classmethod
+    def model_validate(cls, obj):  # type: ignore[override]
+        if isinstance(obj, dict):
+            for k in ("start_time", "end_time"):
+                if k in obj:
+                    obj[k] = cls._parse_dt(obj[k])
+        return super().model_validate(obj)
+
+
+class AutoRCAAnomalyReq(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    metrics: Optional[List[str]] = None
+    sensitivity: Optional[float] = 0.8
+
+    @field_validator("start_time", "end_time", mode="before")
+    def _parse_dt(cls, v):
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except Exception:
+                return datetime.fromisoformat(v)
+        return v
+
+
+class AutoRCACorrelationReq(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    target_metric: Optional[str] = None
+    metrics: Optional[List[str]] = None
+
+    @field_validator("start_time", "end_time", mode="before")
+    def _parse_dt(cls, v):
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except Exception:
+                return datetime.fromisoformat(v)
+        return v
+
+
+class AutoRCACrossCorrelationReq(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    metrics: Optional[List[str]] = None
+    max_lags: Optional[int] = 10
+
+    @field_validator("start_time", "end_time", mode="before")
+    def _parse_dt(cls, v):
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except Exception:
+                return datetime.fromisoformat(v)
+        return v
+
+
+class AutoRCATimelineReq(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    events: Optional[List[Dict[str, Any]]] = None
+
+    @field_validator("start_time", "end_time", mode="before")
+    def _parse_dt(cls, v):
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except Exception:
+                return datetime.fromisoformat(v)
+        return v

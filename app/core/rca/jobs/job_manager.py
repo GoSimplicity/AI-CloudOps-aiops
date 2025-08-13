@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: RCA 异步任务管理器 - 负责提交、执行与查询根因分析任务
-
-设计目标：
-- 使用 Redis 持久化任务状态，避免进程重启导致状态丢失
-- 使用线程池执行耗时分析，避免请求阻塞与超时
-- 提供进度、结果与错误信息的查询接口
+Description: 基于Redis的向量存储和检索系统
 """
-
 from __future__ import annotations
 
 import asyncio

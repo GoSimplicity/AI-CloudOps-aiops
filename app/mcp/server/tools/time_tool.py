@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops MCP时间工具
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 获取当前时间的MCP工具
+Description: 基于Redis的向量存储和检索系统
 """
-
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 

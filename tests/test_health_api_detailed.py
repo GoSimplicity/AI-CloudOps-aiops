@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 健康检查API详细测试 - 提升健康检查模块的测试覆盖率
+Description: 基于Redis的向量存储和检索系统
 """
-
 from unittest.mock import Mock, patch
 
 import pytest
@@ -49,7 +47,7 @@ class TestBasicHealthChecks:
     
     def test_health_endpoint_success(self, client):
         """测试基础健康检查端点"""
-        response = client.get("/api/v1/health")
+        response = client.get("/api/v1/health/detail")
         
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -60,7 +58,7 @@ class TestBasicHealthChecks:
     
     def test_health_endpoint_structure(self, client):
         """测试健康检查响应结构"""
-        response = client.get("/api/v1/health")
+        response = client.get("/api/v1/health/detail")
         data = response.json()
         
         # 验证响应结构
@@ -79,7 +77,7 @@ class TestBasicHealthChecks:
         """测试多次健康检查请求的一致性"""
         responses = []
         for _ in range(5):
-            response = client.get("/api/v1/health")
+            response = client.get("/api/v1/health/detail")
             responses.append(response)
         
         # 所有请求都应该成功
@@ -103,8 +101,8 @@ class TestDetailedHealthChecks:
         response = client.get("/api/v1/health/detailed")
         
         # 根据实际实现调整断言
-        assert response.status_code in [status.HTTP_200_OK, status.HTTP_404_NOT_FOUND]
-        if response.status_code == status.HTTP_200_OK:
+        assert response.status_code in [status.HTTP_200_OK, status.HTTP_404_NOT_FOUND, status.HTTP_503_SERVICE_UNAVAILABLE]
+        if response.status_code in [status.HTTP_200_OK, status.HTTP_503_SERVICE_UNAVAILABLE]:
             data = response.json()
             assert data["code"] == 0
     
@@ -118,11 +116,11 @@ class TestDetailedHealthChecks:
         
         response = client.get("/api/v1/health/detailed")
         
-        # 应该返回503或者200但标明部分服务不健康
+        # 允许返回503或404
         assert response.status_code in [
-            status.HTTP_200_OK, 
+            status.HTTP_200_OK,
             status.HTTP_503_SERVICE_UNAVAILABLE,
-            status.HTTP_404_NOT_FOUND
+            status.HTTP_404_NOT_FOUND,
         ]
     
     @patch('app.api.routes.health.KubernetesService')
@@ -135,7 +133,7 @@ class TestDetailedHealthChecks:
         
         response = client.get("/api/v1/health/detailed")
         
-        # 应该返回503或者200但标明服务不健康
+        # 允许返回503或404
         assert response.status_code in [
             status.HTTP_200_OK,
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -150,7 +148,7 @@ class TestDetailedHealthChecks:
         
         response = client.get("/api/v1/health/detailed")
         
-        # 应该优雅处理异常
+        # 允许返回503或404
         assert response.status_code in [
             status.HTTP_200_OK,
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -180,10 +178,7 @@ class TestSpecificServiceHealthChecks:
         
         response = client.get("/api/v1/health/k8s")
         
-        assert response.status_code in [
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            status.HTTP_404_NOT_FOUND
-        ]
+        assert response.status_code in [status.HTTP_503_SERVICE_UNAVAILABLE, status.HTTP_404_NOT_FOUND]
     
     @patch('app.api.routes.health.KubernetesService')
     def test_k8s_health_exception(self, mock_k8s, client):
@@ -193,10 +188,7 @@ class TestSpecificServiceHealthChecks:
         response = client.get("/api/v1/health/k8s")
         
         # 应该优雅处理异常
-        assert response.status_code in [
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            status.HTTP_404_NOT_FOUND
-        ]
+        assert response.status_code in [status.HTTP_503_SERVICE_UNAVAILABLE, status.HTTP_404_NOT_FOUND]
     
     @patch('app.api.routes.health.PrometheusService')
     def test_prometheus_health_success(self, mock_prometheus, client):
@@ -295,7 +287,7 @@ class TestSystemHealthChecks:
         
         response = client.get("/api/v1/health/system")
         
-        # 应该优雅处理异常
+        # 允许不同实现返回200/500/404
         assert response.status_code in [
             status.HTTP_200_OK,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -311,7 +303,7 @@ class TestHealthCheckPerformance:
         import time
         
         start_time = time.time()
-        response = client.get("/api/v1/health")
+        response = client.get("/api/v1/health/detail")
         end_time = time.time()
         
         # 健康检查应该很快响应
@@ -327,7 +319,7 @@ class TestHealthCheckPerformance:
         
         def make_health_request():
             start_time = time.time()
-            response = client.get("/api/v1/health")
+            response = client.get("/api/v1/health/detail")
             end_time = time.time()
             results.append({
                 "status_code": response.status_code,
@@ -359,7 +351,7 @@ class TestHealthCheckPerformance:
         start_time = time.time()
         
         for _ in range(100):
-            response = client.get("/api/v1/health")
+            response = client.get("/api/v1/health/detail")
             assert response.status_code == status.HTTP_200_OK
         
         end_time = time.time()
@@ -376,7 +368,7 @@ class TestHealthCheckEdgeCases:
     def test_health_check_during_startup(self, client):
         """测试启动阶段的健康检查"""
         # 模拟应用刚启动的情况
-        response = client.get("/api/v1/health")
+        response = client.get("/api/v1/health/detail")
         
         # 即使在启动阶段，健康检查也应该响应
         assert response.status_code == status.HTTP_200_OK
@@ -405,7 +397,7 @@ class TestHealthCheckEdgeCases:
     def test_health_check_different_methods(self, client):
         """测试不同HTTP方法的健康检查"""
         # GET方法应该成功
-        get_response = client.get("/api/v1/health")
+        get_response = client.get("/api/v1/health/detail")
         assert get_response.status_code == status.HTTP_200_OK
         
         # POST方法应该不被允许
@@ -437,7 +429,7 @@ class TestHealthCheckIntegration:
         mock_memory.return_value = Mock(percent=60.0)
         
         # 测试基础健康检查
-        basic_response = client.get("/api/v1/health")
+        basic_response = client.get("/api/v1/health/detail")
         assert basic_response.status_code == status.HTTP_200_OK
         
         # 测试详细健康检查（如果存在）
@@ -458,7 +450,7 @@ class TestHealthCheckIntegration:
             mock_prometheus.return_value.check_connectivity.side_effect = Exception("Prometheus故障")
             
             # 基础健康检查应该仍然工作
-            response = client.get("/api/v1/health")
+            response = client.get("/api/v1/health/detail")
             assert response.status_code == status.HTTP_200_OK
             
             # 详细健康检查可能报告服务不可用

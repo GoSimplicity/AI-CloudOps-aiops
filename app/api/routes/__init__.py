@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: API路由模块初始化文件，负责注册和管理所有API端点
+Description: 基于Redis的向量存储和检索系统
 """
-
 import logging
 
 from fastapi import APIRouter
@@ -31,11 +29,11 @@ except Exception as e:
 
 try:
     from .predict import router as predict_router
-
-    api_v1.include_router(predict_router)
-    logger.info("已注册预测路由")
 except Exception as e:
     logger.warning(f"注册预测路由失败: {str(e)}")
+else:
+    api_v1.include_router(predict_router)
+    logger.info("已注册预测路由")
 
 try:
     from .rca import router as rca_router
@@ -69,13 +67,7 @@ try:
 except Exception as e:
     logger.warning(f"注册多Agent路由失败: {str(e)}")
 
-try:
-    from .storage import router as storage_router
-
-    api_v1.include_router(storage_router)
-    logger.info("已注册存储路由")
-except Exception as e:
-    logger.warning(f"注册存储路由失败: {str(e)}")
+# storage 路由已移除，保留空位以便未来需要时在此统一注册
 
 
 def register_routes(app):

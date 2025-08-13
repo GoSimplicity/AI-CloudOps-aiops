@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 核心业务逻辑模块初始化文件，提供主要业务组件的访问接口
+Description: 基于Redis的向量存储和检索系统
 """
-
 from .agents.supervisor import SupervisorAgent
 from .prediction.predictor import PredictionService
 from .rca.analyzer import RCAAnalyzer

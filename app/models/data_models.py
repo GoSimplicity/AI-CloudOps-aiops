@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 核心数据模型 - 定义系统中使用的指标、异常、相关性和智能体状态等内部数据结构
+Description: 基于Redis的向量存储和检索系统
 """
-
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-K8sEventsCollector: 采集 Kubernetes 事件并转为轻量事件列表
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: 基于Redis的向量存储和检索系统
 """
-
 from __future__ import annotations
 
 from typing import Dict, List, Optional

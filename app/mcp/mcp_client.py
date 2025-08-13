@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops MCP客户端集成
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 集成到现有系统的MCP客户端
+Description: 基于Redis的向量存储和检索系统
 """
-
 import json
 import logging
 from typing import Any, Dict, List, Union

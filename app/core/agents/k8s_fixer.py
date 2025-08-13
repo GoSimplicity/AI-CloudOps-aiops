@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: Kubernetes集群问题诊断和自动修复代理
+Description: 基于Redis的向量存储和检索系统
 """
-
 import logging
 import os
 from typing import Any, Dict, List
@@ -176,7 +174,7 @@ class K8sFixerAgent:
     async def _verify_fix(self, deployment_name: str, namespace: str) -> str:
         """验证修复结果"""
         try:
-            pods = await self.k8s_service.get_pods(deployment_name, namespace)
+            pods = await self.k8s_service.get_pods_async(namespace=namespace, label_selector=f"app={deployment_name}")
             if not pods:
                 return "验证失败：未找到Pod"
 
@@ -237,7 +235,7 @@ class K8sFixerAgent:
             # 检查Pod状态
             pods_status = "Pod状态未知"
             try:
-                pods = await self.k8s_service.get_pods(namespace=namespace)
+                pods = await self.k8s_service.get_pods_async(namespace=namespace)
                 running_pods = sum(1 for pod in pods 
                                  if pod.get("status", {}).get("phase") == "Running" 
                                  and self._is_pod_ready(pod.get("status", {})))

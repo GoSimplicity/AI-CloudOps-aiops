@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 异常检测器 - 使用多种算法检测监控指标中的异常模式和突变点
+Description: 基于Redis的向量存储和检索系统
 """
-
 import logging
 from typing import Dict, Optional
 

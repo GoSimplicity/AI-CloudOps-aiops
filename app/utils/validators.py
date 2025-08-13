@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 验证器模块 - 输入数据验证工具
+Description: 基于Redis的向量存储和检索系统
 """
-
 import re
 from datetime import datetime, timezone
 from typing import List

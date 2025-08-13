@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops MCP k8s配置管理工具
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: k8s配置管理的MCP工具，提供ConfigMap和Secret的管理操作
+Description: 基于Redis的向量存储和检索系统
 """
-
 import asyncio
 import base64
 from datetime import datetime, timezone

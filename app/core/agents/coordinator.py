@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
-K8s多Agent协调器 - 负责协调所有agent的工作流
-Author: AI Assistant
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 协调检测、策略、执行和验证的完整工作流
+Description: 基于Redis的向量存储和检索系统
 """
-
 import asyncio
 import logging
 from datetime import datetime, timezone

@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
-修复方案注册表 - 统一管理问题类型与可执行修复步骤映射
-Author: AI Assistant
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 用于多Agent共享的标准修复动作库，便于扩展与测试
+Description: 基于Redis的向量存储和检索系统
 """
-
 from typing import Any, Dict, List
 
 

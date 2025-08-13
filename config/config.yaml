@@ -106,15 +106,29 @@ rag:
   vector_db_path: data/vector_db
   collection_name: aiops-assistant
   knowledge_base_path: data/knowledge_base
-  chunk_size: 1000
-  chunk_overlap: 200
-  top_k: 4
-  similarity_threshold: 0.7
   openai_embedding_model: Pro/BAAI/bge-m3
   ollama_embedding_model: nomic-embed-text
-  max_context_length: 4000
-  temperature: 0.1
-  cache_expiry: 3600
+
+  # LangGraph/RAG 细粒度参数
+  retrieve:
+    k: 12
+    score_threshold: 0.0
+    hybrid_enabled: false    # 预留：向量+BM25/关键词混合
+  reranker:
+    enabled: false           # 预留：如 bge-reranker/jina-reranker
+    model: bge-reranker-base
+    top_k: 20
+  iteration:
+    max_loops: 1
+    retry_confidence_threshold: 0.6
+  compression:
+    mmr_top_k: 6
+    mmr_lambda: 0.7
+  answer:
+    max_chars: 300
+    source_limit: 4
+  # 速度与成本优化
+  max_rewrite_queries: 6
 
 # MCP配置
 mcp:

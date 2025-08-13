@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
-K8s回滚Agent - 在修复失败或验证不通过时执行回滚/止损
-Author: AI Assistant
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 提供最小可行的回滚能力（重启/撤销补丁/缩容）
+Description: 基于Redis的向量存储和检索系统
 """
-
 import logging
 from typing import Any, Dict
 

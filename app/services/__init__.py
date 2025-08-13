@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 服务模块初始化文件，集成Prometheus、Kubernetes等外部服务
+Description: 基于Redis的向量存储和检索系统
 """
-
 try:
     from .kubernetes import KubernetesService
 except Exception:

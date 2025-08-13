@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 根因分析器 - 核心故障诊断引擎
+Description: 基于Redis的向量存储和检索系统
 """
-
 import logging
 import time
 from datetime import datetime, timezone

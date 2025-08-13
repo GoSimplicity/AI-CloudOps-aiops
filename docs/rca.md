@@ -53,15 +53,16 @@ graph TD
   O4 --> M
 ```
 
-### 端点与 flags 返回（统一响应 APIResponse）
+## 端点与 flags 返回（统一响应 APIResponse）
 
-- GET `/api/v1/rca/metrics`（等价于 `/api/v1/metrics/list`）
+- GET `/api/v1/rca/metrics/detail`（等价于 `/api/v1/metrics/list`）
   - data.flags: 平台状态
     - request_override: 是否启用“请求级开关优先”
     - logs_enabled: 全局日志采集是否开启
     - tracing_enabled: 全局Tracing采集是否开启
 
   示例：
+  
   ```json
   {
     "code": 0,
@@ -78,16 +79,16 @@ graph TD
   }
   ```
 
-- GET `/api/v1/rca/health`
+- GET `/api/v1/rca/health/detail`
   - data.flags: 同上
 
-- GET `/api/v1/rca/topology`（等价于 `/api/v1/topology/list`）
+- GET `/api/v1/rca/topology/detail`（等价于 `/api/v1/topology/list`）
   - data.flags: 同上
 
-- POST `/api/v1/rca/jobs`（等价于 `/api/v1/jobs/create`）
+- POST `/api/v1/rca/jobs/create`（等价于 `/api/v1/jobs/create`）
   - data.flags: 同上（便于前端在任务提交后立即获知平台状态）
 
-- GET `/api/v1/rca/jobs/{job_id}`
+- GET `/api/v1/rca/jobs/detail/{job_id}`
   - data.flags: 同上（任务查询时也携带平台状态）
 
 ## 日志与Tracing接入说明
@@ -107,7 +108,7 @@ graph TD
 
 ### API 使用示例
 
-POST `/api/v1/rca`
+POST `/api/v1/rca/analyses/create`
 
 ```json
 {

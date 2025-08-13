@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-AI-CloudOps-aiops
+Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 研究代理 - 提供问题调查和解决方案分析服务
+Description: 基于Redis的向量存储和检索系统
 """
-
 import logging
 from typing import Any, Dict, List
 
@@ -106,7 +104,7 @@ class ResearcherAgent:
 """
 
             messages = [{"role": "user", "content": prompt}]
-            response = await self.llm_service.generate_response(messages)
+            response = await self.llm_service.generate_response_async(messages)
 
             return f"\n**AI总结:**\n{response}"
 
