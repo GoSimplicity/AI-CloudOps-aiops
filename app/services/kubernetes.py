@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 import os
 import time
@@ -180,7 +181,9 @@ class KubernetesService:
         try:
             namespace = namespace or config.k8s.namespace
             api = getattr(self, "core_v1_api", None) or self.core_v1
-            pods = api.list_namespaced_pod(namespace=namespace, label_selector=label_selector)
+            pods = api.list_namespaced_pod(
+                namespace=namespace, label_selector=label_selector
+            )
             return pods.items or []
         except Exception:
             return []
@@ -298,10 +301,14 @@ class KubernetesService:
             )
             return logs
         except ApiException as e:
-            logger.error(f"获取Pod日志失败: pod={pod_name}, ns={namespace}, err={str(e)}")
+            logger.error(
+                f"获取Pod日志失败: pod={pod_name}, ns={namespace}, err={str(e)}"
+            )
             return None
         except Exception as e:
-            logger.error(f"获取Pod日志异常: pod={pod_name}, ns={namespace}, err={str(e)}")
+            logger.error(
+                f"获取Pod日志异常: pod={pod_name}, ns={namespace}, err={str(e)}"
+            )
             return None
 
     async def get_recent_pod_logs(
@@ -313,7 +320,9 @@ class KubernetesService:
         include_previous: bool = False,
     ) -> List[Dict[str, Any]]:
         """获取命名空间内若干Pod的最近日志（每个Pod仅取一个容器）。"""
-        pods = await self.get_pods_async(namespace=namespace, label_selector=label_selector)
+        pods = await self.get_pods_async(
+            namespace=namespace, label_selector=label_selector
+        )
         results: List[Dict[str, Any]] = []
         if not pods:
             return results
@@ -322,7 +331,7 @@ class KubernetesService:
         for pod in pods[: max(1, int(max_pods))]:
             pod_name = ((pod or {}).get("metadata", {}) or {}).get("name")
             spec = (pod or {}).get("spec", {}) or {}
-            containers = (spec.get("containers") or [])
+            containers = spec.get("containers") or []
             container_name = containers[0].get("name") if containers else None
 
             current_logs = await self.get_pod_logs(

@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 from typing import Any, Dict, List, Tuple
 
@@ -65,7 +66,9 @@ class Correlator:
     def __init__(self, correlation_threshold: float = None):
         self._impl = CorrelationAnalyzer(correlation_threshold)
 
-    async def analyze_correlations(self, metrics_data: Dict[str, pd.DataFrame]) -> Dict[str, List[Tuple[str, float]]]:
+    async def analyze_correlations(
+        self, metrics_data: Dict[str, pd.DataFrame]
+    ) -> Dict[str, List[Tuple[str, float]]]:
         return await self._impl.analyze_correlations(metrics_data)
 
     async def analyze_correlations_with_cross_lag(

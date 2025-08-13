@@ -7,14 +7,15 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 from typing import Any, Dict
 
 
 class DetectorHelpers:
     """检测器辅助函数类"""
-    
+
     # 说明：Pod级消息与详情在主检测器中未直接引用，移除未使用方法以精简体积
-    
+
     @staticmethod
     def get_deployment_message(deployment: Dict[str, Any], issue_type: str) -> str:
         """获取Deployment问题描述"""
@@ -24,16 +25,16 @@ class DetectorHelpers:
             "unavailable_replicas": f"部署 {name} 有不可用副本",
         }
         return messages.get(issue_type, f"部署 {name} 出现问题")
-    
+
     @staticmethod
     def get_service_message(service: Dict[str, Any], issue_type: str) -> str:
         """获取Service问题描述"""
         name = service.get("metadata", {}).get("name", "unknown")
         messages = {"no_endpoints": f"服务 {name} 没有可用的Endpoints"}
         return messages.get(issue_type, f"服务 {name} 出现问题")
-    
+
     # 说明：Pod详情方法未被引用，移除
-    
+
     @staticmethod
     def get_deployment_details(deployment: Dict[str, Any]) -> Dict[str, Any]:
         """获取Deployment详细信息"""
@@ -46,7 +47,7 @@ class DetectorHelpers:
                 "ready": deployment.get("status", {}).get("ready_replicas", 0),
             },
         }
-    
+
     @staticmethod
     def get_service_details(service: Dict[str, Any]) -> Dict[str, Any]:
         """获取Service详细信息"""

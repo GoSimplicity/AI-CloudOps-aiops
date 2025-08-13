@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 from datetime import timezone
 from typing import Any, Dict
@@ -231,7 +232,7 @@ class K8sIngressTool(K8sBaseTool):
                 "operation": "list_ingresses",
                 "total_count": len(ingress_list),
                 "ingresses": ingress_list,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -345,7 +346,7 @@ class K8sIngressTool(K8sBaseTool):
                 "success": True,
                 "operation": "get_ingress",
                 "ingress_details": ingress_details,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -449,7 +450,7 @@ class K8sIngressTool(K8sBaseTool):
                 "ingress_class": ingress_class,
                 "rules_count": len(ingress_rules),
                 "tls_count": len(ingress_tls),
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -495,7 +496,7 @@ class K8sIngressTool(K8sBaseTool):
                 "message": f"Ingress {ingress_name} 在命名空间 {namespace} 中已成功删除",
                 "ingress_name": ingress_name,
                 "namespace": namespace,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -557,7 +558,7 @@ class K8sIngressTool(K8sBaseTool):
                 "operation": "get_ingress_classes",
                 "total_count": len(classes_list),
                 "ingress_classes": classes_list,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:

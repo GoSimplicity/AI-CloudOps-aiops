@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -34,9 +35,9 @@ async def lifespan(app: FastAPI):
         init_engine_and_session()
     except Exception:
         pass
-    
+
     yield
-    
+
     total_time = time.time() - start_time
     logger.info(f"AIOps平台运行总时长: {total_time:.2f}秒")
     logger.info("AIOps平台已关闭")

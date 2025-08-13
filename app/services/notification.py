@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import json
 import logging
 import re
@@ -45,11 +46,15 @@ class NotificationService:
             msg["Subject"] = subject
             msg["From"] = config.notification.email_from
             msg["To"] = to
-            with smtplib.SMTP(config.notification.smtp_server, config.notification.smtp_port) as server:
+            with smtplib.SMTP(
+                config.notification.smtp_server, config.notification.smtp_port
+            ) as server:
                 if getattr(config.notification, "smtp_tls", False):
                     server.starttls()
                 if getattr(config.notification, "smtp_user", None):
-                    server.login(config.notification.smtp_user, config.notification.smtp_password)
+                    server.login(
+                        config.notification.smtp_user, config.notification.smtp_password
+                    )
                 server.sendmail(config.notification.email_from, [to], msg.as_string())
             return True
         except Exception as e:
@@ -120,7 +125,17 @@ class NotificationService:
                     logger.info("飞书消息发送成功")
                     try:
                         with session_scope() as session:
-                            session.add(NotificationRecord(channel="feishu", title=title, message=message, status="ok", response=json.dumps(response_data, ensure_ascii=False)))
+                            session.add(
+                                NotificationRecord(
+                                    channel="feishu",
+                                    title=title,
+                                    message=message,
+                                    status="ok",
+                                    response=json.dumps(
+                                        response_data, ensure_ascii=False
+                                    ),
+                                )
+                            )
                     except Exception:
                         pass
                     return True
@@ -128,7 +143,17 @@ class NotificationService:
                     logger.error(f"飞书消息发送失败: {response_data}")
                     try:
                         with session_scope() as session:
-                            session.add(NotificationRecord(channel="feishu", title=title, message=message, status="failed", response=json.dumps(response_data, ensure_ascii=False)))
+                            session.add(
+                                NotificationRecord(
+                                    channel="feishu",
+                                    title=title,
+                                    message=message,
+                                    status="failed",
+                                    response=json.dumps(
+                                        response_data, ensure_ascii=False
+                                    ),
+                                )
+                            )
                     except Exception:
                         pass
                     return False
@@ -136,7 +161,15 @@ class NotificationService:
                 logger.error(f"飞书消息发送失败，状态码：{response.status_code}")
                 try:
                     with session_scope() as session:
-                        session.add(NotificationRecord(channel="feishu", title=title, message=message, status="http_error", response=str(response.text)))
+                        session.add(
+                            NotificationRecord(
+                                channel="feishu",
+                                title=title,
+                                message=message,
+                                status="http_error",
+                                response=str(response.text),
+                            )
+                        )
                 except Exception:
                     pass
                 return False
@@ -145,12 +178,22 @@ class NotificationService:
             logger.error(f"发送飞书消息失败：{str(e)}")
             try:
                 with session_scope() as session:
-                    session.add(NotificationRecord(channel="feishu", title=title, message=message, status="exception", error=str(e)))
+                    session.add(
+                        NotificationRecord(
+                            channel="feishu",
+                            title=title,
+                            message=message,
+                            status="exception",
+                            error=str(e),
+                        )
+                    )
             except Exception:
                 pass
             return False
 
-    async def send_notification(self, title: str, message: str, level: str = "info") -> bool:
+    async def send_notification(
+        self, title: str, message: str, level: str = "info"
+    ) -> bool:
         """统一通知入口，按级别选择卡片颜色并发送飞书通知。
 
         - level: info/warning/error → blue/yellow/red

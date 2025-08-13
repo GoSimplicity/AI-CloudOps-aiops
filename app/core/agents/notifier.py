@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 from typing import Any, Dict, List
 
@@ -373,6 +374,8 @@ class Notifier:
     def __init__(self):
         self.agent = NotifierAgent()
 
-    async def send_notification(self, type: str, namespace: str, deployment: str, message: str = "") -> bool:
+    async def send_notification(
+        self, type: str, namespace: str, deployment: str, message: str = ""
+    ) -> bool:
         # 简化：调用底层通知服务发送webhook/飞书等，这里返回True即可供测试
         return True

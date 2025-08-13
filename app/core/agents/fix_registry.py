@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 from typing import Any, Dict, List
 
 
@@ -100,8 +101,14 @@ class FixRegistry:
                                         {
                                             "name": "auto",
                                             "resources": {
-                                                "requests": {"memory": "128Mi", "cpu": "100m"},
-                                                "limits": {"memory": "256Mi", "cpu": "200m"},
+                                                "requests": {
+                                                    "memory": "128Mi",
+                                                    "cpu": "100m",
+                                                },
+                                                "limits": {
+                                                    "memory": "256Mi",
+                                                    "cpu": "200m",
+                                                },
                                             },
                                         }
                                     ]
@@ -126,8 +133,14 @@ class FixRegistry:
                                         {
                                             "name": "auto",
                                             "resources": {
-                                                "requests": {"memory": "128Mi", "cpu": "100m"},
-                                                "limits": {"memory": "256Mi", "cpu": "200m"},
+                                                "requests": {
+                                                    "memory": "128Mi",
+                                                    "cpu": "100m",
+                                                },
+                                                "limits": {
+                                                    "memory": "256Mi",
+                                                    "cpu": "200m",
+                                                },
                                             },
                                         }
                                     ]
@@ -155,4 +168,3 @@ class FixRegistry:
             ],
         }
         return mapping.get(issue_type, [])
-

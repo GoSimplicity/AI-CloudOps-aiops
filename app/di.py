@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 from __future__ import annotations
 
 from threading import RLock
@@ -36,4 +37,3 @@ def reset_container() -> None:
     """清空容器（主要用于测试隔离）。"""
     with _LOCK:
         _SINGLETONS.clear()
-

@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -87,7 +88,10 @@ class K8sBaseTool(BaseTool):
             return "Unknown"
 
         # 使用 UTC 计算年龄
-        age = (datetime.now(UTC_TZ).replace(tzinfo=creation_timestamp.tzinfo) - creation_timestamp)
+        age = (
+            datetime.now(UTC_TZ).replace(tzinfo=creation_timestamp.tzinfo)
+            - creation_timestamp
+        )
         days = age.days
         hours, remainder = divmod(age.seconds, 3600)
         minutes, _ = divmod(remainder, 60)

@@ -54,11 +54,11 @@ def extract_existing_docstring(body: str) -> Tuple[str, str]:
 
 HEADER_DOCSTRING = (
     '"""\n'
-    'Redis向量存储实现\n'
-    'Author: Bamboo\n'
-    'Email: bamboocloudops@gmail.com\n'
-    'License: Apache 2.0\n'
-    'Description: 基于Redis的向量存储和检索系统\n'
+    "Redis向量存储实现\n"
+    "Author: Bamboo\n"
+    "Email: bamboocloudops@gmail.com\n"
+    "License: Apache 2.0\n"
+    "Description: 基于Redis的向量存储和检索系统\n"
     '"""\n'
 )
 
@@ -100,4 +100,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

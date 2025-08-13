@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import json
 import logging
 import os
@@ -456,6 +457,7 @@ def test_rca_jobs_flags():
         "response": get_json,
         "flags": flags_get,
     }
+
 
 def test_anomaly_detection():
     """测试异常检测API"""

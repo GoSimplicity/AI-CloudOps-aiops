@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import gzip
 import hashlib
 import json
@@ -310,7 +311,10 @@ class RedisCacheManager:
                 # 获取所有缓存键
                 cache_keys = self.redis_client.smembers(self.index_key)
                 # decode_responses=False 下 smembers/keys 返回 bytes
-                cache_keys = [key.decode() if isinstance(key, bytes) else key for key in cache_keys]
+                cache_keys = [
+                    key.decode() if isinstance(key, bytes) else key
+                    for key in cache_keys
+                ]
 
                 # 获取每个缓存的访问统计
                 entries_with_stats = []
@@ -355,7 +359,10 @@ class RedisCacheManager:
             # 删除所有缓存
             if cache_keys:
                 # 转换为字符串
-                cache_keys = [key.decode() if isinstance(key, bytes) else key for key in cache_keys]
+                cache_keys = [
+                    key.decode() if isinstance(key, bytes) else key
+                    for key in cache_keys
+                ]
                 self.redis_client.delete(*cache_keys)
 
             # 清空索引
@@ -397,7 +404,9 @@ class RedisCacheManager:
             for k, v in stats.items():
                 key_str = k.decode() if isinstance(k, bytes) else str(k)
                 try:
-                    parsed[key_str] = int(v.decode() if isinstance(v, bytes) else int(v))
+                    parsed[key_str] = int(
+                        v.decode() if isinstance(v, bytes) else int(v)
+                    )
                 except Exception:
                     try:
                         parsed[key_str] = int(v)

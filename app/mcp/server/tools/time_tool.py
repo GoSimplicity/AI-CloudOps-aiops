@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
@@ -76,4 +77,3 @@ class TimeTool(BaseTool):
 
         except Exception as e:
             raise RuntimeError(f"获取时间失败: {str(e)}") from e
-

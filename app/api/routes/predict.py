@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 import logging
 import json
@@ -29,7 +30,6 @@ from app.utils.time_utils import iso_utc_now
 logger = logging.getLogger("aiops.predict")
 
 
-
 router = APIRouter(tags=["prediction"])
 
 # 初始化预测服务（进程级单例）
@@ -47,7 +47,7 @@ def _save_trend_result(result: Dict[str, Any]) -> str:
 
     采用时间戳+自增序列的方式生成ID，避免重复；使用有序字典维护LRU语义。
     """
-    unique_id = f"trend-{int(time.time()*1000)}-{len(_trend_cache)+1}"
+    unique_id = f"trend-{int(time.time() * 1000)}-{len(_trend_cache) + 1}"
     # 按LRU更新：若存在则先删除再插入到末尾
     if unique_id in _trend_cache:
         _trend_cache.pop(unique_id, None)
@@ -63,9 +63,6 @@ def _save_trend_result(result: Dict[str, Any]) -> str:
 ## =============================
 
 
- 
-
-
 @router.get("/predict/record/list")
 async def list_prediction_records(params: PredictionRecordListReq = Depends()):
     """列出预测记录（分页+过滤）。
@@ -78,15 +75,30 @@ async def list_prediction_records(params: PredictionRecordListReq = Depends()):
             if params.metric:
                 stmt = stmt.where(PredictionRecord.metric == params.metric)
             if params.model_version:
-                stmt = stmt.where(PredictionRecord.model_version == params.model_version)
+                stmt = stmt.where(
+                    PredictionRecord.model_version == params.model_version
+                )
             if params.prediction_type:
-                stmt = stmt.where(PredictionRecord.prediction_type == params.prediction_type)
-            total = session.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+                stmt = stmt.where(
+                    PredictionRecord.prediction_type == params.prediction_type
+                )
+            total = (
+                session.execute(
+                    select(func.count()).select_from(stmt.subquery())
+                ).scalar()
+                or 0
+            )
             page = max(1, int(params.page or 1))
             size = max(1, min(100, int(params.size or 20)))
-            rows = session.execute(
-                stmt.order_by(PredictionRecord.id.desc()).offset((page - 1) * size).limit(size)
-            ).scalars().all()
+            rows = (
+                session.execute(
+                    stmt.order_by(PredictionRecord.id.desc())
+                    .offset((page - 1) * size)
+                    .limit(size)
+                )
+                .scalars()
+                .all()
+            )
             items = [
                 PredictionRecordEntity(
                     id=r.id,
@@ -107,10 +119,14 @@ async def list_prediction_records(params: PredictionRecordListReq = Depends()):
                 ).model_dump()
                 for r in rows
             ]
-        return APIResponse(code=0, message="ok", data={"items": items, "total": total}).model_dump()
+        return APIResponse(
+            code=0, message="ok", data={"items": items, "total": total}
+        ).model_dump()
     except Exception as e:
         logger.error(f"list_prediction_records 失败: {e}")
-        return APIResponse(code=0, message="ok", data={"items": [], "total": 0}).model_dump()
+        return APIResponse(
+            code=0, message="ok", data={"items": [], "total": 0}
+        ).model_dump()
 
 
 @router.get("/predict/record/detail/{record_id}")
@@ -120,7 +136,9 @@ async def get_prediction_record(record_id: int):
         with session_scope() as session:
             r = session.get(PredictionRecord, record_id)
             if not r or r.deleted_at is not None:
-                return APIResponse(code=404, message="not found", data=None).model_dump()
+                return APIResponse(
+                    code=404, message="not found", data=None
+                ).model_dump()
             entity = PredictionRecordEntity(
                 id=r.id,
                 current_qps=r.current_qps,
@@ -150,15 +168,20 @@ async def delete_prediction_record(record_id: int):
         with session_scope() as session:
             r = session.get(PredictionRecord, record_id)
             if not r:
-                return APIResponse(code=404, message="not found", data=None).model_dump()
+                return APIResponse(
+                    code=404, message="not found", data=None
+                ).model_dump()
             # 统一使用数据库模型提供的时区感知 UTC 时间，避免类型不一致
             r.deleted_at = utcnow()
             session.add(r)
         entity = DeletionResultEntity(id=record_id)
-        return APIResponse(code=0, message="deleted", data=entity.model_dump()).model_dump()
+        return APIResponse(
+            code=0, message="deleted", data=entity.model_dump()
+        ).model_dump()
     except Exception as e:
         logger.error(f"delete_prediction_record 失败: {e}")
         raise HTTPException(status_code=500, detail="delete record failed") from e
+
 
 ## =============================
 ## 模型类接口
@@ -191,9 +214,13 @@ async def list_models():
     """
     try:
         loader: ModelLoader = prediction_service.model_loader
-        available = [{"id": k, "type": v.get("type", k)} for k, v in loader.models.items()]
+        available = [
+            {"id": k, "type": v.get("type", k)} for k, v in loader.models.items()
+        ]
         info = loader.get_model_info()
-        return APIResponse(code=0, message="ok", data={"available": available, "current": info}).model_dump()
+        return APIResponse(
+            code=0, message="ok", data={"available": available, "current": info}
+        ).model_dump()
     except Exception as e:
         logger.error(f"列出模型失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"列出模型失败: {str(e)}") from e
@@ -208,7 +235,9 @@ async def model_detail(model_id: str):
     try:
         loader: ModelLoader = prediction_service.model_loader
         if model_id not in loader.models:
-            return APIResponse(code=404, message="model not found", data=None).model_dump()
+            return APIResponse(
+                code=404, message="model not found", data=None
+            ).model_dump()
         default_cfg = loader.get_default_config(model_id)
         return APIResponse(
             code=0,
@@ -222,7 +251,9 @@ async def model_detail(model_id: str):
         ).model_dump()
     except Exception as e:
         logger.error(f"获取模型详情失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取模型详情失败: {str(e)}") from e
+        raise HTTPException(
+            status_code=500, detail=f"获取模型详情失败: {str(e)}"
+        ) from e
 
 
 ## =============================
@@ -245,7 +276,9 @@ async def reinitialize_service():
         ).model_dump()
     except Exception as e:
         logger.error(f"服务重新初始化失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"服务重新初始化失败: {str(e)}") from e
+        raise HTTPException(
+            status_code=500, detail=f"服务重新初始化失败: {str(e)}"
+        ) from e
 
 
 ## =============================
@@ -261,11 +294,17 @@ async def predict_health():
         return APIResponse(
             code=0,
             message="预测服务健康检查完成",
-            data={"healthy": bool(health_status), "timestamp": iso_utc_now(), "service": "prediction"},
+            data={
+                "healthy": bool(health_status),
+                "timestamp": iso_utc_now(),
+                "service": "prediction",
+            },
         ).model_dump()
     except Exception as e:
         logger.error(f"预测服务健康检查失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"预测服务健康检查失败: {str(e)}") from e
+        raise HTTPException(
+            status_code=500, detail=f"预测服务健康检查失败: {str(e)}"
+        ) from e
 
 
 ## =============================
@@ -288,15 +327,21 @@ async def trend_list(params: AutoTrendReq = Depends()):
         except Exception:
             raise HTTPException(status_code=422, detail="hours_ahead参数无效")
         if hours_ahead_raw < 1 or hours_ahead_raw > 168:
-            raise HTTPException(status_code=400, detail="hours_ahead参数必须在1-168之间")
+            raise HTTPException(
+                status_code=400, detail="hours_ahead参数必须在1-168之间"
+            )
         hours_ahead = hours_ahead_raw
         window = params.window or "1m"
 
         current_qps = params.current_qps
         if params.use_prom:
             if not params.metric:
-                raise HTTPException(status_code=400, detail="use_prom为true时必须提供metric")
-            prom_qps = await prediction_service.get_qps_from_prometheus(params.metric, params.selector, window)
+                raise HTTPException(
+                    status_code=400, detail="use_prom为true时必须提供metric"
+                )
+            prom_qps = await prediction_service.get_qps_from_prometheus(
+                params.metric, params.selector, window
+            )
             if prom_qps is not None:
                 current_qps = prom_qps
 
@@ -313,7 +358,11 @@ async def trend_list(params: AutoTrendReq = Depends()):
 
             with session_scope() as session:
                 trend_points = result.get("trend_predictions") or []
-                last_point = trend_points[-1] if isinstance(trend_points, list) and trend_points else None
+                last_point = (
+                    trend_points[-1]
+                    if isinstance(trend_points, list) and trend_points
+                    else None
+                )
 
                 instances_val: _Optional[int] = None
                 confidence_val: _Optional[float] = None
@@ -321,11 +370,15 @@ async def trend_list(params: AutoTrendReq = Depends()):
                     pi = last_point.get("predicted_instances")
                     cf = last_point.get("confidence")
                     try:
-                        instances_val = int(pi) if isinstance(pi, (int, float)) else None
+                        instances_val = (
+                            int(pi) if isinstance(pi, (int, float)) else None
+                        )
                     except Exception:
                         instances_val = None
                     try:
-                        confidence_val = float(cf) if isinstance(cf, (int, float)) else None
+                        confidence_val = (
+                            float(cf) if isinstance(cf, (int, float)) else None
+                        )
                     except Exception:
                         confidence_val = None
 
@@ -339,7 +392,9 @@ async def trend_list(params: AutoTrendReq = Depends()):
                         window=window,
                         instances=instances_val,
                         confidence=confidence_val,
-                        model_version=prediction_service.model_loader.model_metadata.get("version", "1.0"),
+                        model_version=prediction_service.model_loader.model_metadata.get(
+                            "version", "1.0"
+                        ),
                         prediction_type="trend",
                         features=json.dumps(result, ensure_ascii=False),
                         schedule_interval_minutes=None,
@@ -350,19 +405,25 @@ async def trend_list(params: AutoTrendReq = Depends()):
             pass
         trend_id = _save_trend_result(result)
 
-        items = [{
-            "id": trend_id,
-            "hours_ahead": result.get("hours_ahead"),
-            "points": len(result.get("trend_predictions", []) or []),
-            "analysis": result.get("trend_analysis"),
-            "timestamp": result.get("timestamp"),
-        }]
-        return APIResponse(code=0, message="ok", data={"items": items, "total": len(items)}).model_dump()
+        items = [
+            {
+                "id": trend_id,
+                "hours_ahead": result.get("hours_ahead"),
+                "points": len(result.get("trend_predictions", []) or []),
+                "analysis": result.get("trend_analysis"),
+                "timestamp": result.get("timestamp"),
+            }
+        ]
+        return APIResponse(
+            code=0, message="ok", data={"items": items, "total": len(items)}
+        ).model_dump()
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"获取趋势列表失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取趋势列表失败: {str(e)}") from e
+        raise HTTPException(
+            status_code=500, detail=f"获取趋势列表失败: {str(e)}"
+        ) from e
 
 
 @router.get("/predict/trend/detail/{trend_id}")
@@ -370,9 +431,13 @@ async def trend_detail(trend_id: str):
     """获取趋势预测详情。"""
     try:
         if trend_id not in _trend_cache:
-            return APIResponse(code=404, message="trend not found", data=None).model_dump()
+            return APIResponse(
+                code=404, message="trend not found", data=None
+            ).model_dump()
         result = _trend_cache[trend_id]
         return APIResponse(code=0, message="ok", data=result).model_dump()
     except Exception as e:
         logger.error(f"获取趋势详情失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取趋势详情失败: {str(e)}") from e
+        raise HTTPException(
+            status_code=500, detail=f"获取趋势详情失败: {str(e)}"
+        ) from e

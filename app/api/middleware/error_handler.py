@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 import traceback
 from datetime import datetime, timezone
@@ -173,7 +174,9 @@ async def app_error_handler(request: Request, exc: AppError):
             f"AppError {exc.status_code} at {request_info['path']}: {exc.message}"
         )
         return _create_error_response(
-            code=exc.status_code, message=exc.message, extra_data={"path": request_info["path"]}
+            code=exc.status_code,
+            message=exc.message,
+            extra_data={"path": request_info["path"]},
         )
     except Exception as handler_error:
         logger.error(f"业务异常处理器出错: {handler_error}")

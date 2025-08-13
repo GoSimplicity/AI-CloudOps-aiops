@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 import datetime
 import inspect
@@ -25,10 +26,30 @@ logger = logging.getLogger("aiops.predictor")
 
 # 时间因子常量
 HOUR_FACTORS = {
-    0: 0.3, 1: 0.2, 2: 0.2, 3: 0.2, 4: 0.2, 5: 0.3,
-    6: 0.5, 7: 0.7, 8: 0.9, 9: 1.0, 10: 1.0, 11: 1.0,
-    12: 0.9, 13: 0.9, 14: 1.0, 15: 1.0, 16: 1.0, 17: 0.9,
-    18: 0.8, 19: 0.7, 20: 0.6, 21: 0.5, 22: 0.4, 23: 0.3
+    0: 0.3,
+    1: 0.2,
+    2: 0.2,
+    3: 0.2,
+    4: 0.2,
+    5: 0.3,
+    6: 0.5,
+    7: 0.7,
+    8: 0.9,
+    9: 1.0,
+    10: 1.0,
+    11: 1.0,
+    12: 0.9,
+    13: 0.9,
+    14: 1.0,
+    15: 1.0,
+    16: 1.0,
+    17: 0.9,
+    18: 0.8,
+    19: 0.7,
+    20: 0.6,
+    21: 0.5,
+    22: 0.4,
+    23: 0.3,
 }
 
 DAY_FACTORS = {0: 1.0, 1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0, 5: 0.8, 6: 0.6}
@@ -43,10 +64,10 @@ class PredictionService:
         self.model_loader = ModelLoader()
         self.error_handler = ErrorHandler(logger)
         self.prometheus_service = PrometheusService()
-        
+
         # 初始化模型
         self._initialize()
-        
+
         logger.info("负载预测服务初始化完成")
 
     def _initialize(self):
@@ -54,7 +75,7 @@ class PredictionService:
         try:
             # 加载模型和标准化器
             self.model_loaded = self.model_loader.load_models()
-            
+
             if self.model_loaded:
                 logger.info("预测模型加载成功")
                 # 验证模型
@@ -63,7 +84,7 @@ class PredictionService:
                     self.model_loaded = False
             else:
                 logger.warning("预测模型加载失败，将使用基础预测方法")
-                
+
         except Exception as e:
             logger.error(f"模型初始化失败: {e}")
             self.model_loaded = False
@@ -107,16 +128,26 @@ class PredictionService:
                         end_time=end_time,
                         step="1m",
                     )
-                    prom_result = asyncio.run(maybe_coro) if inspect.isawaitable(maybe_coro) else maybe_coro
+                    prom_result = (
+                        asyncio.run(maybe_coro)
+                        if inspect.isawaitable(maybe_coro)
+                        else maybe_coro
+                    )
                     # 兼容返回 DataFrame 或 Prometheus 响应 dict
                     if isinstance(prom_result, pd.DataFrame):
                         if "value" in prom_result.columns and not prom_result.empty:
                             effective_qps = float(prom_result["value"].mean())
                     elif isinstance(prom_result, dict):
                         raw_results: Any = prom_result.get("data", {}).get("result", [])
-                        if isinstance(raw_results, list) and raw_results and isinstance(raw_results[0], dict):
+                        if (
+                            isinstance(raw_results, list)
+                            and raw_results
+                            and isinstance(raw_results[0], dict)
+                        ):
                             series: Any = raw_results[0].get("values", [])
-                            series_list: List[Any] = series if isinstance(series, list) else []
+                            series_list: List[Any] = (
+                                series if isinstance(series, list) else []
+                            )
                             numeric: List[float] = []
                             for item in series_list:
                                 try:
@@ -186,7 +217,9 @@ class PredictionService:
                 "features": prediction_result.get("features"),
             }
 
-            logger.info(f"预测完成: 当前QPS={current_qps:.2f}, 预测实例数={result['instances']}")
+            logger.info(
+                f"预测完成: 当前QPS={current_qps:.2f}, 预测实例数={result['instances']}"
+            )
             return result
 
         except Exception as e:
@@ -218,7 +251,9 @@ class PredictionService:
             else:
                 query = f"sum(rate({metric}[{window}]))"
 
-            results = await self.prometheus_service.query_instant_async(query, timestamp)
+            results = await self.prometheus_service.query_instant_async(
+                query, timestamp
+            )
             if not results:
                 return None
 
@@ -257,65 +292,68 @@ class PredictionService:
                 selector=selector,
                 window=window,
             )
-            
+
             # 转换为DataFrame
             feature_df = pd.DataFrame([features])
-            
+
             # 数据标准化
             scaled_features = self.model_loader.scaler.transform(feature_df)
-            
+
             # 执行预测
             prediction = self.model_loader.model.predict(scaled_features)
             instances = max(1, int(round(prediction[0])))
             # 边界约束
-            instances = max(config.prediction.min_instances, min(instances, config.prediction.max_instances))
-            
+            instances = max(
+                config.prediction.min_instances,
+                min(instances, config.prediction.max_instances),
+            )
+
             # 计算置信度
             confidence = self._calculate_ml_confidence(current_qps, instances)
-            
+
             return {
                 "instances": instances,
                 "confidence": confidence,
                 "method": "machine_learning",
-                "features": features
+                "features": features,
             }
-            
+
         except Exception as e:
             logger.error(f"机器学习预测失败: {e}")
             return self._simple_predict(current_qps, timestamp)
 
-    def _simple_predict(self, current_qps: float, timestamp: datetime.datetime) -> Dict[str, Any]:
+    def _simple_predict(
+        self, current_qps: float, timestamp: datetime.datetime
+    ) -> Dict[str, Any]:
         """简单预测方法"""
         try:
             # 基于QPS的简单预测算法
             # 每30 QPS需要1个实例
             instances = max(1, int(math.ceil(current_qps / 30)))
-            
+
             # 基于时间因子调整
             hour_factor = self._get_hour_factor(timestamp.hour)
             day_factor = self._get_day_factor(timestamp.weekday())
-            
+
             # 应用时间因子
-            adjusted_instances = max(1, int(round(instances * hour_factor * day_factor)))
+            adjusted_instances = max(
+                1, int(round(instances * hour_factor * day_factor))
+            )
             # 边界约束
             adjusted_instances = max(
                 config.prediction.min_instances,
                 min(adjusted_instances, config.prediction.max_instances),
             )
-            
+
             return {
                 "instances": adjusted_instances,
                 "confidence": 0.6 if current_qps > LOW_QPS_THRESHOLD else 0.3,
-                "method": "time_factor"
+                "method": "time_factor",
             }
-            
+
         except Exception as e:
             logger.error(f"简单预测失败: {e}")
-            return {
-                "instances": 1,
-                "confidence": 0.1,
-                "method": "fallback"
-            }
+            return {"instances": 1, "confidence": 0.1, "method": "fallback"}
 
     async def _prepare_features(
         self,
@@ -378,21 +416,32 @@ class PredictionService:
                     step="1m",
                 )
 
-                results = await asyncio.gather(*inst_tasks, range_task, return_exceptions=True)
+                results = await asyncio.gather(
+                    *inst_tasks, range_task, return_exceptions=True
+                )
 
                 # 解析结果，出现异常则保持默认估算
                 try:
-                    if isinstance(results[0], Exception) is False and results[0] is not None:
+                    if (
+                        isinstance(results[0], Exception) is False
+                        and results[0] is not None
+                    ):
                         qps_1h_ago = float(results[0])
                 except Exception:
                     pass
                 try:
-                    if isinstance(results[1], Exception) is False and results[1] is not None:
+                    if (
+                        isinstance(results[1], Exception) is False
+                        and results[1] is not None
+                    ):
                         qps_1d_ago = float(results[1])
                 except Exception:
                     pass
                 try:
-                    if isinstance(results[2], Exception) is False and results[2] is not None:
+                    if (
+                        isinstance(results[2], Exception) is False
+                        and results[2] is not None
+                    ):
                         qps_1w_ago = float(results[2])
                 except Exception:
                     pass
@@ -449,15 +498,15 @@ class PredictionService:
         try:
             # 基于QPS合理性的置信度
             qps_confidence = 0.8 if current_qps > 10 else 0.5
-            
+
             # 基于实例数合理性的置信度
             instance_confidence = 0.9 if 1 <= instances <= 10 else 0.6
-            
+
             # 组合置信度
             confidence = (qps_confidence + instance_confidence) / 2
-            
+
             return min(0.95, confidence)
-            
+
         except Exception:
             return 0.5
 
@@ -478,7 +527,9 @@ class PredictionService:
         return float(factor)
 
     # 新增：获取工作负载指标（用于测试）
-    def get_workload_metrics(self, *, namespace: str, deployment: str, duration_minutes: int = 30) -> Dict[str, Any]:
+    def get_workload_metrics(
+        self, *, namespace: str, deployment: str, duration_minutes: int = 30
+    ) -> Dict[str, Any]:
         """获取工作负载的基础指标摘要。"""
         try:
             end_time = datetime.datetime.now(datetime.timezone.utc)
@@ -488,22 +539,42 @@ class PredictionService:
             maybe_coro = self.prometheus_service.query_range_async(
                 query=promql, start_time=start_time, end_time=end_time, step="1m"
             )
-            data = asyncio.run(maybe_coro) if inspect.isawaitable(maybe_coro) else maybe_coro
+            data = (
+                asyncio.run(maybe_coro)
+                if inspect.isawaitable(maybe_coro)
+                else maybe_coro
+            )
             # 兼容 DataFrame 或 dict
             values: List[float] = []
             if isinstance(data, pd.DataFrame):
                 if not data.empty:
                     if "value" in data.columns:
-                        values = [float(v) for v in data["value"].tolist() if isinstance(v, (int, float))]
+                        values = [
+                            float(v)
+                            for v in data["value"].tolist()
+                            if isinstance(v, (int, float))
+                        ]
                     else:
                         num_cols = data.select_dtypes(include=["number"]).columns
                         for col in num_cols:
-                            values.extend([float(v) for v in data[col].tolist() if isinstance(v, (int, float))])
+                            values.extend(
+                                [
+                                    float(v)
+                                    for v in data[col].tolist()
+                                    if isinstance(v, (int, float))
+                                ]
+                            )
             elif isinstance(data, dict):
                 results_any: Any = data.get("data", {}).get("result", [])
-                if isinstance(results_any, list) and results_any and isinstance(results_any[0], dict):
+                if (
+                    isinstance(results_any, list)
+                    and results_any
+                    and isinstance(results_any[0], dict)
+                ):
                     values_list: Any = results_any[0].get("values", [])
-                    seq: List[Any] = values_list if isinstance(values_list, list) else []
+                    seq: List[Any] = (
+                        values_list if isinstance(values_list, list) else []
+                    )
                     for item in seq:
                         try:
                             _, val = item
@@ -511,7 +582,12 @@ class PredictionService:
                         except Exception:
                             continue
             if not values:
-                return {"average_qps": 0.0, "max_qps": 0.0, "min_qps": 0.0, "samples": 0}
+                return {
+                    "average_qps": 0.0,
+                    "max_qps": 0.0,
+                    "min_qps": 0.0,
+                    "samples": 0,
+                }
             return {
                 "average_qps": float(sum(values) / len(values)),
                 "max_qps": float(max(values)),
@@ -533,10 +609,10 @@ class PredictionService:
         try:
             if current_qps is None:
                 current_qps = 50.0
-                
+
             now = datetime.datetime.now(datetime.timezone.utc)
             predictions = []
-            
+
             # 生成未来多个时间点的预测
             for hour_offset in [1, 3, 6, 12, 24]:
                 if hour_offset <= hours_ahead:
@@ -548,21 +624,23 @@ class PredictionService:
                         selector=selector,
                         window=window,
                     )
-                    predictions.append({
-                        "hours_ahead": hour_offset,
-                        "timestamp": future_time.isoformat(),
-                        "predicted_instances": pred_result.get("instances", 1),
-                        "confidence": pred_result.get("confidence", 0.5)
-                    })
-            
+                    predictions.append(
+                        {
+                            "hours_ahead": hour_offset,
+                            "timestamp": future_time.isoformat(),
+                            "predicted_instances": pred_result.get("instances", 1),
+                            "confidence": pred_result.get("confidence", 0.5),
+                        }
+                    )
+
             return {
                 "current_qps": current_qps,
                 "hours_ahead": hours_ahead,
                 "trend_predictions": predictions,
                 "trend_analysis": self._analyze_trend(predictions),
-                "timestamp": now.isoformat()
+                "timestamp": now.isoformat(),
             }
-            
+
         except Exception as e:
             logger.error(f"趋势预测失败: {e}")
             raise Exception(f"趋势预测失败: {str(e)}") from e
@@ -571,9 +649,9 @@ class PredictionService:
         """分析趋势"""
         if len(predictions) < 2:
             return "数据不足"
-        
+
         values = [p["predicted_instances"] for p in predictions]
-        
+
         if values[-1] > values[0] * 1.2:
             return "上升趋势"
         elif values[-1] < values[0] * 0.8:
@@ -598,7 +676,7 @@ class PredictionService:
             "service_name": "PredictionService",
             "model_loaded": self.model_loaded,
             "model_info": self.model_loader.get_model_info(),
-            "status": "healthy" if self.is_healthy() else "unhealthy"
+            "status": "healthy" if self.is_healthy() else "unhealthy",
         }
 
     def reload_models(self) -> bool:
@@ -609,6 +687,7 @@ class PredictionService:
         except Exception as e:
             logger.error(f"重新加载模型失败: {e}")
             return False
+
 
 class Predictor(PredictionService):
     pass

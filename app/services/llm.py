@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import json
 import logging
 import os
@@ -36,7 +37,7 @@ class LLMService:
 
     def __init__(self):
         self.error_handler = ErrorHandler(logger)
-        
+
         self.provider = (
             config.llm.provider.split("#")[0].strip()
             if config.llm.provider
@@ -56,7 +57,7 @@ class LLMService:
                 base_url=config.llm.effective_base_url,
             )
             logger.debug(f"LLM服务(OpenAI)初始化完成: {self.model}")
-            
+
             try:
                 os.environ["OLLAMA_HOST"] = config.llm.ollama_base_url.replace(
                     "/v1", ""
@@ -69,7 +70,7 @@ class LLMService:
             self.client = None
             os.environ["OLLAMA_HOST"] = config.llm.ollama_base_url.replace("/v1", "")
             logger.debug(f"LLM服务(Ollama)初始化完成: {self.model}")
-            
+
             try:
                 self.backup_client = OpenAI(
                     api_key=config.llm.api_key, base_url=config.llm.base_url
@@ -121,7 +122,9 @@ class LLMService:
         }
 
     # 兼容测试：提供同步便捷方法（使用requests.post，便于单元测试mock）
-    def generate_response(self, text: str, model: Optional[str] = None) -> Optional[str]:
+    def generate_response(
+        self, text: str, model: Optional[str] = None
+    ) -> Optional[str]:
         try:
             url = f"{config.llm.effective_base_url}/chat/completions"
             payload = {
@@ -195,7 +198,9 @@ class LLMService:
         blocks = re.findall(r"```([\s\S]*?)```", text)
         return [b.strip() for b in blocks]
 
-    def _call_openai_sync(self, messages: List[Dict[str, str]], model: str) -> Optional[str]:
+    def _call_openai_sync(
+        self, messages: List[Dict[str, str]], model: str
+    ) -> Optional[str]:
         client = (
             getattr(self, "backup_client", None)
             if self.provider.lower() == "ollama"
@@ -209,7 +214,11 @@ class LLMService:
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
-        return response.choices[0].message.content if response and hasattr(response, "choices") else None
+        return (
+            response.choices[0].message.content
+            if response and hasattr(response, "choices")
+            else None
+        )
 
     async def generate_response_async(
         self,
@@ -428,7 +437,7 @@ class LLMService:
 
             messages = [{"role": "user", "content": context}]
             response_format = {"type": "json_object"}
-            
+
             response = await self.generate_response_async(
                 messages=messages,
                 system_prompt=system_prompt,
@@ -438,7 +447,9 @@ class LLMService:
 
             if response:
                 try:
-                    return await self._extract_json_from_k8s_analysis(response, messages)
+                    return await self._extract_json_from_k8s_analysis(
+                        response, messages
+                    )
                 except Exception:
                     alternative_response = await self.generate_response_async(
                         messages=messages, system_prompt=system_prompt, temperature=0.1
@@ -501,15 +512,17 @@ class LLMService:
         except Exception as e:
             logger.error(f"修复JSON失败: {str(e)}")
             analysis = self._create_default_analysis()
-            
+
             if "问题" in response or "problem" in response:
                 analysis["problem_summary"] = "可能存在部署配置问题"
             if "修复" in response or "fix" in response:
-                analysis["fixes"].append({
-                    "description": "请查看原始响应中的修复建议",
-                    "yaml_changes": "无法自动解析",
-                    "confidence": 0.5,
-                })
+                analysis["fixes"].append(
+                    {
+                        "description": "请查看原始响应中的修复建议",
+                        "yaml_changes": "无法自动解析",
+                        "confidence": 0.5,
+                    }
+                )
             return analysis
 
     async def generate_rca_summary(

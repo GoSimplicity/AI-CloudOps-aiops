@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -22,7 +23,13 @@ class TracingCollector:
     def __init__(self):
         self._svc = TracingService()
 
-    async def pull(self, start_time: datetime, end_time: datetime, service: Optional[str] = None, limit: int = 20) -> List[Dict]:
+    async def pull(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        service: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict]:
         if not config.tracing.enabled or not self._svc.is_enabled():
             return []
         return await self._svc.search_traces(
@@ -31,4 +38,3 @@ class TracingCollector:
             service=service,
             limit=limit,
         )
-

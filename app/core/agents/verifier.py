@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 import logging
 from typing import Any, Dict, List
@@ -23,7 +24,9 @@ class K8sVerifierAgent:
     def __init__(self):
         self.k8s_service = KubernetesService()
 
-    async def verify_deployment_health(self, name: str, namespace: str, *, wait_seconds: int = 20) -> Dict[str, Any]:
+    async def verify_deployment_health(
+        self, name: str, namespace: str, *, wait_seconds: int = 20
+    ) -> Dict[str, Any]:
         """验证Deployment在修复后的健康状态。
 
         设计意图：
@@ -33,7 +36,9 @@ class K8sVerifierAgent:
         try:
             await asyncio.sleep(max(0, min(wait_seconds, 60)))
 
-            pods = await self.k8s_service.get_pods_async(namespace=namespace, label_selector=f"app={name}")
+            pods = await self.k8s_service.get_pods_async(
+                namespace=namespace, label_selector=f"app={name}"
+            )
             total = len(pods)
             running_ready = 0
             not_ready_pods: List[str] = []
@@ -41,7 +46,10 @@ class K8sVerifierAgent:
             for pod in pods:
                 status = pod.get("status", {})
                 if status.get("phase") == "Running":
-                    ready = any(c.get("type") == "Ready" and c.get("status") == "True" for c in status.get("conditions", []))
+                    ready = any(
+                        c.get("type") == "Ready" and c.get("status") == "True"
+                        for c in status.get("conditions", [])
+                    )
                     if ready:
                         running_ready += 1
                     else:
@@ -72,4 +80,3 @@ class K8sVerifierAgent:
         except Exception as e:
             logger.error(f"验证Deployment健康失败: {str(e)}")
             return {"status": "failed", "error": str(e)}
-

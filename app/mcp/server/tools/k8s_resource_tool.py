@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -217,7 +218,7 @@ class K8sResourceTool(K8sBaseTool):
                 "operation": "describe_resource",
                 "resource_type": resource_type,
                 "resource_description": description,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -274,7 +275,7 @@ class K8sResourceTool(K8sBaseTool):
                 "namespace": namespace,
                 "added_labels": labels,
                 "new_labels": updated_resource.metadata.labels or {},
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -333,7 +334,7 @@ class K8sResourceTool(K8sBaseTool):
                 "namespace": namespace,
                 "removed_labels": removed_labels,
                 "new_labels": updated_resource.metadata.labels or {},
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -390,7 +391,7 @@ class K8sResourceTool(K8sBaseTool):
                 "namespace": namespace,
                 "added_annotations": annotations,
                 "new_annotations": updated_resource.metadata.annotations or {},
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -450,7 +451,7 @@ class K8sResourceTool(K8sBaseTool):
                 "namespace": namespace,
                 "removed_annotations": removed_annotations,
                 "new_annotations": updated_resource.metadata.annotations or {},
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -519,7 +520,7 @@ class K8sResourceTool(K8sBaseTool):
                 "message": f"已应用 {len(applied_resources)} 个资源，{len(errors)} 个失败",
                 "applied_resources": applied_resources,
                 "errors": errors,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:

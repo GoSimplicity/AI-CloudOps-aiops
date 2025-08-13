@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -219,7 +220,7 @@ class K8sServiceTool(K8sBaseTool):
                 "operation": "list_services",
                 "total_count": len(service_list),
                 "services": service_list,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -227,7 +228,7 @@ class K8sServiceTool(K8sBaseTool):
                 "success": False,
                 "error": "获取Service列表失败",
                 "message": str(e),
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
     async def _get_service_details(
@@ -319,7 +320,7 @@ class K8sServiceTool(K8sBaseTool):
                 "success": True,
                 "operation": "get_service_details",
                 "service_details": service_details,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -405,7 +406,7 @@ class K8sServiceTool(K8sBaseTool):
                 "namespace": created_service.metadata.namespace,
                 "cluster_ip": created_service.spec.cluster_ip,
                 "type": created_service.spec.type,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -451,7 +452,7 @@ class K8sServiceTool(K8sBaseTool):
                 "message": f"Service {service_name} 在命名空间 {namespace} 中已成功删除",
                 "service_name": service_name,
                 "namespace": namespace,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -500,7 +501,7 @@ class K8sServiceTool(K8sBaseTool):
                         "namespace": namespace,
                         "message": "Service存在但没有可用的端点",
                         "subsets": [],
-            "timestamp": iso_utc_now(),
+                        "timestamp": iso_utc_now(),
                     }
                 raise
 

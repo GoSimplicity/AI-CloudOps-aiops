@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 import time
 
@@ -19,8 +20,16 @@ from app.core.prediction.predictor import PredictionService
 from app.db.base import get_engine
 from app.di import get_service
 from app.models.response_models import APIResponse
-from app.models.entities import HealthEntity, HealthSnapshotRecordEntity, DeletionResultEntity
-from app.models.request_models import HealthSnapshotCreateReq, HealthSnapshotUpdateReq, HealthSnapshotListReq
+from app.models.entities import (
+    HealthEntity,
+    HealthSnapshotRecordEntity,
+    DeletionResultEntity,
+)
+from app.models.request_models import (
+    HealthSnapshotCreateReq,
+    HealthSnapshotUpdateReq,
+    HealthSnapshotListReq,
+)
 from app.db.base import session_scope
 from app.db.models import HealthSnapshotRecord, utcnow
 from sqlalchemy import select, func
@@ -40,11 +49,21 @@ start_time = time.time()
 
 # 统一的服务配置，避免重复定义
 HEALTH_CHECK_SERVICES = [
-    ("prometheus", PrometheusService, "Prometheus监控服务", "负责收集和存储系统监控数据"),
-    ("kubernetes", KubernetesService, "Kubernetes集群服务", "负责容器编排和集群资源管理"),
+    (
+        "prometheus",
+        PrometheusService,
+        "Prometheus监控服务",
+        "负责收集和存储系统监控数据",
+    ),
+    (
+        "kubernetes",
+        KubernetesService,
+        "Kubernetes集群服务",
+        "负责容器编排和集群资源管理",
+    ),
     ("llm", LLMService, "大语言模型服务", "负责AI推理和智能分析"),
     ("notification", NotificationService, "通知服务", "负责告警通知和消息推送"),
-    ("prediction", PredictionService, "预测服务", "负责负载预测和容量规划")
+    ("prediction", PredictionService, "预测服务", "负责负载预测和容量规划"),
 ]
 
 
@@ -89,7 +108,9 @@ async def system_health():
             system=system_status,
         )
 
-        return APIResponse(code=0, message="健康检查完成", data=entity.model_dump()).model_dump()
+        return APIResponse(
+            code=0, message="健康检查完成", data=entity.model_dump()
+        ).model_dump()
 
     except Exception as e:
         logger.error(f"健康检查失败: {str(e)}")
@@ -114,11 +135,17 @@ async def k8s_health():
         ).model_dump()
         return JSONResponse(
             content=payload,
-            status_code=(status.HTTP_200_OK if ok else status.HTTP_503_SERVICE_UNAVAILABLE),
+            status_code=(
+                status.HTTP_200_OK if ok else status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
         )
     except Exception:
-        payload = APIResponse(code=503, message="unavailable", data={"healthy": False}).model_dump()
-        return JSONResponse(content=payload, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+        payload = APIResponse(
+            code=503, message="unavailable", data={"healthy": False}
+        ).model_dump()
+        return JSONResponse(
+            content=payload, status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
 
 
 @router.get("/health/prometheus")
@@ -133,11 +160,17 @@ async def prometheus_health():
         ).model_dump()
         return JSONResponse(
             content=payload,
-            status_code=(status.HTTP_200_OK if ok else status.HTTP_503_SERVICE_UNAVAILABLE),
+            status_code=(
+                status.HTTP_200_OK if ok else status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
         )
     except Exception:
-        payload = APIResponse(code=503, message="unavailable", data={"healthy": False}).model_dump()
-        return JSONResponse(content=payload, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+        payload = APIResponse(
+            code=503, message="unavailable", data={"healthy": False}
+        ).model_dump()
+        return JSONResponse(
+            content=payload, status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
 
 
 @router.get("/health/system")
@@ -154,16 +187,14 @@ async def system_resources():
                 "total": disk.total,
                 "used": disk.used,
                 "free": disk.free,
-                "percent": round((disk.used / disk.total) * 100, 2) if disk.total else 0.0,
+                "percent": round((disk.used / disk.total) * 100, 2)
+                if disk.total
+                else 0.0,
             },
         }
         return APIResponse(code=0, message="ok", data=data).model_dump()
     except Exception:
         return APIResponse(code=500, message="error", data={}).model_dump()
- 
-
-
- 
 
 
 def check_components_health():
@@ -176,7 +207,7 @@ def check_components_health():
         except Exception as e:
             logger.warning(f"{service_name}健康检查异常: {str(e)}")
             components_status[service_name] = False
-    
+
     return components_status
 
 
@@ -228,19 +259,33 @@ def get_system_status():
 
 # ========== Health 模块：标准化 CRUD（直连数据库） ==========
 
+
 @router.get("/health/records")
 async def list_health_records(params: HealthSnapshotListReq = Depends()):
     try:
         with session_scope() as session:
-            stmt = select(HealthSnapshotRecord).where(HealthSnapshotRecord.deleted_at.is_(None))
+            stmt = select(HealthSnapshotRecord).where(
+                HealthSnapshotRecord.deleted_at.is_(None)
+            )
             if params.status:
                 stmt = stmt.where(HealthSnapshotRecord.status == params.status)
-            total = session.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+            total = (
+                session.execute(
+                    select(func.count()).select_from(stmt.subquery())
+                ).scalar()
+                or 0
+            )
             page = max(1, int(params.page or 1))
             size = max(1, min(100, int(params.size or 20)))
-            rows = session.execute(
-                stmt.order_by(HealthSnapshotRecord.id.desc()).offset((page - 1) * size).limit(size)
-            ).scalars().all()
+            rows = (
+                session.execute(
+                    stmt.order_by(HealthSnapshotRecord.id.desc())
+                    .offset((page - 1) * size)
+                    .limit(size)
+                )
+                .scalars()
+                .all()
+            )
             items = [
                 HealthSnapshotRecordEntity(
                     id=r.id,
@@ -254,9 +299,13 @@ async def list_health_records(params: HealthSnapshotListReq = Depends()):
                 ).model_dump()
                 for r in rows
             ]
-        return APIResponse(code=0, message="ok", data={"items": items, "total": total}).model_dump()
+        return APIResponse(
+            code=0, message="ok", data={"items": items, "total": total}
+        ).model_dump()
     except Exception:
-        return APIResponse(code=0, message="ok", data={"items": [], "total": 0}).model_dump()
+        return APIResponse(
+            code=0, message="ok", data={"items": [], "total": 0}
+        ).model_dump()
 
 
 @router.post("/health/records")
@@ -282,7 +331,9 @@ async def create_health_record(payload: HealthSnapshotCreateReq):
                 created_at=rec.created_at.isoformat() if rec.created_at else None,
                 updated_at=rec.updated_at.isoformat() if rec.updated_at else None,
             )
-        return APIResponse(code=0, message="created", data=entity.model_dump()).model_dump()
+        return APIResponse(
+            code=0, message="created", data=entity.model_dump()
+        ).model_dump()
     except Exception as e:
         raise HTTPException(status_code=500, detail="create record failed") from e
 
@@ -293,7 +344,9 @@ async def get_health_record(record_id: int):
         with session_scope() as session:
             r = session.get(HealthSnapshotRecord, record_id)
             if not r or r.deleted_at is not None:
-                return APIResponse(code=404, message="not found", data=None).model_dump()
+                return APIResponse(
+                    code=404, message="not found", data=None
+                ).model_dump()
             entity = HealthSnapshotRecordEntity(
                 id=r.id,
                 status=r.status,
@@ -315,7 +368,9 @@ async def update_health_record(record_id: int, payload: HealthSnapshotUpdateReq)
         with session_scope() as session:
             r = session.get(HealthSnapshotRecord, record_id)
             if not r or r.deleted_at is not None:
-                return APIResponse(code=404, message="not found", data=None).model_dump()
+                return APIResponse(
+                    code=404, message="not found", data=None
+                ).model_dump()
             for field in ("status", "version", "uptime"):
                 value = getattr(payload, field)
                 if value is not None:
@@ -335,7 +390,9 @@ async def update_health_record(record_id: int, payload: HealthSnapshotUpdateReq)
                 created_at=r.created_at.isoformat() if r.created_at else None,
                 updated_at=r.updated_at.isoformat() if r.updated_at else None,
             )
-        return APIResponse(code=0, message="updated", data=entity.model_dump()).model_dump()
+        return APIResponse(
+            code=0, message="updated", data=entity.model_dump()
+        ).model_dump()
     except Exception as e:
         raise HTTPException(status_code=500, detail="update record failed") from e
 
@@ -346,11 +403,15 @@ async def delete_health_record(record_id: int):
         with session_scope() as session:
             r = session.get(HealthSnapshotRecord, record_id)
             if not r:
-                return APIResponse(code=404, message="not found", data=None).model_dump()
+                return APIResponse(
+                    code=404, message="not found", data=None
+                ).model_dump()
             r.deleted_at = utcnow()
             session.add(r)
         entity = DeletionResultEntity(id=record_id)
-        return APIResponse(code=0, message="deleted", data=entity.model_dump()).model_dump()
+        return APIResponse(
+            code=0, message="deleted", data=entity.model_dump()
+        ).model_dump()
     except Exception as e:
         raise HTTPException(status_code=500, detail="delete record failed") from e
 

@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -174,7 +175,7 @@ class K8sMonitorTool(K8sBaseTool):
                 "operation": "get_node_metrics",
                 "node_count": len(nodes_data),
                 "nodes": nodes_data,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -284,7 +285,7 @@ class K8sMonitorTool(K8sBaseTool):
                 "operation": "get_pod_metrics",
                 "pod_count": len(pods_data),
                 "pods": pods_data,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -332,7 +333,7 @@ class K8sMonitorTool(K8sBaseTool):
                 "operation": "get_resource_quotas",
                 "quota_count": len(quotas_data),
                 "quotas": quotas_data,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -391,7 +392,7 @@ class K8sMonitorTool(K8sBaseTool):
                 "operation": "get_limit_ranges",
                 "limit_range_count": len(limit_ranges_data),
                 "limit_ranges": limit_ranges_data,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -472,7 +473,7 @@ class K8sMonitorTool(K8sBaseTool):
                 "total_pods": len(pods_usage),
                 "top_cpu_pods": top_cpu_pods,
                 "top_memory_pods": top_memory_pods,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:

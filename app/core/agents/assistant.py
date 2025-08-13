@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 # 导入重新组织后的助手类
 from app.core.agents.assistant.core import AssistantAgent
 

@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import json
 import logging
 import subprocess
@@ -260,7 +261,7 @@ def test_autofix_normal():
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
     # 新版接口统一返回 APIResponse 结构
-    success = (response.status_code == 200 and result.get("code") == 0)
+    success = response.status_code == 200 and result.get("code") == 0
 
     return {"success": success, "status_code": response.status_code, "response": result}
 
@@ -287,7 +288,7 @@ def test_autofix_problematic():
     result = response.json()
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
-    success = (response.status_code == 200 and result.get("code") == 0)
+    success = response.status_code == 200 and result.get("code") == 0
 
     # 等待一段时间，让修复生效
     if success:
@@ -326,7 +327,7 @@ def test_autofix_test_problem():
     result = response.json()
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
-    success = (response.status_code == 200 and result.get("code") == 0)
+    success = response.status_code == 200 and result.get("code") == 0
 
     # 等待一段时间，让修复生效
     if success:

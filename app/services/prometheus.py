@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -47,7 +48,9 @@ class PrometheusService:
             return None
 
     # 新增：同步范围查询，供单元测试使用
-    def query_range(self, query: str, start: str, end: str, step: str = "1m") -> Optional[Dict[str, Any]]:
+    def query_range(
+        self, query: str, start: str, end: str, step: str = "1m"
+    ) -> Optional[Dict[str, Any]]:
         try:
             url = f"{self.base_url}/api/v1/query_range"
             params = {"query": query, "start": start, "end": end, "step": step}

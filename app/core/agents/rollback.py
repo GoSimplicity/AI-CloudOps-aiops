@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 from typing import Any, Dict
 
@@ -22,7 +23,9 @@ class K8sRollbackAgent:
     def __init__(self):
         self.k8s_service = KubernetesService()
 
-    async def rollback_deployment(self, name: str, namespace: str, *, reason: str = "") -> Dict[str, Any]:
+    async def rollback_deployment(
+        self, name: str, namespace: str, *, reason: str = ""
+    ) -> Dict[str, Any]:
         """对Deployment执行回滚或安全止损。
 
         设计意图：
@@ -35,7 +38,7 @@ class K8sRollbackAgent:
                     "template": {
                         "metadata": {
                             "annotations": {
-                            "aiops.rollbackAt": iso_utc_now(),
+                                "aiops.rollbackAt": iso_utc_now(),
                                 "aiops.rollbackReason": reason or "verification_failed",
                             }
                         }
@@ -51,4 +54,3 @@ class K8sRollbackAgent:
         except Exception as e:
             logger.error(f"回滚失败: {str(e)}")
             return {"success": False, "error": str(e)}
-

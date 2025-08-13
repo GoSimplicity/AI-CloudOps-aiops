@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 import logging
 import time
@@ -88,7 +89,7 @@ class ErrorHandler:
     ) -> Tuple[str, Dict[str, Any]]:
         """记录错误并返回格式化的错误信息"""
         error_id = f"error_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f')}"
-        
+
         error_details = {
             "error_id": error_id,
             "error_type": type(error).__name__,
@@ -118,6 +119,7 @@ def retry_on_exception(
     exceptions: Tuple[Type[Exception], ...] = (Exception,),
 ):
     """重试装饰器"""
+
     def decorator(func):
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
@@ -129,13 +131,13 @@ def retry_on_exception(
                     last_exception = e
                     if attempt == max_retries:
                         raise
-                    
-                    wait_time = delay * (backoff_factor ** attempt)
+
+                    wait_time = delay * (backoff_factor**attempt)
                     await asyncio.sleep(wait_time)
-            
+
             if last_exception:
                 raise last_exception
-        
+
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
             last_exception = None
@@ -146,15 +148,15 @@ def retry_on_exception(
                     last_exception = e
                     if attempt == max_retries:
                         raise
-                    
-                    wait_time = delay * (backoff_factor ** attempt)
+
+                    wait_time = delay * (backoff_factor**attempt)
                     time.sleep(wait_time)
-            
+
             if last_exception:
                 raise last_exception
-        
+
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
-    
+
     return decorator
 
 
@@ -167,7 +169,6 @@ def validate_field_range(
     """验证字段范围"""
     if min_value is not None and value < min_value:
         raise ValidationError(f"字段 {field_name} 值 {value} 小于最小值 {min_value}")
-    
+
     if max_value is not None and value > max_value:
         raise ValidationError(f"字段 {field_name} 值 {value} 大于最大值 {max_value}")
-    

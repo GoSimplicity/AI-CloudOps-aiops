@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 
 from fastapi import APIRouter
@@ -79,6 +80,7 @@ def register_routes(app):
     # 启动时创建数据库表（仅 cl_aiops_ 前缀，不影响主平台表）
     try:
         from app.db import create_all_tables
+
         create_all_tables()
     except Exception:
         # 启动时失败不阻塞，避免影响无DB环境的测试
@@ -96,6 +98,6 @@ def register_routes(app):
                 "version": "1.0.0",
                 "status": "running",
                 "docs": "/docs",
-                "api_version": "/api/v1"
+                "api_version": "/api/v1",
             },
         ).model_dump()

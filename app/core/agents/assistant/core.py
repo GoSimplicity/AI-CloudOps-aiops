@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 import json
 import logging
@@ -90,14 +91,18 @@ class AssistantAgent:
         self.retrieve_k = int(getattr(config.rag, "retrieve_k", 12))
         self.score_threshold = float(getattr(config.rag, "score_threshold", 0.0))
         self.iter_max_loops = int(getattr(config.rag, "iter_max_loops", 1))
-        self.retry_confidence_threshold = float(getattr(config.rag, "retry_confidence_threshold", 0.6))
+        self.retry_confidence_threshold = float(
+            getattr(config.rag, "retry_confidence_threshold", 0.6)
+        )
         self.mmr_top_k = int(getattr(config.rag, "mmr_top_k", 6))
         self.mmr_lambda = float(getattr(config.rag, "mmr_lambda", 0.7))
         self.answer_max_chars = int(getattr(config.rag, "answer_max_chars", 300))
         self.source_limit = int(getattr(config.rag, "source_limit", 4))
         # 新增：最大改写查询条数限制，降低并发检索开销
         try:
-            self.max_rewrite_queries = int(getattr(config.rag, "max_rewrite_queries", 6))
+            self.max_rewrite_queries = int(
+                getattr(config.rag, "max_rewrite_queries", 6)
+            )
         except Exception:
             self.max_rewrite_queries = 6
 
@@ -128,7 +133,9 @@ class AssistantAgent:
         try:
             if self.llm_provider.lower() == "openai":
                 # 将最大输出长度与全局配置对齐，并设一个合理上限以降低延迟
-                safe_max_tokens = max(256, min(int(getattr(config.llm, "max_tokens", 2048)), 800))
+                safe_max_tokens = max(
+                    256, min(int(getattr(config.llm, "max_tokens", 2048)), 800)
+                )
                 self.llm = ChatOpenAI(
                     api_key=config.llm.api_key,
                     base_url=config.llm.base_url,
@@ -168,7 +175,9 @@ class AssistantAgent:
                         asyncio.run(self.vector_store_manager.add_documents(documents))
                     except RuntimeError:
                         loop = asyncio.new_event_loop()
-                        loop.run_until_complete(self.vector_store_manager.add_documents(documents))
+                        loop.run_until_complete(
+                            self.vector_store_manager.add_documents(documents)
+                        )
                         loop.close()
                     _ = self.vector_store_manager.load_existing_db()
                 else:
@@ -207,11 +216,18 @@ class AssistantAgent:
             # 允许一次自我迭代
             iter_count = int(state.get("iter_count") or 0)
             confidence = float(state.get("confidence") or 0.0)
-            if confidence < self.retry_confidence_threshold and iter_count < self.iter_max_loops:
+            if (
+                confidence < self.retry_confidence_threshold
+                and iter_count < self.iter_max_loops
+            ):
                 return "rewrite"
             return "cache_write"
 
-        graph.add_conditional_edges("calibrate", _need_iterate, {"rewrite": "rewrite", "cache_write": "cache_write"})
+        graph.add_conditional_edges(
+            "calibrate",
+            _need_iterate,
+            {"rewrite": "rewrite", "cache_write": "cache_write"},
+        )
         graph.add_edge("cache_write", END)
 
         return graph.compile()
@@ -225,7 +241,9 @@ class AssistantAgent:
         # 初始化
         state.setdefault("telemetry", {})
         state["telemetry"]["t0"] = _now_ms()
-        logger.info(f"trace={state['telemetry'].get('trace_id')} node=normalize q_len={len(q)}")
+        logger.info(
+            f"trace={state['telemetry'].get('trace_id')} node=normalize q_len={len(q)}"
+        )
         state["iter_count"] = int(state.get("iter_count") or 0)
         return state
 
@@ -237,9 +255,14 @@ class AssistantAgent:
             intent = "deployment"
         elif any(k in q for k in ["监控", "告警", "指标", "tracing", "prometheus"]):
             intent = "monitoring"
-        elif any(k in q for k in ["故障", "错误", "异常", "排查", "诊断", "crashloop", "oom"]):
+        elif any(
+            k in q for k in ["故障", "错误", "异常", "排查", "诊断", "crashloop", "oom"]
+        ):
             intent = "troubleshooting"
-        elif any(k in ql for k in ["architecture", "架构", "overview", "概览", "平台", "系统"]):
+        elif any(
+            k in ql
+            for k in ["architecture", "架构", "overview", "概览", "平台", "系统"]
+        ):
             intent = "overview"
 
         # 轻量安全：屏蔽明显PII/注入
@@ -270,25 +293,35 @@ class AssistantAgent:
                     base.append(q.replace(key, s))
 
         # 关键词拆分组合
-        tokens = [t for t in q.replace("/", " ").replace("-", " ").split() if len(t) > 1]
+        tokens = [
+            t for t in q.replace("/", " ").replace("-", " ").split() if len(t) > 1
+        ]
         if len(tokens) >= 2:
             base.append(" ".join(tokens[:2]))
         if len(tokens) >= 3:
             base.append(" ".join(tokens[-2:]))
 
         # 平台聚焦
-        if any(k in q for k in ["平台", "系统", "概览", "overview", "AI-CloudOps", "AIOps"]):
-            base.extend([
-                f"{q} 平台架构 组件 模块",
-                f"{q} 核心能力 特性 功能",
-            ])
+        if any(
+            k in q for k in ["平台", "系统", "概览", "overview", "AI-CloudOps", "AIOps"]
+        ):
+            base.extend(
+                [
+                    f"{q} 平台架构 组件 模块",
+                    f"{q} 核心能力 特性 功能",
+                ]
+            )
 
         # 去重截断
         # 限制改写查询数量
         limit_n = int(getattr(self, "max_rewrite_queries", 6))
         queries = list(dict.fromkeys(base))[: max(1, limit_n)]
         state["queries"] = queries
-        state["iter_count"] = int(state.get("iter_count") or 0) + 1 if state.get("confidence") and state["confidence"] < 0.6 else int(state.get("iter_count") or 0)
+        state["iter_count"] = (
+            int(state.get("iter_count") or 0) + 1
+            if state.get("confidence") and state["confidence"] < 0.6
+            else int(state.get("iter_count") or 0)
+        )
         logger.info(
             f"trace={state.get('telemetry', {}).get('trace_id')} node=rewrite queries={len(queries)} iter_count={state['iter_count']}"
         )
@@ -296,9 +329,12 @@ class AssistantAgent:
 
     async def _node_retrieve(self, state: AssistantState) -> AssistantState:
         queries = state.get("queries") or [state.get("normalized_question") or ""]
-        retriever = self.vector_store_manager.get_retriever(k=self.retrieve_k, score_threshold=self.score_threshold)
+        retriever = self.vector_store_manager.get_retriever(
+            k=self.retrieve_k, score_threshold=self.score_threshold
+        )
 
         all_docs: List[Document] = []
+
         async def _inv(q: str) -> List[Document]:
             try:
                 res = retriever.invoke(q)
@@ -311,7 +347,9 @@ class AssistantAgent:
             f"trace={state.get('telemetry', {}).get('trace_id')} node=retrieve start queries={len(queries[:6])}"
         )
         # 并发检索，最多使用 max_rewrite_queries 条
-        results = await asyncio.gather(*[_inv(q) for q in queries[: int(getattr(self, "max_rewrite_queries", 6))]])
+        results = await asyncio.gather(
+            *[_inv(q) for q in queries[: int(getattr(self, "max_rewrite_queries", 6))]]
+        )
         for docs in results:
             if docs:
                 all_docs.extend(docs)
@@ -319,7 +357,10 @@ class AssistantAgent:
         # 可选 Hybrid：关键词检索补充
         try:
             if bool(getattr(config.rag, "hybrid_enabled", False)):
-                kw_docs = await self.vector_store_manager.keyword_search(state.get("normalized_question") or "", k=max(4, self.retrieve_k // 2))
+                kw_docs = await self.vector_store_manager.keyword_search(
+                    state.get("normalized_question") or "",
+                    k=max(4, self.retrieve_k // 2),
+                )
                 all_docs.extend(kw_docs or [])
         except Exception as e:
             logger.debug(f"Hybrid关键词检索失败: {e}")
@@ -364,19 +405,30 @@ class AssistantAgent:
                 scored: List[Tuple[Document, float]] = []
                 for i, d in enumerate(docs):
                     text = d.page_content.lower()
-                    overlap = sum(1 for t in list(q_tokens)[:5] if t in text) / max(len(q_tokens) or 1, 1)
+                    overlap = sum(1 for t in list(q_tokens)[:5] if t in text) / max(
+                        len(q_tokens) or 1, 1
+                    )
                     length_score = 0.6 if len(d.page_content) < 150 else 1.0
                     meta_bonus = 1.0
                     if d.metadata:
-                        name = (d.metadata.get("filename") or d.metadata.get("source") or "").lower()
+                        name = (
+                            d.metadata.get("filename") or d.metadata.get("source") or ""
+                        ).lower()
                         for kw in ["aiops", "ai-cloudops", "平台", "overview", "架构"]:
                             if kw in name:
                                 meta_bonus += 0.05
-                    score = sims[i] * 0.55 + overlap * 0.25 + length_score * 0.1 + meta_bonus * 0.1
+                    score = (
+                        sims[i] * 0.55
+                        + overlap * 0.25
+                        + length_score * 0.1
+                        + meta_bonus * 0.1
+                    )
                     scored.append((d, float(score)))
 
                 scored.sort(key=lambda x: x[1], reverse=True)
-                state["reranked"] = scored[: min(int(getattr(config.rag, "reranker_top_k", 20)), len(scored))]
+                state["reranked"] = scored[
+                    : min(int(getattr(config.rag, "reranker_top_k", 20)), len(scored))
+                ]
             except Exception:
                 state["reranked"] = [(d, 0.6) for d in docs]
         else:
@@ -394,7 +446,11 @@ class AssistantAgent:
             return state
 
         # 简化版MMR选择前N=6
-        def mmr_select(cands: List[Tuple[Document, float]], top_k: int = self.mmr_top_k, lambda_coeff: float = self.mmr_lambda) -> List[Document]:
+        def mmr_select(
+            cands: List[Tuple[Document, float]],
+            top_k: int = self.mmr_top_k,
+            lambda_coeff: float = self.mmr_lambda,
+        ) -> List[Document]:
             selected: List[Document] = []
             selected_vecs: List[str] = []
             remains = cands.copy()
@@ -442,15 +498,32 @@ class AssistantAgent:
 
         context_blocks = []
         for i, d in enumerate(docs[:6]):
-            name = d.metadata.get("filename", f"Doc{i+1}") if d.metadata else f"Doc{i+1}"
+            name = (
+                d.metadata.get("filename", f"Doc{i + 1}")
+                if d.metadata
+                else f"Doc{i + 1}"
+            )
             snippet = d.page_content
             if len(snippet) > 1200:
                 snippet = snippet[:1200] + "..."
             context_blocks.append(f"[{name}]\n{snippet}")
 
-        system_prompt = "你是资深SRE/DevOps助手，基于提供的文档作答，必须引用来源并保持简洁。"
+        system_prompt = (
+            "你是资深SRE/DevOps助手，基于提供的文档作答，必须引用来源并保持简洁。"
+        )
         # 平台聚焦追加
-        if any(k in q for k in ["平台", "系统", "产品", "概览", "overview", "AI-CloudOps", "AIOps"]):
+        if any(
+            k in q
+            for k in [
+                "平台",
+                "系统",
+                "产品",
+                "概览",
+                "overview",
+                "AI-CloudOps",
+                "AIOps",
+            ]
+        ):
             system_prompt += " 聚焦AI-CloudOps/AIOps平台，用简洁段落，先概述再要点。"
 
         user_prompt = "\n".join(
@@ -471,10 +544,12 @@ class AssistantAgent:
             logger.info(
                 f"trace={state.get('telemetry', {}).get('trace_id')} node=synthesize start docs={len(docs)}"
             )
-            resp = await self.llm.ainvoke([
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_prompt),
-            ])
+            resp = await self.llm.ainvoke(
+                [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=user_prompt),
+                ]
+            )
             answer = (resp.content or "").strip()
             state["draft_answer"] = answer
             logger.info(
@@ -494,7 +569,11 @@ class AssistantAgent:
         docs = state.get("context_docs") or []
         names = []
         for i, d in enumerate(docs[:6]):
-            names.append(d.metadata.get("filename", f"Doc{i+1}") if d.metadata else f"Doc{i+1}")
+            names.append(
+                d.metadata.get("filename", f"Doc{i + 1}")
+                if d.metadata
+                else f"Doc{i + 1}"
+            )
         coverage = sum(1 for n in set(names) if f"[{n}]" in ans)
         state.setdefault("telemetry", {})["grounding_sources"] = coverage
         logger.info(
@@ -544,12 +623,18 @@ class AssistantAgent:
                 for d in db_documents or []:
                     rid = None
                     try:
-                        rid = str(d.metadata.get("record_id")) if d.metadata and d.metadata.get("record_id") is not None else None
+                        rid = (
+                            str(d.metadata.get("record_id"))
+                            if d.metadata and d.metadata.get("record_id") is not None
+                            else None
+                        )
                     except Exception:
                         rid = None
                     if rid:
                         try:
-                            cleared += int(self.vector_store_manager.delete_by_record_id(rid) or 0)
+                            cleared += int(
+                                self.vector_store_manager.delete_by_record_id(rid) or 0
+                            )
                         except Exception:
                             continue
                 if cleared:
@@ -578,7 +663,9 @@ class AssistantAgent:
             with get_session() as db:
                 rows = (
                     db.execute(
-                        select(DocumentRecord).where(DocumentRecord.deleted_at.is_(None))
+                        select(DocumentRecord).where(
+                            DocumentRecord.deleted_at.is_(None)
+                        )
                     )
                     .scalars()
                     .all()
@@ -628,7 +715,9 @@ class AssistantAgent:
             logger.error(f"添加文档失败: {e}")
             return False
 
-    async def add_document_async(self, content: str, metadata: Dict[str, Any] = None) -> bool:
+    async def add_document_async(
+        self, content: str, metadata: Dict[str, Any] = None
+    ) -> bool:
         try:
             doc = Document(page_content=content, metadata=metadata or {})
             return await self.vector_store_manager.add_documents([doc])
@@ -636,7 +725,9 @@ class AssistantAgent:
             logger.error(f"添加文档失败: {e}")
             return False
 
-    async def get_answer(self, question: str, session_id: str = None, max_context_docs: int = 4) -> Dict[str, Any]:
+    async def get_answer(
+        self, question: str, session_id: str = None, max_context_docs: int = 4
+    ) -> Dict[str, Any]:
         try:
             t0 = time.time()
             trace_id = str(uuid.uuid4())
@@ -653,7 +744,9 @@ class AssistantAgent:
 
             # 会话记忆
             if session_id:
-                self.session_manager.add_message_to_history(session_id, "user", question)
+                self.session_manager.add_message_to_history(
+                    session_id, "user", question
+                )
 
             init_state: AssistantState = {
                 "session_id": session_id,
@@ -668,13 +761,18 @@ class AssistantAgent:
             # 限制输出的来源数量
             sources = []
             for d in docs[: min(max_context_docs, self.source_limit)]:
-                sources.append({
-                    "content": (d.page_content[:200] + "...") if len(d.page_content) > 200 else d.page_content,
-                    "metadata": d.metadata,
-                })
+                sources.append(
+                    {
+                        "content": (d.page_content[:200] + "...")
+                        if len(d.page_content) > 200
+                        else d.page_content,
+                        "metadata": d.metadata,
+                    }
+                )
 
             result = {
-                "answer": final_state.get("draft_answer") or "抱歉，我无法为您提供准确答案。",
+                "answer": final_state.get("draft_answer")
+                or "抱歉，我无法为您提供准确答案。",
                 "sources": sources,
                 "confidence": float(final_state.get("confidence") or 0.5),
                 "processing_time": f"{time.time() - t0:.2f}s",
@@ -682,9 +780,13 @@ class AssistantAgent:
 
             # 写缓存 + 会话历史
             if session_id:
-                self.session_manager.add_message_to_history(session_id, "assistant", result["answer"])
+                self.session_manager.add_message_to_history(
+                    session_id, "assistant", result["answer"]
+                )
                 updated_history = self.session_manager.get_history(session_id)
-                self.cache_manager.set(question, result, session_id, updated_history, ttl=3600)
+                self.cache_manager.set(
+                    question, result, session_id, updated_history, ttl=3600
+                )
 
             logger.info(
                 f"trace={trace_id} pipeline_end session={session_id} confidence={result['confidence']} sources={len(sources)} duration={result['processing_time']}"
@@ -704,7 +806,9 @@ class AssistantAgent:
             return "抱歉，没有找到相关文档。"
         sentences = []
         for d in docs[:3]:
-            parts = [s.strip() for s in d.page_content.split("。") if len(s.strip()) > 10]
+            parts = [
+                s.strip() for s in d.page_content.split("。") if len(s.strip()) > 10
+            ]
             if parts:
                 sentences.append(parts[0] + "。")
         if sentences:
@@ -715,15 +819,21 @@ class AssistantAgent:
         steps = []
         ql = question.lower()
         if any(k in ql for k in ["crashloop", "crashloopbackoff", "重启", "反复重启"]):
-            steps.extend([
-                "查看事件: kubectl describe pod <pod> -n <ns>",
-                "查看容器日志: kubectl logs <pod> -n <ns> --previous",
-                "检查探针与资源限制",
-            ])
+            steps.extend(
+                [
+                    "查看事件: kubectl describe pod <pod> -n <ns>",
+                    "查看容器日志: kubectl logs <pod> -n <ns> --previous",
+                    "检查探针与资源限制",
+                ]
+            )
         if any(k in ql for k in ["oom", "内存", "memory"]):
-            steps.extend(["确认 OOMKilled 事件", "提高内存 requests/limits 或优化内存占用"])
+            steps.extend(
+                ["确认 OOMKilled 事件", "提高内存 requests/limits 或优化内存占用"]
+            )
         if any(k in ql for k in ["cpu", "高负载", "load"]):
-            steps.extend(["kubectl top pod 观察CPU", "分析热点或增加副本", "合理设置HPA"])
+            steps.extend(
+                ["kubectl top pod 观察CPU", "分析热点或增加副本", "合理设置HPA"]
+            )
         if not steps:
             steps = [
                 "先看事件时间线: kubectl get events -n <ns> --sort-by=.lastTimestamp",
@@ -731,10 +841,16 @@ class AssistantAgent:
                 "查看应用日志与依赖连通性",
             ]
         try:
-            resp = await self.llm.ainvoke([
-                SystemMessage(content="你是资深SRE/DevOps助理。没有知识库时给出精简、可执行的排查步骤，200字内。"),
-                HumanMessage(content=f"问题: {question}\n\n建议:\n- " + "\n- ".join(steps)),
-            ])
+            resp = await self.llm.ainvoke(
+                [
+                    SystemMessage(
+                        content="你是资深SRE/DevOps助理。没有知识库时给出精简、可执行的排查步骤，200字内。"
+                    ),
+                    HumanMessage(
+                        content=f"问题: {question}\n\n建议:\n- " + "\n- ".join(steps)
+                    ),
+                ]
+            )
             return (resp.content or "").strip()
         except Exception:
             return "建议:\n- " + "\n- ".join(steps)

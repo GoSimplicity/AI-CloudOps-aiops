@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,9 @@ class TracingService:
 
     def __init__(self):
         self.enabled = bool(getattr(config.tracing, "enabled", False))
-        self.base_url = getattr(config.tracing, "jaeger_query_url", "http://127.0.0.1:16686")
+        self.base_url = getattr(
+            config.tracing, "jaeger_query_url", "http://127.0.0.1:16686"
+        )
         self.timeout = int(getattr(config.tracing, "timeout", 15) or 15)
 
     def is_enabled(self) -> bool:
@@ -43,7 +46,9 @@ class TracingService:
             logger.error(f"Tracing连通性检查失败: {str(e)}")
             return False
 
-    def get_traces(self, service: str, start_time: datetime, end_time: datetime) -> List[Dict[str, Any]]:
+    def get_traces(
+        self, service: str, start_time: datetime, end_time: datetime
+    ) -> List[Dict[str, Any]]:
         try:
             params = {
                 "service": service,
@@ -77,7 +82,11 @@ class TracingService:
         error_spans: List[Dict[str, Any]] = []
         for s in trace_data.get("spans", []) or []:
             tags = (s or {}).get("tags", []) or []
-            if any((t or {}).get("key") in ("error", "otel.status_code") and (t or {}).get("value") in (True, "ERROR") for t in tags):
+            if any(
+                (t or {}).get("key") in ("error", "otel.status_code")
+                and (t or {}).get("value") in (True, "ERROR")
+                for t in tags
+            ):
                 error_spans.append(s)
         return error_spans
 
@@ -99,7 +108,13 @@ class TracingService:
             params = {
                 "start": self._format_time_us(start_time),
                 "end": self._format_time_us(end_time),
-                "limit": max(1, min(int(limit or 20), int(getattr(config.tracing, "max_traces", 30)) or 30)),
+                "limit": max(
+                    1,
+                    min(
+                        int(limit or 20),
+                        int(getattr(config.tracing, "max_traces", 30)) or 30,
+                    ),
+                ),
             }
             svc_name = service or getattr(config.tracing, "service_name", None)
             if svc_name:
@@ -121,9 +136,13 @@ class TracingService:
                 duration = None
                 if spans:
                     # 按开始时间排序取最早/最晚作为边界
-                    sorted_spans = sorted(spans, key=lambda s: (s or {}).get("startTime", 0))
+                    sorted_spans = sorted(
+                        spans, key=lambda s: (s or {}).get("startTime", 0)
+                    )
                     start_ts = (sorted_spans[0] or {}).get("startTime")
-                    end_ts = ((sorted_spans[-1] or {}).get("startTime", 0)) + ((sorted_spans[-1] or {}).get("duration", 0))
+                    end_ts = ((sorted_spans[-1] or {}).get("startTime", 0)) + (
+                        (sorted_spans[-1] or {}).get("duration", 0)
+                    )
                     duration = max(0, int(end_ts) - int(start_ts))
                 sanitized.append(
                     {
@@ -138,4 +157,3 @@ class TracingService:
         except Exception as e:
             logger.error(f"查询Jaeger traces失败: {e}")
             return []
-

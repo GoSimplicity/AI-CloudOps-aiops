@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, List
@@ -199,7 +200,7 @@ class K8sScalingTool(K8sBaseTool):
                 "old_replicas": old_replicas,
                 "new_replicas": replicas,
                 "current_replicas": scaled_deployment.spec.replicas,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -269,7 +270,7 @@ class K8sScalingTool(K8sBaseTool):
                 "old_replicas": old_replicas,
                 "new_replicas": replicas,
                 "current_replicas": scaled_replicaset.spec.replicas,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -370,7 +371,7 @@ class K8sScalingTool(K8sBaseTool):
                 "total_count": len(hpa_list),
                 "hpas": hpa_list,
                 "api_version": "v2" if is_v2 else "v1",
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -462,19 +463,19 @@ class K8sScalingTool(K8sBaseTool):
                     self._format_v2_current_metrics(hpa.status.current_metrics or [])
                 )
             else:
-                hpa_status["spec"][
-                    "target_cpu_percent"
-                ] = hpa.spec.target_cpu_utilization_percentage
-                hpa_status["status"][
-                    "current_cpu_percent"
-                ] = hpa.status.current_cpu_utilization_percentage
+                hpa_status["spec"]["target_cpu_percent"] = (
+                    hpa.spec.target_cpu_utilization_percentage
+                )
+                hpa_status["status"]["current_cpu_percent"] = (
+                    hpa.status.current_cpu_utilization_percentage
+                )
 
             return {
                 "success": True,
                 "operation": "get_hpa_status",
                 "hpa_status": hpa_status,
                 "api_version": "v2" if is_v2 else "v1",
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -546,7 +547,7 @@ class K8sScalingTool(K8sBaseTool):
                 "min_replicas": min_replicas,
                 "max_replicas": max_replicas,
                 "target_cpu_percent": target_cpu_percent,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:

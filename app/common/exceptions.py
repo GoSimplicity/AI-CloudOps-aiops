@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,4 +44,3 @@ class ValidationAppError(AppError):
 class ConflictError(AppError):
     def __init__(self, message: str = "资源冲突"):
         super().__init__(message=message, status_code=409, code=1)
-

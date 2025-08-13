@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 from typing import Any, Dict
 
@@ -428,10 +429,21 @@ class Supervisor:
         self.agent = SupervisorAgent()
 
     def get_agents_status(self) -> Dict[str, Any]:
-        return {"agents": [{"name": name, "status": "active", "tasks": 0} for name in self.agent.members]}
+        return {
+            "agents": [
+                {"name": name, "status": "active", "tasks": 0}
+                for name in self.agent.members
+            ]
+        }
 
-    def execute_task(self, task_type: str, priority: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        return {"task_id": "task_123", "status": "started", "assigned_agents": ["detector", "analyzer"]}
+    def execute_task(
+        self, task_type: str, priority: str, parameters: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        return {
+            "task_id": "task_123",
+            "status": "started",
+            "assigned_agents": ["detector", "analyzer"],
+        }
 
     def get_coordination_status(self) -> Dict[str, Any]:
         return {"active_tasks": 0, "completed_tasks": 0, "agent_utilization": 0.0}

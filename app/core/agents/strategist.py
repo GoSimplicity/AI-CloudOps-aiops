@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -209,9 +210,15 @@ class K8sStrategistAgent:
         # 针对可诊断问题类型，附加只读检查步骤（不会更改集群状态）
         sub = issue.get("sub_type")
         if sub == "image_pull_error":
-            actions = [{"type": "check", "action": "validate_image_pull"}, {"type": "check", "action": "collect_pod_events"}] + actions
+            actions = [
+                {"type": "check", "action": "validate_image_pull"},
+                {"type": "check", "action": "collect_pod_events"},
+            ] + actions
         elif sub == "mount_failure":
-            actions = [{"type": "check", "action": "validate_mount"}, {"type": "check", "action": "collect_pod_events"}] + actions
+            actions = [
+                {"type": "check", "action": "validate_mount"},
+                {"type": "check", "action": "collect_pod_events"},
+            ] + actions
         # 将 registry 中的容器名称占位符 "auto" 替换成具体容器名（若可得）
         container_name = (
             (issue.get("details", {}) or {}).get("container")

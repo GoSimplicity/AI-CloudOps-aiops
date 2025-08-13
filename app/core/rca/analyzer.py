@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 import time
 from datetime import datetime, timezone
@@ -73,10 +74,14 @@ class RCAAnalyzer:
             else:
                 # 全局优先：仅当全局开启时生效，请求仅在为 None 时跟随全局
                 should_collect_logs = (
-                    config.logs.enabled if include_logs is None else (include_logs and config.logs.enabled)
+                    config.logs.enabled
+                    if include_logs is None
+                    else (include_logs and config.logs.enabled)
                 )
                 should_collect_traces = (
-                    config.tracing.enabled if include_traces is None else (include_traces and config.tracing.enabled)
+                    config.tracing.enabled
+                    if include_traces is None
+                    else (include_traces and config.tracing.enabled)
                 )
 
             metrics_data = await self._collect_metrics_data(
@@ -149,7 +154,9 @@ class RCAAnalyzer:
             analysis_duration = time.time() - analysis_start_ts
 
             # 计算生效参数（用于回传给前端展示）
-            service_name_effective = service_name or getattr(config.tracing, "service_name", None)
+            service_name_effective = service_name or getattr(
+                config.tracing, "service_name", None
+            )
 
             response = {
                 "status": "success",
@@ -163,7 +170,7 @@ class RCAAnalyzer:
                     RootCauseCandidate(**candidate).__dict__
                     for candidate in root_causes
                 ],
-            "analysis_time": iso_utc_now(),
+                "analysis_time": iso_utc_now(),
                 "time_range": {
                     "start": start_time.isoformat(),
                     "end": end_time.isoformat(),
@@ -288,8 +295,6 @@ class RCAAnalyzer:
         except Exception:
             return False
 
-
-
     async def _collect_metrics_data(
         self, start_time: datetime, end_time: datetime, metrics: List[str]
     ) -> Dict[str, pd.DataFrame]:
@@ -315,14 +320,9 @@ class RCAAnalyzer:
                         for _, group in data.groupby(label_columns[0]):
                             if len(group) > 0:
                                 label_value = group[label_columns[0]].iloc[0]
-                                if (
-                                    pd.notna(label_value)
-                                    and str(label_value).strip()
-                                ):
+                                if pd.notna(label_value) and str(label_value).strip():
                                     metric_name = f"{metric}|{label_columns[0].replace('label_', '')}:{label_value}"
-                                    metrics_data[metric_name] = group[
-                                        ["value"]
-                                    ].copy()
+                                    metrics_data[metric_name] = group[["value"]].copy()
                     else:
                         metrics_data[metric] = data[["value"]].copy()
                 else:
@@ -374,7 +374,7 @@ class RCAAnalyzer:
             base_confidence = min(anomaly_info.get("max_score", 0), 1.0)
             count_factor = min(anomaly_info.get("count", 0) / 20, 0.3)
             correlation_factor = min(len(related_metrics) * 0.05, 0.2)
-            
+
             detection_methods = anomaly_info.get("detection_methods", {})
             method_consistency = sum(
                 1
@@ -400,7 +400,7 @@ class RCAAnalyzer:
             metric_lower = metric.lower()
 
             base_desc = f"检测到 {count} 个异常点，最高分数 {max_score:.2f}，平均分数 {avg_score:.2f}"
-            
+
             if "cpu" in metric_lower:
                 return f"CPU使用率异常，{base_desc}"
             elif "memory" in metric_lower:

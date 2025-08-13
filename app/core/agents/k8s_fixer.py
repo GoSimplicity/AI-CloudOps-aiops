@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 import os
 from typing import Any, Dict, List
@@ -51,7 +52,7 @@ class K8sFixerAgent:
         logger.warning("Kubernetes连接不健康，尝试修复")
         possible_paths = [
             "deploy/kubernetes/config",
-            "../deploy/kubernetes/config", 
+            "../deploy/kubernetes/config",
             "config",
             os.path.expanduser("~/.kube/config"),
         ]
@@ -78,7 +79,12 @@ class K8sFixerAgent:
         try:
             deployment_name = deployment.get("metadata", {}).get("name", "unknown")
             namespace = deployment.get("metadata", {}).get("namespace", "default")
-            containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+            containers = (
+                deployment.get("spec", {})
+                .get("template", {})
+                .get("spec", {})
+                .get("containers", [])
+            )
 
             if not containers:
                 return {"fixed": False, "message": "无法找到容器配置"}
@@ -93,7 +99,8 @@ class K8sFixerAgent:
 
             # 检查CrashLoopBackOff
             has_crash_loop = any(
-                c_status.get("state", {}).get("waiting", {}).get("reason") == "CrashLoopBackOff"
+                c_status.get("state", {}).get("waiting", {}).get("reason")
+                == "CrashLoopBackOff"
                 for pod in context.get("pods", [])
                 for c_status in pod.get("status", {}).get("container_statuses", [])
             )
@@ -112,7 +119,9 @@ class K8sFixerAgent:
             if has_crash_loop and "livenessProbe" in main_container:
                 probe = main_container["livenessProbe"]
                 if probe.get("httpGet", {}).get("path") != "/":
-                    container_patch["livenessProbe"] = {"httpGet": {"path": "/", "port": 80}}
+                    container_patch["livenessProbe"] = {
+                        "httpGet": {"path": "/", "port": 80}
+                    }
                     issues_found.append("探针路径错误")
                     fixes_applied.append("修复探针路径")
                     need_to_patch = True
@@ -122,7 +131,7 @@ class K8sFixerAgent:
                 container_patch["readinessProbe"] = {
                     "httpGet": {"path": "/", "port": 80},
                     "initialDelaySeconds": 5,
-                    "periodSeconds": 10
+                    "periodSeconds": 10,
                 }
                 issues_found.append("缺少readinessProbe")
                 fixes_applied.append("添加readinessProbe")
@@ -135,7 +144,7 @@ class K8sFixerAgent:
                 if patch_result:
                     return {
                         "fixed": True,
-                        "message": f"修复完成: {', '.join(fixes_applied)}"
+                        "message": f"修复完成: {', '.join(fixes_applied)}",
                     }
                 else:
                     return {"fixed": False, "message": "应用修复失败"}
@@ -155,15 +164,21 @@ class K8sFixerAgent:
                 return "分析未提供修复操作"
 
             if "修改资源限制" in action or "修改资源请求" in action:
-                patch = {"spec": {"template": {"spec": {"containers": [{"resources": {}}]}}}}
-                resources = patch["spec"]["template"]["spec"]["containers"][0]["resources"]
-                
+                patch = {
+                    "spec": {"template": {"spec": {"containers": [{"resources": {}}]}}}
+                }
+                resources = patch["spec"]["template"]["spec"]["containers"][0][
+                    "resources"
+                ]
+
                 if "requests" in analysis:
                     resources["requests"] = analysis["requests"]
                 if "limits" in analysis:
                     resources["limits"] = analysis["limits"]
-                
-                result = await self.k8s_service.patch_deployment(deployment_name, patch, namespace)
+
+                result = await self.k8s_service.patch_deployment(
+                    deployment_name, patch, namespace
+                )
                 return "资源配置修复完成" if result else "资源配置修复失败"
 
             return f"执行修复操作: {action}"
@@ -174,7 +189,9 @@ class K8sFixerAgent:
     async def _verify_fix(self, deployment_name: str, namespace: str) -> str:
         """验证修复结果"""
         try:
-            pods = await self.k8s_service.get_pods_async(namespace=namespace, label_selector=f"app={deployment_name}")
+            pods = await self.k8s_service.get_pods_async(
+                namespace=namespace, label_selector=f"app={deployment_name}"
+            )
             if not pods:
                 return "验证失败：未找到Pod"
 
@@ -195,7 +212,7 @@ class K8sFixerAgent:
             "name": pod.get("metadata", {}).get("name"),
             "status": pod.get("status", {}).get("phase"),
             "ready": self._is_pod_ready(pod.get("status", {})),
-            "restart_count": self._get_restart_count(pod.get("status", {}))
+            "restart_count": self._get_restart_count(pod.get("status", {})),
         }
 
     def _is_pod_ready(self, status: Dict[str, Any]) -> bool:
@@ -225,9 +242,12 @@ class K8sFixerAgent:
             nodes_status = "节点状态未知"
             try:
                 nodes = self.k8s_service.core_v1.list_node()
-                ready_nodes = sum(1 for node in nodes.items 
-                                for condition in node.status.conditions
-                                if condition.type == "Ready" and condition.status == "True")
+                ready_nodes = sum(
+                    1
+                    for node in nodes.items
+                    for condition in node.status.conditions
+                    if condition.type == "Ready" and condition.status == "True"
+                )
                 nodes_status = f"节点: {ready_nodes}/{len(nodes.items)} 就绪"
             except Exception as e:
                 logger.error(f"获取节点状态失败: {str(e)}")
@@ -236,9 +256,12 @@ class K8sFixerAgent:
             pods_status = "Pod状态未知"
             try:
                 pods = await self.k8s_service.get_pods_async(namespace=namespace)
-                running_pods = sum(1 for pod in pods 
-                                 if pod.get("status", {}).get("phase") == "Running" 
-                                 and self._is_pod_ready(pod.get("status", {})))
+                running_pods = sum(
+                    1
+                    for pod in pods
+                    if pod.get("status", {}).get("phase") == "Running"
+                    and self._is_pod_ready(pod.get("status", {}))
+                )
                 pods_status = f"Pod: {running_pods}/{len(pods)} 运行中"
             except Exception as e:
                 logger.error(f"获取Pod状态失败: {str(e)}")
@@ -246,10 +269,18 @@ class K8sFixerAgent:
             # 检查Deployment状态
             deployments_status = "部署状态未知"
             try:
-                deployments = self.k8s_service.apps_v1.list_namespaced_deployment(namespace)
-                healthy_deployments = sum(1 for deployment in deployments.items
-                                        if (deployment.status.available_replicas or 0) == deployment.spec.replicas)
-                deployments_status = f"部署: {healthy_deployments}/{len(deployments.items)} 健康"
+                deployments = self.k8s_service.apps_v1.list_namespaced_deployment(
+                    namespace
+                )
+                healthy_deployments = sum(
+                    1
+                    for deployment in deployments.items
+                    if (deployment.status.available_replicas or 0)
+                    == deployment.spec.replicas
+                )
+                deployments_status = (
+                    f"部署: {healthy_deployments}/{len(deployments.items)} 健康"
+                )
             except Exception as e:
                 logger.error(f"获取部署状态失败: {str(e)}")
 
@@ -262,21 +293,21 @@ class K8sFixerAgent:
         """获取可用工具列表"""
         return [
             "analyze_and_fix_deployment",
-            "diagnose_cluster_health", 
+            "diagnose_cluster_health",
             "_check_and_fix_k8s_connection",
             "_identify_and_fix_common_issues",
             "_execute_fix",
-            "_verify_fix"
+            "_verify_fix",
         ]
 
     async def process_agent_state(self, state) -> Any:
         """处理代理状态"""
         try:
-            if hasattr(state, 'deployment_name') and hasattr(state, 'namespace'):
+            if hasattr(state, "deployment_name") and hasattr(state, "namespace"):
                 return await self.analyze_and_fix_deployment(
-                    state.deployment_name, 
-                    state.namespace, 
-                    getattr(state, 'error_description', '')
+                    state.deployment_name,
+                    state.namespace,
+                    getattr(state, "error_description", ""),
                 )
             return await self.diagnose_cluster_health()
         except Exception as e:

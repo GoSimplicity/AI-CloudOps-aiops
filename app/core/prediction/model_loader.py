@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 import os
 import warnings
@@ -25,6 +26,7 @@ logger = logging.getLogger("aiops.model_loader")
 try:
     from sklearn.exceptions import InconsistentVersionWarning  # type: ignore
 except Exception:  # 兜底，若无法导入则定义为普通 Warning 类型
+
     class InconsistentVersionWarning(Warning):
         pass
 

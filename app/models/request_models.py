@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -130,7 +131,9 @@ class AutoAssistantChatReq(BaseModel):
     query: str
     session_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
-    mode: Optional[int] = Field(default=1, ge=1, le=2, description="聊天模式：1=RAG，2=MCP")
+    mode: Optional[int] = Field(
+        default=1, ge=1, le=2, description="聊天模式：1=RAG，2=MCP"
+    )
 
 
 class AutoAssistantSearchReq(BaseModel):

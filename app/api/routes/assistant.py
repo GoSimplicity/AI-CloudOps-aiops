@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 import io
 import json
@@ -37,6 +38,7 @@ from app.utils.time_utils import iso_utc_now
 
 # 创建日志器
 logger = logging.getLogger("aiops.api.assistant")
+
 
 def sanitize_for_json(text: Union[str, Any]) -> Union[str, Any]:
     """
@@ -97,16 +99,22 @@ async def assistant_history_list(
                 stmt = stmt.where(QueryRecord.mode == mode)
             if q:
                 like = f"%{q}%"
-                stmt = stmt.where(or_(QueryRecord.question.like(like), QueryRecord.answer.like(like)))
+                stmt = stmt.where(
+                    or_(QueryRecord.question.like(like), QueryRecord.answer.like(like))
+                )
             if start:
                 try:
-                    start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")).replace(tzinfo=None)
+                    start_dt = datetime.fromisoformat(
+                        start.replace("Z", "+00:00")
+                    ).replace(tzinfo=None)
                     stmt = stmt.where(QueryRecord.created_at >= start_dt)
                 except Exception:
                     pass
             if end:
                 try:
-                    end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")).replace(tzinfo=None)
+                    end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")).replace(
+                        tzinfo=None
+                    )
                     stmt = stmt.where(QueryRecord.created_at <= end_dt)
                 except Exception:
                     pass
@@ -128,13 +136,21 @@ async def assistant_history_list(
                 }
                 for r in rows
             ]
-            total = db.execute(select(QueryRecord).where(QueryRecord.deleted_at.is_(None))).scalars().all()
+            total = (
+                db.execute(select(QueryRecord).where(QueryRecord.deleted_at.is_(None)))
+                .scalars()
+                .all()
+            )
             total_count = len(total)
 
-        return APIResponse(code=0, message="ok", data={"items": items, "total": total_count}).model_dump()
+        return APIResponse(
+            code=0, message="ok", data={"items": items, "total": total_count}
+        ).model_dump()
     except Exception as ex:
         logger.error(f"获取历史记录失败: {str(ex)}")
-        return APIResponse(code=0, message="ok", data={"items": [], "total": 0}).model_dump()
+        return APIResponse(
+            code=0, message="ok", data={"items": [], "total": 0}
+        ).model_dump()
 
 
 @router.get("/assistant/history/detail/{id}")
@@ -146,10 +162,14 @@ async def assistant_history_detail(id: int):
 
         with get_session() as db:
             rec = db.execute(
-                select(QueryRecord).where(QueryRecord.id == id, QueryRecord.deleted_at.is_(None))
+                select(QueryRecord).where(
+                    QueryRecord.id == id, QueryRecord.deleted_at.is_(None)
+                )
             ).scalar_one_or_none()
             if not rec:
-                return APIResponse(code=404, message="not found", data=None).model_dump()
+                return APIResponse(
+                    code=404, message="not found", data=None
+                ).model_dump()
             item = {
                 "id": rec.id,
                 "session_id": rec.session_id,
@@ -172,9 +192,13 @@ async def assistant_history_delete(id: int):
         from sqlalchemy import select
 
         with session_scope() as db:
-            rec = db.execute(select(QueryRecord).where(QueryRecord.id == id)).scalar_one_or_none()
+            rec = db.execute(
+                select(QueryRecord).where(QueryRecord.id == id)
+            ).scalar_one_or_none()
             if not rec:
-                return APIResponse(code=404, message="not found", data=None).model_dump()
+                return APIResponse(
+                    code=404, message="not found", data=None
+                ).model_dump()
             rec.deleted_at = utcnow()
             db.add(rec)
         return APIResponse(code=0, message="deleted", data={"id": id}).model_dump()
@@ -308,6 +332,7 @@ def run_async_func_in_background(func, *args, **kwargs) -> None:
     - 在新线程中创建事件循环并运行到完成
     - 后台线程为 daemon，进程退出时自动结束
     """
+
     def _bg_target():
         try:
             loop = asyncio.new_event_loop()
@@ -334,7 +359,7 @@ def create_success_response(message: str, data: Optional[Dict] = None) -> Dict:
 async def assistant_chat(payload: AutoAssistantChatReq):
     """聊天问答（支持模式切换：1=RAG，2=MCP）。"""
     try:
-        trace_id = f"req-{int(time.time()*1000)}-{os.getpid()}"
+        trace_id = f"req-{int(time.time() * 1000)}-{os.getpid()}"
         question = (payload.query or "").strip()
         if not question:
             raise HTTPException(status_code=400, detail="query 必填")
@@ -351,14 +376,31 @@ async def assistant_chat(payload: AutoAssistantChatReq):
             )
             agent = get_assistant_agent()
             if agent is None:
-                raise HTTPException(status_code=500, detail="智能小助手服务未正确初始化")
+                raise HTTPException(
+                    status_code=500, detail="智能小助手服务未正确初始化"
+                )
 
             # 针对平台介绍类问题，强制引导检索平台文档
             # 仅当命中平台意图时才附加提示关键词，否则保持原问题，避免过度引导
-            if any(k in question for k in ["平台", "系统", "产品", "介绍", "概览", "overview", "是什么", "AI-CloudOps", "AIOps"]):
+            if any(
+                k in question
+                for k in [
+                    "平台",
+                    "系统",
+                    "产品",
+                    "介绍",
+                    "概览",
+                    "overview",
+                    "是什么",
+                    "AI-CloudOps",
+                    "AIOps",
+                ]
+            ):
                 question = f"{question} 平台概览 核心能力 架构 组件 模块"
 
-            result = await run_async_func_safely(agent.get_answer, question, payload.session_id)
+            result = await run_async_func_safely(
+                agent.get_answer, question, payload.session_id
+            )
 
             # 清理并持久化
             cleaned_answer = sanitize_result_data(result)
@@ -391,7 +433,10 @@ async def assistant_chat(payload: AutoAssistantChatReq):
             return APIResponse(
                 code=0,
                 message="ok",
-                data={"response": sanitize_for_json(response_text), "confidence": confidence},
+                data={
+                    "response": sanitize_for_json(response_text),
+                    "confidence": confidence,
+                },
             ).model_dump()
 
         # MCP 模式
@@ -401,6 +446,7 @@ async def assistant_chat(payload: AutoAssistantChatReq):
             )
             try:
                 from app.mcp.mcp_client import MCPAssistant
+
                 mcp = MCPAssistant()
                 response_text = await run_async_func_safely(mcp.process_query, question)
                 cleaned_text = sanitize_for_json(response_text)
@@ -450,16 +496,21 @@ async def assistant_session_create(body: AutoAssistantSessionReq):
         # DB 幂等落库
         try:
             from sqlalchemy import select
+
             with session_scope() as db:
                 existed = db.execute(
-                    select(AssistantSession).where(AssistantSession.session_id == session_id)
+                    select(AssistantSession).where(
+                        AssistantSession.session_id == session_id
+                    )
                 ).scalar_one_or_none()
                 if not existed:
                     db.add(AssistantSession(session_id=session_id, note="auto"))
         except Exception:
             pass
 
-        return create_success_response("会话创建成功", {"session_id": session_id, "timestamp": iso_utc_now()})
+        return create_success_response(
+            "会话创建成功", {"session_id": session_id, "timestamp": iso_utc_now()}
+        )
     except HTTPException:
         raise
     except Exception as ex:
@@ -512,7 +563,9 @@ async def assistant_knowledge_create(body: AutoAssistantDocumentReq):
 
         # 先入向量库（带上将来用于幂等更新/删除的标识字段，DB入库后无法提前知道ID，这里先写标题兜底）
         meta_for_vec = {**(metadata or {}), "title": title}
-        added = await run_async_func_safely(agent.add_document_async, content, meta_for_vec)
+        added = await run_async_func_safely(
+            agent.add_document_async, content, meta_for_vec
+        )
         if not added:
             raise HTTPException(status_code=500, detail="添加到向量库失败")
 
@@ -522,7 +575,9 @@ async def assistant_knowledge_create(body: AutoAssistantDocumentReq):
                 rec = DocumentRecord(
                     title=title,
                     content=content,
-                    metadata_json=json.dumps(metadata, ensure_ascii=False) if metadata else None,
+                    metadata_json=json.dumps(metadata, ensure_ascii=False)
+                    if metadata
+                    else None,
                 )
                 db.add(rec)
                 db.flush()
@@ -536,10 +591,17 @@ async def assistant_knowledge_create(body: AutoAssistantDocumentReq):
                     # 新建带 record_id 的文档
                     _ = asyncio.get_running_loop()
                     # 已在事件循环：走异步添加
-                    _ = await agent.add_document_async(content, {**(metadata or {}), "record_id": str(rec.id), "title": title})
+                    _ = await agent.add_document_async(
+                        content,
+                        {**(metadata or {}), "record_id": str(rec.id), "title": title},
+                    )
                 except RuntimeError:
                     # 无事件循环：走安全包装
-                    _ = await run_async_func_safely(agent.add_document_async, content, {**(metadata or {}), "record_id": str(rec.id), "title": title})
+                    _ = await run_async_func_safely(
+                        agent.add_document_async,
+                        content,
+                        {**(metadata or {}), "record_id": str(rec.id), "title": title},
+                    )
         except Exception:
             pass
 
@@ -559,7 +621,11 @@ async def assistant_knowledge_create(body: AutoAssistantDocumentReq):
 
         return create_success_response(
             "知识创建成功",
-            {"title": title, "content_length": len(content), "timestamp": iso_utc_now()},
+            {
+                "title": title,
+                "content_length": len(content),
+                "timestamp": iso_utc_now(),
+            },
         )
     except HTTPException:
         raise
@@ -574,9 +640,16 @@ async def assistant_knowledge_update(id: int, body: AssistantDocumentUpdateReq):
     try:
         with session_scope() as db:
             from sqlalchemy import select
-            rec = db.execute(select(DocumentRecord).where(DocumentRecord.id == id, DocumentRecord.deleted_at.is_(None))).scalar_one_or_none()
+
+            rec = db.execute(
+                select(DocumentRecord).where(
+                    DocumentRecord.id == id, DocumentRecord.deleted_at.is_(None)
+                )
+            ).scalar_one_or_none()
             if not rec:
-                return APIResponse(code=404, message="not found", data=None).model_dump()
+                return APIResponse(
+                    code=404, message="not found", data=None
+                ).model_dump()
 
             if body.title is not None:
                 rec.title = body.title
@@ -602,11 +675,15 @@ async def assistant_knowledge_update(id: int, body: AssistantDocumentUpdateReq):
                 metadata = {**metadata, "record_id": str(id)}
                 if body.title is not None:
                     metadata.setdefault("title", body.title)
-                _ = await run_async_func_safely(agent.add_document_async, body.content, metadata)
+                _ = await run_async_func_safely(
+                    agent.add_document_async, body.content, metadata
+                )
         except Exception:
             pass
 
-        return create_success_response("知识更新成功", {"id": id, "timestamp": iso_utc_now()})
+        return create_success_response(
+            "知识更新成功", {"id": id, "timestamp": iso_utc_now()}
+        )
     except HTTPException:
         raise
     except Exception as ex:
@@ -647,13 +724,23 @@ async def assistant_knowledge_list(
                 for r in rows
             ]
 
-            total = db.execute(select(DocumentRecord).where(DocumentRecord.deleted_at.is_(None))).scalars().all()
+            total = (
+                db.execute(
+                    select(DocumentRecord).where(DocumentRecord.deleted_at.is_(None))
+                )
+                .scalars()
+                .all()
+            )
             total_count = len(total)
 
-        return APIResponse(code=0, message="ok", data={"items": items, "total": total_count}).model_dump()
+        return APIResponse(
+            code=0, message="ok", data={"items": items, "total": total_count}
+        ).model_dump()
     except Exception as ex:
         logger.error(f"获取知识列表失败: {str(ex)}")
-        return APIResponse(code=0, message="ok", data={"items": [], "total": 0}).model_dump()
+        return APIResponse(
+            code=0, message="ok", data={"items": [], "total": 0}
+        ).model_dump()
 
 
 @router.get("/assistant/knowledge/detail/{id}")
@@ -665,15 +752,21 @@ async def assistant_knowledge_detail(id: int):
 
         with get_session() as db:
             rec = db.execute(
-                select(DocumentRecord).where(DocumentRecord.id == id, DocumentRecord.deleted_at.is_(None))
+                select(DocumentRecord).where(
+                    DocumentRecord.id == id, DocumentRecord.deleted_at.is_(None)
+                )
             ).scalar_one_or_none()
             if not rec:
-                return APIResponse(code=404, message="not found", data=None).model_dump()
+                return APIResponse(
+                    code=404, message="not found", data=None
+                ).model_dump()
             data = {
                 "id": rec.id,
                 "title": rec.title,
                 "content": rec.content,
-                "metadata": json.loads(rec.metadata_json) if rec.metadata_json else None,
+                "metadata": json.loads(rec.metadata_json)
+                if rec.metadata_json
+                else None,
                 "created_at": rec.created_at.isoformat() if rec.created_at else None,
                 "updated_at": rec.updated_at.isoformat() if rec.updated_at else None,
             }
@@ -688,10 +781,15 @@ async def assistant_knowledge_delete(id: int):
     """删除知识（软删除）。"""
     try:
         from sqlalchemy import select
+
         with session_scope() as db:
-            rec = db.execute(select(DocumentRecord).where(DocumentRecord.id == id)).scalar_one_or_none()
+            rec = db.execute(
+                select(DocumentRecord).where(DocumentRecord.id == id)
+            ).scalar_one_or_none()
             if not rec:
-                return APIResponse(code=404, message="not found", data=None).model_dump()
+                return APIResponse(
+                    code=404, message="not found", data=None
+                ).model_dump()
             rec.deleted_at = utcnow()
             db.add(rec)
         return create_success_response("知识删除成功", {"id": id})
@@ -708,15 +806,23 @@ async def assistant_knowledge_upload(file: UploadFile = File(...)):
         os.makedirs(kb_dir, exist_ok=True)
 
         filename = file.filename or f"upload_{int(time.time())}.md"
-        if not (filename.endswith(".md") or filename.endswith(".markdown") or filename.endswith(".txt")):
-            raise HTTPException(status_code=400, detail="仅支持 .md/.markdown/.txt 文件")
+        if not (
+            filename.endswith(".md")
+            or filename.endswith(".markdown")
+            or filename.endswith(".txt")
+        ):
+            raise HTTPException(
+                status_code=400, detail="仅支持 .md/.markdown/.txt 文件"
+            )
 
         dest_path = os.path.join(kb_dir, filename)
         content = await file.read()
         with open(dest_path, "wb") as f:
             f.write(content)
 
-        return create_success_response("上传成功", {"filename": filename, "path": dest_path, "size": len(content)})
+        return create_success_response(
+            "上传成功", {"filename": filename, "path": dest_path, "size": len(content)}
+        )
     except HTTPException:
         raise
     except Exception as ex:
@@ -766,7 +872,9 @@ async def assistant_cache_clear():
             raise HTTPException(status_code=500, detail="智能小助手服务未正确初始化")
 
         result = agent.clear_cache()
-        return create_success_response("缓存清理完成", {"timestamp": iso_utc_now(), **(result or {})})
+        return create_success_response(
+            "缓存清理完成", {"timestamp": iso_utc_now(), **(result or {})}
+        )
     except Exception as ex:
         logger.error(f"清空缓存失败: {str(ex)}")
         raise HTTPException(status_code=500, detail=f"清除缓存失败: {str(ex)}") from ex
@@ -844,7 +952,7 @@ async def reinitialize_assistant():
                         return create_success_response(
                             "智能小助手状态已重置，请重新发起查询以自动初始化",
                             {
-                        "timestamp": iso_utc_now(),
+                                "timestamp": iso_utc_now(),
                                 "status": "reset",
                             },
                         )
@@ -895,4 +1003,6 @@ async def assistant_health():
             pass
         return APIResponse(code=0, message="ok", data=data).model_dump()
     except Exception as ex:
-        return APIResponse(code=500, message=str(ex), data={"healthy": False}).model_dump()
+        return APIResponse(
+            code=500, message=str(ex), data={"healthy": False}
+        ).model_dump()

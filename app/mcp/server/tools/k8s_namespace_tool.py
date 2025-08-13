@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -129,7 +130,7 @@ class K8sNamespaceTool(K8sBaseTool):
                 "operation": "list_namespaces",
                 "total_count": len(namespace_list),
                 "namespaces": namespace_list,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -196,7 +197,7 @@ class K8sNamespaceTool(K8sBaseTool):
                 "success": True,
                 "operation": "get_namespace",
                 "namespace": namespace_details,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -257,7 +258,7 @@ class K8sNamespaceTool(K8sBaseTool):
                 "message": f"命名空间 {namespace_name} 创建成功",
                 "namespace_name": created_namespace.metadata.name,
                 "uid": created_namespace.metadata.uid,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -317,7 +318,7 @@ class K8sNamespaceTool(K8sBaseTool):
                 "message": f"命名空间 {namespace_name} 已开始删除过程",
                 "namespace_name": namespace_name,
                 "note": "命名空间删除是异步过程，可能需要一些时间才能完全删除",
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:

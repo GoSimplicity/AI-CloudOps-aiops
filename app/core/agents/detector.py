@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
@@ -33,19 +34,27 @@ class K8sDetectorAgent:
     def _load_detection_rules(self) -> Dict[str, Any]:
         """加载检测规则"""
         rules = DetectionRules.get_all_rules()
-        
+
         # 为规则添加检测条件函数
         rules["pod_issues"]["crash_loop"]["condition"] = self._has_crash_loop
-        rules["pod_issues"]["image_pull_error"]["condition"] = self._has_image_pull_error
+        rules["pod_issues"]["image_pull_error"]["condition"] = (
+            self._has_image_pull_error
+        )
         rules["pod_issues"]["mount_failure"]["condition"] = self._has_mount_failure
-        rules["pod_issues"]["resource_pressure"]["condition"] = self._has_resource_pressure
+        rules["pod_issues"]["resource_pressure"]["condition"] = (
+            self._has_resource_pressure
+        )
         rules["pod_issues"]["pending_timeout"]["condition"] = self._is_pending_timeout
-        
-        rules["deployment_issues"]["replica_mismatch"]["condition"] = self._has_replica_mismatch
-        rules["deployment_issues"]["unavailable_replicas"]["condition"] = self._has_unavailable_replicas
-        
+
+        rules["deployment_issues"]["replica_mismatch"]["condition"] = (
+            self._has_replica_mismatch
+        )
+        rules["deployment_issues"]["unavailable_replicas"]["condition"] = (
+            self._has_unavailable_replicas
+        )
+
         rules["service_issues"]["no_endpoints"]["condition"] = self._has_no_endpoints
-        
+
         return rules
 
     async def detect_all_issues(self, namespace: str = None) -> Dict[str, Any]:
@@ -184,7 +193,7 @@ class K8sDetectorAgent:
             resource_type="deployment",
             rules_key="deployment_issues",
             message_func=DetectorHelpers.get_deployment_message,
-            details_func=DetectorHelpers.get_deployment_details
+            details_func=DetectorHelpers.get_deployment_details,
         )
 
     def _detect_service_issues_sync(
@@ -196,7 +205,7 @@ class K8sDetectorAgent:
             resource_type="service",
             rules_key="service_issues",
             message_func=DetectorHelpers.get_service_message,
-            details_func=DetectorHelpers.get_service_details
+            details_func=DetectorHelpers.get_service_details,
         )
 
     def _detect_resource_issues(
@@ -205,7 +214,7 @@ class K8sDetectorAgent:
         resource_type: str,
         rules_key: str,
         message_func,
-        details_func
+        details_func,
     ) -> List[Dict[str, Any]]:
         """通用资源问题检测方法"""
         issues = []
@@ -215,19 +224,27 @@ class K8sDetectorAgent:
                 for issue_type, rule in self.detection_rules[rules_key].items():
                     try:
                         if rule["condition"](resource):
-                            issues.append({
-                                "type": f"{resource_type}_issue",
-                                "sub_type": issue_type,
-                                "severity": rule["severity"],
-                                "auto_fix": rule["auto_fix"],
-                                "resource_name": resource.get("metadata", {}).get("name"),
-                                "namespace": resource.get("metadata", {}).get("namespace"),
-                                "message": message_func(resource, issue_type),
-                                "details": details_func(resource),
-                                "timestamp": iso_utc_now(),
-                            })
+                            issues.append(
+                                {
+                                    "type": f"{resource_type}_issue",
+                                    "sub_type": issue_type,
+                                    "severity": rule["severity"],
+                                    "auto_fix": rule["auto_fix"],
+                                    "resource_name": resource.get("metadata", {}).get(
+                                        "name"
+                                    ),
+                                    "namespace": resource.get("metadata", {}).get(
+                                        "namespace"
+                                    ),
+                                    "message": message_func(resource, issue_type),
+                                    "details": details_func(resource),
+                                    "timestamp": iso_utc_now(),
+                                }
+                            )
                     except Exception as e:
-                        logger.warning(f"检测{resource_type}问题类型 {issue_type} 失败: {str(e)}")
+                        logger.warning(
+                            f"检测{resource_type}问题类型 {issue_type} 失败: {str(e)}"
+                        )
                         continue
             except Exception as e:
                 logger.warning(f"处理{resource_type}数据失败: {str(e)}")
@@ -272,7 +289,10 @@ class K8sDetectorAgent:
                 return True
         # 检查条件中的 Unschedulable 提示
         for cond in status.get("conditions", []) or []:
-            if (cond.get("type") == "PodScheduled" and cond.get("reason") == "Unschedulable"):
+            if (
+                cond.get("type") == "PodScheduled"
+                and cond.get("reason") == "Unschedulable"
+            ):
                 msg = (cond.get("message") or "").lower()
                 if "volume" in msg or "persistentvolumeclaim" in msg or "pvc" in msg:
                     return True
@@ -298,7 +318,9 @@ class K8sDetectorAgent:
         creation_time = pod.get("metadata", {}).get("creation_timestamp")
         if creation_time:
             creation_dt = datetime.fromisoformat(creation_time.replace("Z", "+00:00"))
-            return datetime.now(timezone.utc).replace(tzinfo=creation_dt.tzinfo) - creation_dt > timedelta(minutes=5)
+            return datetime.now(timezone.utc).replace(
+                tzinfo=creation_dt.tzinfo
+            ) - creation_dt > timedelta(minutes=5)
         return False
 
     def _has_replica_mismatch(self, deployment: Dict[str, Any]) -> bool:
@@ -392,8 +414,6 @@ class K8sDetectorAgent:
             )
 
         return issues
-
-
 
     async def get_cluster_overview(self, namespace: str = None) -> Dict[str, Any]:
         """获取集群概览信息"""

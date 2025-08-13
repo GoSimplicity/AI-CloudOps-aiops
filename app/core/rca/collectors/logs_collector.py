@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 from __future__ import annotations
 
 from typing import Dict, List, Optional
@@ -32,4 +33,3 @@ class LogsCollector:
             tail_lines=config.logs.tail_lines,
             include_previous=config.logs.include_previous,
         )
-

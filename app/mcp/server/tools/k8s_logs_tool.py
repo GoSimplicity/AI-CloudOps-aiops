@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -246,7 +247,7 @@ class K8sLogsTool(K8sBaseTool):
                     "since_time": since_time,
                     "limit_bytes": limit_bytes,
                 },
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -307,7 +308,7 @@ class K8sLogsTool(K8sBaseTool):
                     "since_time": since_time,
                     "limit_bytes": limit_bytes,
                 },
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -374,7 +375,7 @@ class K8sLogsTool(K8sBaseTool):
                 "non_empty_lines": len(non_empty_lines),
                 "log_size_bytes": len(log_content.encode()) if log_content else 0,
                 "note": "这是容器重启前的日志",
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except ApiException as e:
@@ -440,7 +441,7 @@ class K8sLogsTool(K8sBaseTool):
                 "recent_logs": "\n".join(recent_lines),
                 "lines_returned": len(recent_lines),
                 "requested_lines": tail_lines,
-            "timestamp": iso_utc_now(),
+                "timestamp": iso_utc_now(),
             }
 
         except Exception as e:
@@ -497,7 +498,7 @@ class K8sLogsTool(K8sBaseTool):
                     "matching_lines": [],
                     "total_matches": 0,
                     "message": "没有找到日志内容",
-            "timestamp": iso_utc_now(),
+                    "timestamp": iso_utc_now(),
                 }
 
             # 搜索匹配的行

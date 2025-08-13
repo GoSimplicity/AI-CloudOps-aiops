@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import warnings
 from typing import Any
 
@@ -25,12 +26,12 @@ def _silence_test_warnings():
     try:
         from _pytest.warning_types import PytestReturnNotNoneWarning  # type: ignore
     except Exception:
+
         class PytestReturnNotNoneWarning(Warning):
             pass
 
     warnings.filterwarnings("ignore", category=PytestReturnNotNoneWarning)
     yield
-
 
 
 class _FlaskLikeResponse:
@@ -168,4 +169,3 @@ def llm_service():
             return True
 
     return _Stub()
-

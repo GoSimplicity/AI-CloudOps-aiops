@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import logging
 import os
 import threading
@@ -15,7 +16,9 @@ from typing import List
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
-from app.core.vector.redis_vector_store import VectorStoreManager as BaseVectorStoreManager
+from app.core.vector.redis_vector_store import (
+    VectorStoreManager as BaseVectorStoreManager,
+)
 
 logger = logging.getLogger("aiops.assistant.vector_store_manager")
 
@@ -23,7 +26,9 @@ logger = logging.getLogger("aiops.assistant.vector_store_manager")
 class VectorStoreManager:
     """向量存储管理器（使用底层Redis实现）"""
 
-    def __init__(self, vector_db_path: str, collection_name: str, embedding_model: Embeddings):
+    def __init__(
+        self, vector_db_path: str, collection_name: str, embedding_model: Embeddings
+    ):
         self.vector_db_path = vector_db_path
         self.collection_name = collection_name
         self.embedding_model = embedding_model
@@ -104,10 +109,14 @@ class VectorStoreManager:
         """
         return self.redis_manager.get_retriever(**kwargs)
 
-    async def similarity_search(self, query: str, k: int = 8, score_threshold: float = 0.05) -> List[Document]:
+    async def similarity_search(
+        self, query: str, k: int = 8, score_threshold: float = 0.05
+    ) -> List[Document]:
         """统一相似性搜索接口。"""
         try:
-            return await self.redis_manager.similarity_search(query, k=k, score_threshold=score_threshold)
+            return await self.redis_manager.similarity_search(
+                query, k=k, score_threshold=score_threshold
+            )
         except Exception as e:
             logger.error(f"相似性搜索失败: {e}")
             return []
@@ -125,7 +134,9 @@ class VectorStoreManager:
         try:
             if not getattr(self.redis_manager, "vector_store", None):
                 return 0
-            return int(self.redis_manager.vector_store.delete_by_record_id(str(record_id)))
+            return int(
+                self.redis_manager.vector_store.delete_by_record_id(str(record_id))
+            )
         except Exception as e:
             logger.error(f"按记录ID删除失败: {e}")
             return 0

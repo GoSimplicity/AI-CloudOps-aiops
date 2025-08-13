@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import json
 import logging
 import time
@@ -143,35 +144,55 @@ def test_prediction_get():
     print_header("测试预测接口（POST）")
 
     # 新规划：不再提供 /predict 接口，此测试不再适用
-    return {"success": True, "status_code": 200, "response": {"message": "skipped by new API plan"}}
+    return {
+        "success": True,
+        "status_code": 200,
+        "response": {"message": "skipped by new API plan"},
+    }
 
 
 def test_prediction_post():
     """测试POST预测接口"""
     print_header("测试POST预测接口")
 
-    return {"success": True, "status_code": 200, "response": {"message": "skipped by new API plan"}}
+    return {
+        "success": True,
+        "status_code": 200,
+        "response": {"message": "skipped by new API plan"},
+    }
 
 
 def test_prediction_zero_qps():
     """测试零QPS预测"""
     print_header("测试零QPS预测")
 
-    return {"success": True, "status_code": 200, "response": {"message": "skipped by new API plan"}}
+    return {
+        "success": True,
+        "status_code": 200,
+        "response": {"message": "skipped by new API plan"},
+    }
 
 
 def test_prediction_low_qps():
     """测试低QPS预测"""
     print_header("测试低QPS预测")
 
-    return {"success": True, "status_code": 200, "response": {"message": "skipped by new API plan"}}
+    return {
+        "success": True,
+        "status_code": 200,
+        "response": {"message": "skipped by new API plan"},
+    }
 
 
 def test_prediction_high_qps():
     """测试高QPS预测"""
     print_header("测试高QPS预测")
 
-    return {"success": True, "status_code": 200, "response": {"message": "skipped by new API plan"}}
+    return {
+        "success": True,
+        "status_code": 200,
+        "response": {"message": "skipped by new API plan"},
+    }
 
 
 def test_prediction_invalid_qps():

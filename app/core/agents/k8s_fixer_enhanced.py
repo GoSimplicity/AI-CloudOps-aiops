@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import asyncio
 import logging
 import time
@@ -30,10 +31,22 @@ class EnhancedK8sFixerAgent:
         # 问题识别规则
         self.problem_rules = {
             "crash_loop": {"patterns": ["CrashLoopBackOff"], "severity": "high"},
-            "probe_failure": {"patterns": ["probe failed", "Unhealthy"], "severity": "medium"},
-            "resource_pressure": {"patterns": ["OutOfMemory", "cpu throttling"], "severity": "high"},
-            "image_pull": {"patterns": ["ImagePullBackOff", "ErrImagePull"], "severity": "medium"},
-            "mount_failure": {"patterns": ["MountVolume.SetUp failed"], "severity": "medium"},
+            "probe_failure": {
+                "patterns": ["probe failed", "Unhealthy"],
+                "severity": "medium",
+            },
+            "resource_pressure": {
+                "patterns": ["OutOfMemory", "cpu throttling"],
+                "severity": "high",
+            },
+            "image_pull": {
+                "patterns": ["ImagePullBackOff", "ErrImagePull"],
+                "severity": "medium",
+            },
+            "mount_failure": {
+                "patterns": ["MountVolume.SetUp failed"],
+                "severity": "medium",
+            },
         }
 
         logger.info("增强版K8s修复代理初始化完成")
@@ -56,8 +69,10 @@ class EnhancedK8sFixerAgent:
                 return f"部署 {deployment_name} 未发现明显问题"
 
             # 生成并执行修复方案
-            fix_result = await self._execute_fixes(deployment_name, namespace, problems, context)
-            
+            fix_result = await self._execute_fixes(
+                deployment_name, namespace, problems, context
+            )
+
             # 验证修复结果
             verification = await self._verify_fix(deployment_name, namespace)
 
@@ -79,7 +94,9 @@ class EnhancedK8sFixerAgent:
             )
 
             events = await self.k8s_service.get_events(
-                namespace=namespace, field_selector=f"involvedObject.name={name}", limit=20
+                namespace=namespace,
+                field_selector=f"involvedObject.name={name}",
+                limit=20,
             )
 
             return {
@@ -93,7 +110,9 @@ class EnhancedK8sFixerAgent:
             logger.error(f"收集上下文信息失败: {str(e)}")
             return {}
 
-    async def _detect_problems(self, context: Dict[str, Any], error_description: str) -> List[Dict[str, Any]]:
+    async def _detect_problems(
+        self, context: Dict[str, Any], error_description: str
+    ) -> List[Dict[str, Any]]:
         """检测部署问题"""
         problems = []
         try:
@@ -101,34 +120,46 @@ class EnhancedK8sFixerAgent:
             pods = context.get("pods", [])
             for pod in pods:
                 status = pod.get("status", {})
-                
+
                 # 检查CrashLoopBackOff
                 for container_status in status.get("container_statuses", []):
-                    if container_status.get("state", {}).get("waiting", {}).get("reason") == "CrashLoopBackOff":
-                        problems.append({
-                            "type": "crash_loop",
-                            "severity": "high",
-                            "pod": pod.get("metadata", {}).get("name"),
-                            "description": "容器持续崩溃重启"
-                        })
+                    if (
+                        container_status.get("state", {})
+                        .get("waiting", {})
+                        .get("reason")
+                        == "CrashLoopBackOff"
+                    ):
+                        problems.append(
+                            {
+                                "type": "crash_loop",
+                                "severity": "high",
+                                "pod": pod.get("metadata", {}).get("name"),
+                                "description": "容器持续崩溃重启",
+                            }
+                        )
 
                 # 检查探针失败
                 if status.get("phase") != "Running":
                     for condition in status.get("conditions", []):
-                        if condition.get("type") == "Ready" and condition.get("status") != "True":
-                            problems.append({
-                                "type": "probe_failure",
-                                "severity": "medium", 
-                                "pod": pod.get("metadata", {}).get("name"),
-                                "description": "Pod未就绪"
-                            })
+                        if (
+                            condition.get("type") == "Ready"
+                            and condition.get("status") != "True"
+                        ):
+                            problems.append(
+                                {
+                                    "type": "probe_failure",
+                                    "severity": "medium",
+                                    "pod": pod.get("metadata", {}).get("name"),
+                                    "description": "Pod未就绪",
+                                }
+                            )
 
             # 检查事件信息
             events = context.get("events", [])
             for event in events[-10:]:  # 只看最近10个事件
                 reason = event.get("reason", "")
                 message = event.get("message", "")
-                
+
                 if "Failed" in reason or "Error" in reason:
                     problem_type = "unknown"
                     if "probe" in message.lower() or "health" in message.lower():
@@ -137,13 +168,15 @@ class EnhancedK8sFixerAgent:
                         problem_type = "resource_pressure"
                     elif "image" in message.lower():
                         problem_type = "image_pull"
-                    
-                    problems.append({
-                        "type": problem_type,
-                        "severity": "medium",
-                        "event": reason,
-                        "description": message[:100]
-                    })
+
+                    problems.append(
+                        {
+                            "type": problem_type,
+                            "severity": "medium",
+                            "event": reason,
+                            "description": message[:100],
+                        }
+                    )
 
             return problems[:5]  # 限制问题数量
 
@@ -157,91 +190,136 @@ class EnhancedK8sFixerAgent:
         """执行修复方案"""
         results = []
         deployment = context.get("deployment", {})
-        
+
         for problem in problems:
             try:
                 result = {"problem": problem["type"], "success": False, "action": ""}
-                
+
                 if problem["type"] == "crash_loop":
                     # 修复CrashLoopBackOff：添加或修复探针
-                    containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+                    containers = (
+                        deployment.get("spec", {})
+                        .get("template", {})
+                        .get("spec", {})
+                        .get("containers", [])
+                    )
                     if containers:
                         container = containers[0]
                         patch = {
                             "spec": {
                                 "template": {
                                     "spec": {
-                                        "containers": [{
-                                            "name": container.get("name", "app"),
-                                            "readinessProbe": {
-                                                "httpGet": {"path": "/", "port": 80},
-                                                "initialDelaySeconds": 5,
-                                                "periodSeconds": 10
+                                        "containers": [
+                                            {
+                                                "name": container.get("name", "app"),
+                                                "readinessProbe": {
+                                                    "httpGet": {
+                                                        "path": "/",
+                                                        "port": 80,
+                                                    },
+                                                    "initialDelaySeconds": 5,
+                                                    "periodSeconds": 10,
+                                                },
                                             }
-                                        }]
+                                        ]
                                     }
                                 }
                             }
                         }
-                        success = await self.k8s_service.patch_deployment(deployment_name, patch, namespace)
-                        result.update({"success": success, "action": "添加readinessProbe"})
-                
+                        success = await self.k8s_service.patch_deployment(
+                            deployment_name, patch, namespace
+                        )
+                        result.update(
+                            {"success": success, "action": "添加readinessProbe"}
+                        )
+
                 elif problem["type"] == "probe_failure":
                     # 修复探针路径
-                    containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+                    containers = (
+                        deployment.get("spec", {})
+                        .get("template", {})
+                        .get("spec", {})
+                        .get("containers", [])
+                    )
                     if containers:
                         container = containers[0]
                         patch = {
                             "spec": {
                                 "template": {
                                     "spec": {
-                                        "containers": [{
-                                            "name": container.get("name", "app"),
-                                            "livenessProbe": {
-                                                "httpGet": {"path": "/", "port": 80},
-                                                "periodSeconds": 10,
-                                                "failureThreshold": 3
+                                        "containers": [
+                                            {
+                                                "name": container.get("name", "app"),
+                                                "livenessProbe": {
+                                                    "httpGet": {
+                                                        "path": "/",
+                                                        "port": 80,
+                                                    },
+                                                    "periodSeconds": 10,
+                                                    "failureThreshold": 3,
+                                                },
                                             }
-                                        }]
+                                        ]
                                     }
                                 }
                             }
                         }
-                        success = await self.k8s_service.patch_deployment(deployment_name, patch, namespace)
-                        result.update({"success": success, "action": "修复livenessProbe"})
-                
+                        success = await self.k8s_service.patch_deployment(
+                            deployment_name, patch, namespace
+                        )
+                        result.update(
+                            {"success": success, "action": "修复livenessProbe"}
+                        )
+
                 elif problem["type"] == "resource_pressure":
                     # 调整资源限制
-                    containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+                    containers = (
+                        deployment.get("spec", {})
+                        .get("template", {})
+                        .get("spec", {})
+                        .get("containers", [])
+                    )
                     if containers:
                         container = containers[0]
                         patch = {
                             "spec": {
                                 "template": {
                                     "spec": {
-                                        "containers": [{
-                                            "name": container.get("name", "app"),
-                                            "resources": {
-                                                "requests": {"memory": "128Mi", "cpu": "100m"},
-                                                "limits": {"memory": "256Mi", "cpu": "200m"}
+                                        "containers": [
+                                            {
+                                                "name": container.get("name", "app"),
+                                                "resources": {
+                                                    "requests": {
+                                                        "memory": "128Mi",
+                                                        "cpu": "100m",
+                                                    },
+                                                    "limits": {
+                                                        "memory": "256Mi",
+                                                        "cpu": "200m",
+                                                    },
+                                                },
                                             }
-                                        }]
+                                        ]
                                     }
                                 }
                             }
                         }
-                        success = await self.k8s_service.patch_deployment(deployment_name, patch, namespace)
+                        success = await self.k8s_service.patch_deployment(
+                            deployment_name, patch, namespace
+                        )
                         result.update({"success": success, "action": "调整资源配置"})
 
                 results.append(result)
-                
+
             except Exception as e:
                 logger.error(f"执行修复失败: {str(e)}")
-                results.append({
-                    "problem": problem["type"], 
-                    "success": False, 
-                    "action": f"修复失败: {str(e)}"
-                })
+                results.append(
+                    {
+                        "problem": problem["type"],
+                        "success": False,
+                        "action": f"修复失败: {str(e)}",
+                    }
+                )
 
         return results
 
@@ -249,11 +327,11 @@ class EnhancedK8sFixerAgent:
         """验证修复结果"""
         try:
             await asyncio.sleep(10)  # 等待修复生效
-            
+
             pods = await self.k8s_service.get_pods_async(
                 namespace=namespace, label_selector=f"app={deployment_name}"
             )
-            
+
             if not pods:
                 return {"status": "failed", "message": "未找到Pod"}
 
@@ -262,7 +340,10 @@ class EnhancedK8sFixerAgent:
                 status = pod.get("status", {})
                 if status.get("phase") == "Running":
                     for condition in status.get("conditions", []):
-                        if condition.get("type") == "Ready" and condition.get("status") == "True":
+                        if (
+                            condition.get("type") == "Ready"
+                            and condition.get("status") == "True"
+                        ):
                             healthy_count += 1
                             break
 
@@ -273,26 +354,30 @@ class EnhancedK8sFixerAgent:
                 "status": "success" if success_rate > 0.5 else "partial",
                 "healthy_pods": healthy_count,
                 "total_pods": total_pods,
-                "success_rate": f"{success_rate:.1%}"
+                "success_rate": f"{success_rate:.1%}",
             }
 
         except Exception as e:
             logger.error(f"验证修复结果失败: {str(e)}")
             return {"status": "failed", "message": f"验证失败: {str(e)}"}
 
-    def _format_report(self, fix_results: List[Dict], verification: Dict, problems: List[Dict]) -> str:
+    def _format_report(
+        self, fix_results: List[Dict], verification: Dict, problems: List[Dict]
+    ) -> str:
         """格式化修复报告"""
         try:
             report = []
             report.append("🔧 修复报告")
             report.append(f"发现问题: {len(problems)}")
-            
+
             for result in fix_results:
                 status = "✅" if result["success"] else "❌"
                 report.append(f"{status} {result['problem']}: {result['action']}")
 
             if verification.get("status") == "success":
-                report.append(f"✅ 验证结果: {verification.get('success_rate', 'N/A')} Pod正常运行")
+                report.append(
+                    f"✅ 验证结果: {verification.get('success_rate', 'N/A')} Pod正常运行"
+                )
             else:
                 report.append(f"⚠️ 验证结果: {verification.get('message', '部分成功')}")
 
@@ -302,7 +387,9 @@ class EnhancedK8sFixerAgent:
             logger.error(f"格式化报告失败: {str(e)}")
             return f"修复完成，但报告生成失败: {str(e)}"
 
-    async def diagnose_deployment_health(self, deployment_name: str, namespace: str) -> str:
+    async def diagnose_deployment_health(
+        self, deployment_name: str, namespace: str
+    ) -> str:
         """诊断部署健康状态"""
         try:
             context = await self._gather_context(deployment_name, namespace)
@@ -320,7 +407,7 @@ class EnhancedK8sFixerAgent:
             for pod in pods:
                 status = pod.get("status", {})
                 pod_name = pod.get("metadata", {}).get("name", "")
-                
+
                 if status.get("phase") == "Running":
                     is_ready = any(
                         c.get("type") == "Ready" and c.get("status") == "True"
@@ -331,7 +418,9 @@ class EnhancedK8sFixerAgent:
                     else:
                         issues.append(f"Pod {pod_name} 运行但未就绪")
                 else:
-                    issues.append(f"Pod {pod_name} 状态: {status.get('phase', 'Unknown')}")
+                    issues.append(
+                        f"Pod {pod_name} 状态: {status.get('phase', 'Unknown')}"
+                    )
 
             report = [f"部署健康状态: {healthy}/{total} Pod健康"]
             if issues:

@@ -59,7 +59,14 @@ def run_round(name: str):
             conf = data.get("data", {}).get("confidence", 0)
         except Exception:
             ans, conf = "", 0
-        rows.append({"topic": key, "len": len(ans), "confidence": conf, "time": round(elapsed, 2)})
+        rows.append(
+            {
+                "topic": key,
+                "len": len(ans),
+                "confidence": conf,
+                "time": round(elapsed, 2),
+            }
+        )
     print(json.dumps(rows, ensure_ascii=False, indent=2))
 
 
@@ -70,4 +77,3 @@ def test_ab_sampling():
     # Hybrid+Reranker
     _set_rag_cfg(hybrid=True, reranker=True)
     run_round("hybrid+reranker")
-

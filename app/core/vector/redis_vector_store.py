@@ -7,6 +7,7 @@ Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 基于Redis的向量存储和检索系统
 """
+
 import hashlib
 import logging
 import pickle
@@ -26,10 +27,12 @@ logger = logging.getLogger(__name__)
 class RedisVectorStore:
     """Redis向量存储"""
 
-    def __init__(self, 
-                 redis_client: redis.Redis,
-                 collection_name: str = "default",
-                 embedding_model: Optional[Embeddings] = None):
+    def __init__(
+        self,
+        redis_client: redis.Redis,
+        collection_name: str = "default",
+        embedding_model: Optional[Embeddings] = None,
+    ):
         self.redis_client = redis_client
         self.collection_name = collection_name
         self.embedding_model = embedding_model
@@ -39,13 +42,13 @@ class RedisVectorStore:
         self.vector_index_key = f"{self.vector_prefix}:index"
         # 记录ID倒排索引前缀（用于DB记录的幂等更新与清理）
         self.rid_index_prefix = f"rid:{collection_name}"
-        
+
         # 内存缓存（避免每次检索反复从Redis取向量）
         self._vector_cache: Dict[str, np.ndarray] = {}
         self._doc_ids_cache: List[str] = []
         self._cache_lock = threading.Lock()
         self._last_index_load_ts = 0.0
-        
+
         logger.info(f"Redis向量存储初始化完成: {collection_name}")
 
     def _normalize_metadata_value(self, value: Any) -> str:
@@ -112,7 +115,9 @@ class RedisVectorStore:
                 # 生成并存储向量
                 if self.embedding_model:
                     try:
-                        embedding = await self.embedding_model.aembed_query(doc.page_content)
+                        embedding = await self.embedding_model.aembed_query(
+                            doc.page_content
+                        )
                         vector_key = f"{self.vector_prefix}:{doc_id}"
                         vector_bytes = pickle.dumps(np.array(embedding))
                         pipe.set(vector_key, vector_bytes)
@@ -131,15 +136,21 @@ class RedisVectorStore:
                 for doc in documents:
                     try:
                         doc_id = self._generate_doc_id(doc.page_content)
-                        self.redis_client.set(f"{self.doc_prefix}:{doc_id}", doc.page_content)
+                        self.redis_client.set(
+                            f"{self.doc_prefix}:{doc_id}", doc.page_content
+                        )
                         self.redis_client.hset(
                             f"{self.metadata_prefix}:{doc_id}",
                             mapping=self._serialize_metadata(doc.metadata),
                         )
                         if self.embedding_model:
-                            embedding = await self.embedding_model.aembed_query(doc.page_content)
+                            embedding = await self.embedding_model.aembed_query(
+                                doc.page_content
+                            )
                             vector_bytes = pickle.dumps(np.array(embedding))
-                            self.redis_client.set(f"{self.vector_prefix}:{doc_id}", vector_bytes)
+                            self.redis_client.set(
+                                f"{self.vector_prefix}:{doc_id}", vector_bytes
+                            )
                             vectors_to_cache[doc_id] = np.array(embedding)
                         self.redis_client.sadd(self.vector_index_key, doc_id)
                     except Exception as ex:
@@ -160,10 +171,9 @@ class RedisVectorStore:
             logger.error(f"添加文档失败: {e}")
             return []
 
-    async def similarity_search(self, 
-                               query: str, 
-                               k: int = 4,
-                               score_threshold: float = 0.0) -> List[Document]:
+    async def similarity_search(
+        self, query: str, k: int = 4, score_threshold: float = 0.0
+    ) -> List[Document]:
         """相似性搜索（使用内存缓存+Redis索引提升性能）"""
         try:
             if not self.embedding_model:
@@ -188,7 +198,9 @@ class RedisVectorStore:
                     if doc_vector is None:
                         # 缓存缺失时尝试从Redis取一次并放入缓存
                         try:
-                            vector_bytes = self.redis_client.get(f"{self.vector_prefix}:{doc_id}")
+                            vector_bytes = self.redis_client.get(
+                                f"{self.vector_prefix}:{doc_id}"
+                            )
                             if vector_bytes:
                                 doc_vector = pickle.loads(vector_bytes)
                                 self._vector_cache[doc_id] = doc_vector
@@ -215,7 +227,10 @@ class RedisVectorStore:
         try:
             if self.redis_client.exists(self.vector_index_key):
                 raw_ids = self.redis_client.smembers(self.vector_index_key)
-                return [rid.decode() if isinstance(rid, bytes) else str(rid) for rid in raw_ids]
+                return [
+                    rid.decode() if isinstance(rid, bytes) else str(rid)
+                    for rid in raw_ids
+                ]
             return []
         except Exception:
             return []
@@ -282,7 +297,9 @@ class RedisVectorStore:
                 content = raw[2 * i]
                 metadata = raw[2 * i + 1] or {}
                 if content:
-                    metadata_dict = {k.decode(): v.decode() for k, v in metadata.items()}
+                    metadata_dict = {
+                        k.decode(): v.decode() for k, v in metadata.items()
+                    }
                     metadata_dict["similarity_score"] = score
                     results.append(
                         Document(page_content=content.decode(), metadata=metadata_dict)
@@ -295,9 +312,13 @@ class RedisVectorStore:
                 content = self.redis_client.get(f"{self.doc_prefix}:{doc_id}")
                 metadata = self.redis_client.hgetall(f"{self.metadata_prefix}:{doc_id}")
                 if content:
-                    metadata_dict = {k.decode(): v.decode() for k, v in metadata.items()}
+                    metadata_dict = {
+                        k.decode(): v.decode() for k, v in metadata.items()
+                    }
                     metadata_dict["similarity_score"] = score
-                    results.append(Document(page_content=content.decode(), metadata=metadata_dict))
+                    results.append(
+                        Document(page_content=content.decode(), metadata=metadata_dict)
+                    )
             return results
 
     async def keyword_search_public(self, query: str, k: int = 4) -> List[Document]:
@@ -344,20 +365,34 @@ class RedisVectorStore:
                     content = raw[2 * i]
                     metadata = raw[2 * i + 1] or {}
                     if content:
-                        metadata_dict = {k.decode(): v.decode() for k, v in metadata.items()}
+                        metadata_dict = {
+                            k.decode(): v.decode() for k, v in metadata.items()
+                        }
                         metadata_dict["keyword_score"] = score
-                        results.append(Document(page_content=content.decode(), metadata=metadata_dict))
+                        results.append(
+                            Document(
+                                page_content=content.decode(), metadata=metadata_dict
+                            )
+                        )
                 return results
             except Exception as e:
                 logger.warning(f"关键字搜索构建文档失败: {e}")
                 results: List[Document] = []
                 for doc_id, score in top:
                     content = self.redis_client.get(f"{self.doc_prefix}:{doc_id}")
-                    metadata = self.redis_client.hgetall(f"{self.metadata_prefix}:{doc_id}")
+                    metadata = self.redis_client.hgetall(
+                        f"{self.metadata_prefix}:{doc_id}"
+                    )
                     if content:
-                        metadata_dict = {k.decode(): v.decode() for k, v in metadata.items()}
+                        metadata_dict = {
+                            k.decode(): v.decode() for k, v in metadata.items()
+                        }
                         metadata_dict["keyword_score"] = score
-                        results.append(Document(page_content=content.decode(), metadata=metadata_dict))
+                        results.append(
+                            Document(
+                                page_content=content.decode(), metadata=metadata_dict
+                            )
+                        )
                 return results
         except Exception as e:
             logger.error(f"关键字搜索失败: {e}")
@@ -369,10 +404,10 @@ class RedisVectorStore:
             dot_product = np.dot(vec1, vec2)
             norm_a = np.linalg.norm(vec1)
             norm_b = np.linalg.norm(vec2)
-            
+
             if norm_a == 0 or norm_b == 0:
                 return 0.0
-            
+
             return dot_product / (norm_a * norm_b)
         except Exception:
             return 0.0
@@ -388,9 +423,15 @@ class RedisVectorStore:
                 pipe.srem(self.vector_index_key, doc_id)
                 # 从 rid 索引集合中清除（如存在）
                 try:
-                    rid_val = self.redis_client.hget(f"{self.metadata_prefix}:{doc_id}", "record_id")
+                    rid_val = self.redis_client.hget(
+                        f"{self.metadata_prefix}:{doc_id}", "record_id"
+                    )
                     if rid_val is not None:
-                        rid_str = rid_val.decode() if isinstance(rid_val, bytes) else str(rid_val)
+                        rid_str = (
+                            rid_val.decode()
+                            if isinstance(rid_val, bytes)
+                            else str(rid_val)
+                        )
                         pipe.srem(f"{self.rid_index_prefix}:{rid_str}", doc_id)
                 except Exception:
                     pass
@@ -449,20 +490,20 @@ class RedisVectorStore:
             start_time = time.time()
             self.redis_client.ping()
             response_time = (time.time() - start_time) * 1000
-            
+
             return {
                 "status": "healthy",
                 "redis_connected": True,
                 "response_time_ms": round(response_time, 2),
                 "document_count": self.get_document_count(),
-                "collection": self.collection_name
+                "collection": self.collection_name,
             }
         except Exception as e:
             return {
                 "status": "unhealthy",
                 "redis_connected": False,
                 "error": str(e),
-                "collection": self.collection_name
+                "collection": self.collection_name,
             }
 
     def _ensure_index_loaded(self):
@@ -480,14 +521,21 @@ class RedisVectorStore:
                 # 优先使用索引集合
                 if self.redis_client.exists(self.vector_index_key):
                     raw_ids = self.redis_client.smembers(self.vector_index_key)
-                    doc_ids = [rid.decode() if isinstance(rid, bytes) else str(rid) for rid in raw_ids]
+                    doc_ids = [
+                        rid.decode() if isinstance(rid, bytes) else str(rid)
+                        for rid in raw_ids
+                    ]
                 else:
                     # 兼容旧数据：从keys构建一次索引
                     vector_keys = self.redis_client.keys(f"{self.vector_prefix}:*")
                     doc_ids = []
                     for vector_key in vector_keys:
                         try:
-                            key_str = vector_key.decode() if isinstance(vector_key, bytes) else str(vector_key)
+                            key_str = (
+                                vector_key.decode()
+                                if isinstance(vector_key, bytes)
+                                else str(vector_key)
+                            )
                             doc_id = key_str.split(":")[-1]
                             doc_ids.append(doc_id)
                         except Exception:
@@ -522,16 +570,15 @@ class RedisVectorStore:
 class VectorStoreManager:
     """向量存储管理器"""
 
-    def __init__(self, 
-                 vector_db_path: str, 
-                 collection_name: str, 
-                 embedding_model: Embeddings):
+    def __init__(
+        self, vector_db_path: str, collection_name: str, embedding_model: Embeddings
+    ):
         self.vector_db_path = vector_db_path
         self.collection_name = collection_name
         self.embedding_model = embedding_model
         self.redis_client = None
         self.vector_store = None
-        
+
         self._initialize_redis()
 
     def _initialize_redis(self):
@@ -540,13 +587,20 @@ class VectorStoreManager:
             # 读取全局配置，支持密码
             try:
                 from app.config.settings import config as app_config
+
                 host = getattr(app_config.redis, "host", "localhost")
                 port = int(getattr(app_config.redis, "port", 6379))
                 db = int(getattr(app_config.redis, "db", 0))
                 password = getattr(app_config.redis, "password", None)
                 socket_timeout = float(getattr(app_config.redis, "socket_timeout", 5.0))
             except Exception:
-                host, port, db, password, socket_timeout = "localhost", 6379, 0, None, 5.0
+                host, port, db, password, socket_timeout = (
+                    "localhost",
+                    6379,
+                    0,
+                    None,
+                    5.0,
+                )
 
             self.redis_client = redis.Redis(
                 host=host,
@@ -579,10 +633,9 @@ class VectorStoreManager:
             raise RuntimeError("向量存储未初始化")
         return await self.vector_store.add_documents(documents)
 
-    async def similarity_search(self, 
-                               query: str, 
-                               k: int = 4, 
-                               **kwargs) -> List[Document]:
+    async def similarity_search(
+        self, query: str, k: int = 4, **kwargs
+    ) -> List[Document]:
         """相似性搜索"""
         if not self.vector_store:
             raise RuntimeError("向量存储未初始化")
@@ -630,8 +683,8 @@ class RedisRetriever:
         )
         return await self.vector_store.similarity_search(
             query,
-            k=self.search_kwargs.get('k', 4),
-            score_threshold=self.search_kwargs.get('score_threshold', 0.0),
+            k=self.search_kwargs.get("k", 4),
+            score_threshold=self.search_kwargs.get("score_threshold", 0.0),
         )
 
     async def get_relevant_documents(self, query: str) -> List[Document]:
