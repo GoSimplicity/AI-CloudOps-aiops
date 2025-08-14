@@ -37,8 +37,8 @@ class PaginatedListAPIResponse(BaseModel, Generic[T]):
 
 class AnomalyInfo(BaseModel):
     count: int
-    first_occurrence: str
-    last_occurrence: str
+    first_occurrence: Optional[str] = None
+    last_occurrence: Optional[str] = None
     max_score: float
     avg_score: float
     detection_methods: Dict[str, Any]
@@ -47,7 +47,7 @@ class AnomalyInfo(BaseModel):
 class RootCauseCandidate(BaseModel):
     metric: str
     confidence: float
-    first_occurrence: str
+    first_occurrence: Optional[str] = None
     anomaly_count: int
     related_metrics: List[tuple]
     description: Optional[str] = None

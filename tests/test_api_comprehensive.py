@@ -231,7 +231,7 @@ class TestRCAAPI:
             "network_io",
         ]
 
-        response = client.get("/api/v1/rca/metrics/detail")
+        response = client.get("/api/v1/rca/metrics/list")
 
         assert response.status_code == 200
         data = response.json()

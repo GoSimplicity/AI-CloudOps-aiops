@@ -95,7 +95,7 @@ class PrometheusService:
                 f"Prometheus查询成功: {query}, 结果数: {len(data['data']['result'])}"
             )
 
-            # 处理多个时间序列
+            # 处理多个时间序列：逐条重采样，避免跨序列求均值导致异常被稀释
             all_series = []
             for result in data["data"]["result"]:
                 if not result.get("values"):
@@ -112,11 +112,12 @@ class PrometheusService:
                     except (ValueError, TypeError):
                         values.append(0.0)
 
+                # 单条时间序列重采样到 1 分钟，保持标签不变
                 series_df = pd.DataFrame(
                     {"value": values}, index=pd.DatetimeIndex(timestamps)
                 )
+                series_df = series_df.resample("1min").mean().ffill()
 
-                # 添加标签信息
                 labels = result.get("metric", {})
                 for label, value in labels.items():
                     series_df[f"label_{label}"] = value
@@ -124,25 +125,9 @@ class PrometheusService:
                 all_series.append(series_df)
 
             if all_series:
-                # 合并所有时间序列
+                # 合并后直接返回逐序列拼接的结果，不做全局平均
                 combined_df = pd.concat(all_series, ignore_index=False)
-                # 重采样到指定频率
-                numeric_cols = combined_df.select_dtypes(include=["number"]).columns
-                if len(numeric_cols) > 0:
-                    resampled = combined_df[numeric_cols].resample("1min").mean()
-
-                    # 处理标签列（字符串类型）
-                    label_cols = [
-                        col for col in combined_df.columns if col.startswith("label_")
-                    ]
-                    for col in label_cols:
-                        resampled[col] = combined_df[col].resample("1min").first()
-
-                    # 前向填充缺失值
-                    return resampled.ffill()
-                else:
-                    logger.warning("没有数值列可用于重采样")
-                    return None
+                return combined_df
 
             return None
 

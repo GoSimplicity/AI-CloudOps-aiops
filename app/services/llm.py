@@ -109,7 +109,7 @@ class LLMService:
 
         if temperature is not None:
             validate_field_range(
-                {"temperature": temperature},
+                temperature,
                 "temperature",
                 LLM_TEMPERATURE_MIN,
                 LLM_TEMPERATURE_MAX,

@@ -238,6 +238,11 @@ class RCARecordEntity(BaseModel):
     summary: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    record_type: Optional[str] = None
+    job_id: Optional[str] = None
+    params: Optional[Dict[str, Any]] = None
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
 
 
 # === Prediction 模块：DB 级 CRUD 实体 ===

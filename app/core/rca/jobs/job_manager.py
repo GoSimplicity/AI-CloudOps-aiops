@@ -23,6 +23,15 @@ from redis.connection import ConnectionPool
 
 from app.config.settings import config
 from app.core.rca.analyzer import RCAAnalyzer
+from app.core.rca.correlator import CorrelationAnalyzer
+from app.db.base import session_scope
+from app.db.models import (
+    RCAJobRecord,
+    RCAAnalysisRecord,
+    RCARecord,
+    RCACorrelationRecord,
+    RCASimpleCorrelationRecord,
+)
 
 logger = logging.getLogger("aiops.rca.jobs")
 
@@ -85,6 +94,22 @@ class RCAJobManager:
 
         self._save(job_id, job_doc)
 
+        # 入库：创建任务记录
+        try:
+            with session_scope() as session:
+                rec = RCAJobRecord(
+                    job_id=job_id,
+                    status="queued",
+                    progress=0.0,
+                    namespace=(params or {}).get("namespace"),
+                    params_json=json.dumps(self._jsonify(params), ensure_ascii=False),
+                    result_json=None,
+                    error=None,
+                )
+                session.add(rec)
+        except Exception as e:
+            logger.warning(f"写入RCA任务记录失败（忽略）：{e}")
+
         # 在线程池中执行任务，避免阻塞请求线程
         self._executor.submit(self._run_job_safely, job_id, params)
 
@@ -95,24 +120,146 @@ class RCAJobManager:
         """查询任务状态/结果。"""
         return self._load(job_id)
 
-    # ----------------------------- 内部方法 ----------------------------- #
+    def list_jobs(
+        self,
+        page: int = 1,
+        size: int = 20,
+        status: Optional[str] = None,
+        namespace: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """列出任务（支持分页与简单过滤）。
+
+        返回结构：{"items": [...], "total": int}
+        """
+        try:
+            pattern = "aiops:rca:job:*"
+            jobs: list[Dict[str, Any]] = []
+            # 扫描所有任务键
+            for key in self.redis_client.scan_iter(match=pattern):
+                try:
+                    raw = self.redis_client.get(key)
+                    if not raw:
+                        continue
+                    doc = json.loads(raw)
+                    # 过滤状态
+                    if status and doc.get("status") != status:
+                        continue
+                    # 过滤命名空间（写在 params.namespace 中）
+                    if namespace:
+                        params = doc.get("params") or {}
+                        if params.get("namespace") != namespace:
+                            continue
+                    jobs.append(doc)
+                except Exception:
+                    # 单条失败不影响整体
+                    continue
+
+            # 按创建时间倒序
+            jobs.sort(key=lambda d: d.get("created_at") or 0, reverse=True)
+
+            total = len(jobs)
+            page = max(1, int(page or 1))
+            size = max(1, min(100, int(size or 20)))
+            start = (page - 1) * size
+            end = start + size
+            page_items = jobs[start:end]
+
+            # 精简字段，避免返回过大 payload
+            def _to_summary(doc: Dict[str, Any]) -> Dict[str, Any]:
+                params = doc.get("params") or {}
+                return {
+                    "id": doc.get("id"),
+                    "status": doc.get("status"),
+                    "progress": doc.get("progress"),
+                    "namespace": params.get("namespace"),
+                    "time_range": {
+                        "start": params.get("start_time"),
+                        "end": params.get("end_time"),
+                    },
+                    "created_at": doc.get("created_at"),
+                    "updated_at": doc.get("updated_at"),
+                    "has_result": bool(doc.get("result")),
+                    "has_error": bool(doc.get("error")),
+                }
+
+            return {"items": [_to_summary(d) for d in page_items], "total": total}
+        except Exception as e:
+            logger.error(f"列出RCA任务失败: {e}")
+            return {"items": [], "total": 0}
 
     def _run_job_safely(self, job_id: str, params: Dict[str, Any]):
         """执行任务并确保状态持久化。"""
         try:
             self._update(job_id, {"status": "running", "progress": 0.05})
+            try:
+                with session_scope() as session:
+                    rec = session.query(RCAJobRecord).filter_by(job_id=job_id).one_or_none()
+                    if rec:
+                        rec.status = "running"
+                        rec.progress = 0.05
+                        session.add(rec)
+            except Exception:
+                pass
 
             analyzer = RCAAnalyzer()
+            corr_analyzer = CorrelationAnalyzer()
 
             # 进度提示：数据采集阶段
             self._update(job_id, {"progress": 0.2})
 
-            # 执行分析（在工作线程中创建事件循环执行异步分析）
-            result = asyncio.run(
-                analyzer.analyze(
-                    params["start_time"], params["end_time"], params.get("metrics")
+            job_type = (params or {}).get("job_type") or "analysis"
+            if job_type == "cross_correlation":
+                # 收集数据并执行跨时滞相关
+                metrics = params.get("metrics")
+                if not metrics:
+                    try:
+                        from app.config.settings import config as _config
+                        metrics = _config.rca.default_metrics
+                    except Exception:
+                        metrics = []
+                metrics_data = asyncio.run(
+                    analyzer._collect_metrics_data(
+                        params["start_time"], params["end_time"], metrics, namespace=params.get("namespace")
+                    )
                 )
-            )
+                if not metrics_data:
+                    result = {"correlations": {}, "cross_correlations": {}}
+                else:
+                    max_lags = int((params.get("max_lags") or 10))
+                    result = asyncio.run(
+                        corr_analyzer.analyze_correlations_with_cross_lag(metrics_data, max_lags=max(1, min(20, max_lags)))
+                    )
+            elif job_type == "correlation":
+                # 普通相关性分析（目标指标可选）
+                target_metric = params.get("target_metric")
+                metrics = params.get("metrics")
+                if not metrics:
+                    try:
+                        from app.config.settings import config as _config
+                        metrics = _config.rca.default_metrics
+                    except Exception:
+                        metrics = []
+                result = asyncio.run(
+                    analyzer.analyze_correlations(
+                        params["start_time"],
+                        params["end_time"],
+                        target_metric,
+                        metrics,
+                        namespace=params.get("namespace"),
+                    )
+                )
+            else:
+                # 执行常规分析（在工作线程中创建事件循环执行异步分析）
+                result = asyncio.run(
+                    analyzer.analyze(
+                        params["start_time"],
+                        params["end_time"],
+                        params.get("metrics"),
+                        include_logs=params.get("include_logs"),
+                        include_traces=None,
+                        namespace=params.get("namespace"),
+                    )
+                )
 
             # 分阶段推进进度
             self._update(job_id, {"progress": 0.9})
@@ -126,11 +273,255 @@ class RCAJobManager:
                     "result": self._jsonify(result),
                 },
             )
+            try:
+                with session_scope() as session:
+                    rec = session.query(RCAJobRecord).filter_by(job_id=job_id).one_or_none()
+                    if rec:
+                        rec.status = "succeeded"
+                        rec.progress = 1.0
+                        rec.result_json = json.dumps(self._jsonify(result), ensure_ascii=False)
+                        session.add(rec)
+                    if job_type == "cross_correlation":
+                        # 入库跨时滞相关结果
+                        summary_text = None
+                        try:
+                            cc = (result or {}).get("cross_correlations") or {}
+                            summary_text = f"cc_pairs={sum(len(v) for v in cc.values())}"
+                        except Exception:
+                            summary_text = None
+                        cc_rec = RCACorrelationRecord(
+                            job_id=job_id,
+                            record_type="cross_correlation",
+                            namespace=params.get("namespace"),
+                            start_time=str(params.get("start_time")),
+                            end_time=str(params.get("end_time")),
+                            metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                            params_json=json.dumps(self._jsonify(params), ensure_ascii=False),
+                            status="success",
+                            summary=summary_text,
+                            result_json=json.dumps(self._jsonify(result), ensure_ascii=False),
+                            error=None,
+                        )
+                        session.add(cc_rec)
+                        # 同步写入统一记录表
+                        try:
+                            rc = RCARecord(
+                                record_type="cross_correlation",
+                                namespace=params.get("namespace"),
+                                start_time=str(params.get("start_time")),
+                                end_time=str(params.get("end_time")),
+                                metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                                params_json=json.dumps(self._jsonify(params), ensure_ascii=False),
+                                job_id=job_id,
+                                status="success",
+                                summary=summary_text,
+                                result_json=json.dumps(self._jsonify(result), ensure_ascii=False),
+                                error=None,
+                            )
+                            session.add(rc)
+                        except Exception:
+                            pass
+                    elif job_type == "correlation":
+                        # 入库普通相关性（目标指标与相关性列表）
+                        try:
+                            summary_text = None
+                            try:
+                                if isinstance(result, dict) and len(result) == 1:
+                                    # 取唯一目标的top个数
+                                    only_key = next(iter(result.keys()))
+                                    summary_text = f"pairs={len(result.get(only_key) or [])}"
+                            except Exception:
+                                summary_text = None
+                            corr_rec = RCASimpleCorrelationRecord(
+                                job_id=job_id,
+                                record_type="correlation",
+                                namespace=params.get("namespace"),
+                                start_time=str(params.get("start_time")),
+                                end_time=str(params.get("end_time")),
+                                metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                                params_json=json.dumps(self._jsonify(params), ensure_ascii=False),
+                                status="success",
+                                summary=summary_text,
+                                result_json=json.dumps(self._jsonify(result), ensure_ascii=False),
+                                error=None,
+                            )
+                            session.add(corr_rec)
+                        except Exception:
+                            pass
+                        # 同步写入统一记录表
+                        try:
+                            rc = RCARecord(
+                                record_type="correlation",
+                                namespace=params.get("namespace"),
+                                start_time=str(params.get("start_time")),
+                                end_time=str(params.get("end_time")),
+                                metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                                params_json=json.dumps(self._jsonify(params), ensure_ascii=False),
+                                job_id=job_id,
+                                status="success",
+                                summary=summary_text,
+                                result_json=json.dumps(self._jsonify(result), ensure_ascii=False),
+                                error=None,
+                            )
+                            session.add(rc)
+                        except Exception:
+                            pass
+                    else:
+                        # 保存一份完整的分析记录到 RCAAnalysisRecord（record接口查看）
+                        summary_text = None
+                        try:
+                            summary_text = (result or {}).get("summary")
+                        except Exception:
+                            summary_text = None
+                        analysis = RCAAnalysisRecord(
+                            start_time=str(params.get("start_time")),
+                            end_time=str(params.get("end_time")),
+                            metrics=json.dumps(params.get("metrics") or [] , ensure_ascii=False),
+                            namespace=params.get("namespace"),
+                            service_name=None,
+                            status="success",
+                            summary=summary_text,
+                            result_json=json.dumps(self._jsonify(result), ensure_ascii=False),
+                            error=None,
+                        )
+                        session.add(analysis)
+                        # 同步写入统一记录表，便于统一查询
+                        try:
+                            rc = RCARecord(
+                                record_type="analysis",
+                                namespace=params.get("namespace"),
+                                start_time=str(params.get("start_time")),
+                                end_time=str(params.get("end_time")),
+                                metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                                params_json=json.dumps(self._jsonify(params), ensure_ascii=False),
+                                job_id=job_id,
+                                status="success",
+                                summary=summary_text,
+                                result_json=json.dumps(self._jsonify(result), ensure_ascii=False),
+                                error=None,
+                            )
+                            session.add(rc)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
             logger.info(f"RCA 任务成功完成: {job_id}")
 
         except Exception as e:
             logger.exception(f"RCA 任务执行失败: {job_id}")
             self._update(job_id, {"status": "failed", "error": str(e), "progress": 1.0})
+            try:
+                with session_scope() as session:
+                    rec = session.query(RCAJobRecord).filter_by(job_id=job_id).one_or_none()
+                    if rec:
+                        rec.status = "failed"
+                        rec.progress = 1.0
+                        rec.error = str(e)
+                        session.add(rec)
+                        job_type = (params or {}).get("job_type") or "analysis"
+                        if job_type == "cross_correlation":
+                            cc_rec = RCACorrelationRecord(
+                                job_id=job_id,
+                                record_type="cross_correlation",
+                                namespace=params.get("namespace"),
+                                start_time=str(params.get("start_time")),
+                                end_time=str(params.get("end_time")),
+                                metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                                params_json=json.dumps(self._jsonify(params), ensure_ascii=False),
+                                status="failed",
+                                summary=None,
+                                result_json=None,
+                                error=str(e),
+                            )
+                            session.add(cc_rec)
+                            # 同步写入统一记录表
+                            try:
+                                rc = RCARecord(
+                                    record_type="cross_correlation",
+                                    namespace=params.get("namespace"),
+                                    start_time=str(params.get("start_time")),
+                                    end_time=str(params.get("end_time")),
+                                    metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                                    params_json=json.dumps(self._jsonify(params), ensure_ascii=False),
+                                    job_id=job_id,
+                                    status="failed",
+                                    summary=None,
+                                    result_json=None,
+                                    error=str(e),
+                                )
+                                session.add(rc)
+                            except Exception:
+                                pass
+                        elif job_type == "correlation":
+                            try:
+                                corr_rec = RCASimpleCorrelationRecord(
+                                    job_id=job_id,
+                                    record_type="correlation",
+                                    namespace=params.get("namespace"),
+                                    start_time=str(params.get("start_time")),
+                                    end_time=str(params.get("end_time")),
+                                    metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                                    params_json=json.dumps(self._jsonify(params), ensure_ascii=False),
+                                    status="failed",
+                                    summary=None,
+                                    result_json=None,
+                                    error=str(e),
+                                )
+                                session.add(corr_rec)
+                            except Exception:
+                                pass
+                            # 同步写入统一记录表
+                            try:
+                                rc = RCARecord(
+                                    record_type="correlation",
+                                    namespace=params.get("namespace"),
+                                    start_time=str(params.get("start_time")),
+                                    end_time=str(params.get("end_time")),
+                                    metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                                    params_json=json.dumps(self._jsonify(params), ensure_ascii=False),
+                                    job_id=job_id,
+                                    status="failed",
+                                    summary=None,
+                                    result_json=None,
+                                    error=str(e),
+                                )
+                                session.add(rc)
+                            except Exception:
+                                pass
+                        else:
+                            # 同时写入 RCAAnalysisRecord 失败记录
+                            analysis = RCAAnalysisRecord(
+                                start_time=str(params.get("start_time")),
+                                end_time=str(params.get("end_time")),
+                                metrics=json.dumps(params.get("metrics") or [] , ensure_ascii=False),
+                                namespace=params.get("namespace"),
+                                service_name=None,
+                                status="failed",
+                                summary=None,
+                                result_json=None,
+                                error=str(e),
+                            )
+                            session.add(analysis)
+                            # 同步写入统一记录表
+                            try:
+                                rc = RCARecord(
+                                    record_type="analysis",
+                                    namespace=params.get("namespace"),
+                                    start_time=str(params.get("start_time")),
+                                    end_time=str(params.get("end_time")),
+                                    metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                                    params_json=json.dumps(self._jsonify(params), ensure_ascii=False),
+                                    job_id=job_id,
+                                    status="failed",
+                                    summary=None,
+                                    result_json=None,
+                                    error=str(e),
+                                )
+                                session.add(rc)
+                            except Exception:
+                                pass
+            except Exception:
+                pass
 
     # ----------------------------- Redis 序列化 ----------------------------- #
 

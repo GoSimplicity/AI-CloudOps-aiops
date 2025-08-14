@@ -319,6 +319,8 @@ class RCARecordListReq(PaginationReq):
     namespace: Optional[str] = None
     status: Optional[str] = None
     search: Optional[str] = None
+    record_type: Optional[str] = None
+    job_id: Optional[str] = None
 
 
 # === Autofix 模块：DB 级 CRUD 请求模型 ===
@@ -444,6 +446,7 @@ class AutoRCACorrelationReq(BaseModel):
     end_time: datetime
     target_metric: Optional[str] = None
     metrics: Optional[List[str]] = None
+    namespace: Optional[str] = None
 
     @field_validator("start_time", "end_time", mode="before")
     def _parse_dt(cls, v):
@@ -454,12 +457,36 @@ class AutoRCACorrelationReq(BaseModel):
                 return datetime.fromisoformat(v)
         return v
 
+    @field_validator("metrics", mode="before")
+    def _parse_metrics(cls, v):
+        # 接受字符串（逗号分隔或JSON数组字符串）或列表
+        if v is None:
+            return v
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            text = v.strip()
+            if not text:
+                return None
+            # 优先JSON
+            try:
+                import json as _json
+                loaded = _json.loads(text)
+                if isinstance(loaded, list):
+                    return loaded
+            except Exception:
+                pass
+            # 回退逗号分割
+            return [p.strip().strip('\"\'') for p in text.split(',') if p.strip()]
+        return v
+
 
 class AutoRCACrossCorrelationReq(BaseModel):
     start_time: datetime
     end_time: datetime
     metrics: Optional[List[str]] = None
     max_lags: Optional[int] = 10
+    namespace: Optional[str] = None
 
     @field_validator("start_time", "end_time", mode="before")
     def _parse_dt(cls, v):

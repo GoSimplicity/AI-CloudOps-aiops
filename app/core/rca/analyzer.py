@@ -62,33 +62,46 @@ class RCAAnalyzer:
         try:
             logger.info(f"开始根因分析: {start_time} - {end_time}")
 
-            if not metrics:
-                metrics = config.rca.default_metrics
+            # 规范化与合并指标：避免将字符串当作可迭代逐字符查询
+            def _ensure_metric_list(value) -> List[str]:
+                try:
+                    if value is None:
+                        return []
+                    if isinstance(value, list):
+                        return [str(x).strip() for x in value if str(x).strip()]
+                    # 若为字符串，尝试按逗号切分；否则作为单一指标
+                    text = str(value).strip()
+                    if not text:
+                        return []
+                    if "," in text:
+                        return [p.strip().strip("'\"") for p in text.split(",") if p.strip()]
+                    return [text]
+                except Exception:
+                    return []
 
-            # 解析可选采集开关（支持请求级覆盖：rca.request_override=true）
+            input_metrics = _ensure_metric_list(metrics)
+            default_metrics = _ensure_metric_list(config.rca.default_metrics)
+            # 合并去重并保持顺序
+            metrics = list(dict.fromkeys(input_metrics + default_metrics)) or default_metrics
+
+            # 解析可选采集开关
             ns = namespace or config.k8s.namespace
-            if config.rca.request_override:
-                # 请求级优先：只要请求显式为 True 即启用（前提是全局功能开启）
-                should_collect_logs = bool(include_logs) and config.logs.enabled
-                should_collect_traces = bool(include_traces) and config.tracing.enabled
-            else:
-                # 全局优先：仅当全局开启时生效，请求仅在为 None 时跟随全局
-                should_collect_logs = (
-                    config.logs.enabled
-                    if include_logs is None
-                    else (include_logs and config.logs.enabled)
-                )
-                should_collect_traces = (
-                    config.tracing.enabled
-                    if include_traces is None
-                    else (include_traces and config.tracing.enabled)
-                )
+            # 明确请求优先：include_logs 显式 True 时启用日志采集；否则跟随全局
+            should_collect_logs = bool(include_logs) if include_logs is not None else bool(
+                getattr(config, "logs", None) and config.logs.enabled
+            )
+            # Trace 暂不启用，但保持逻辑完整
+            should_collect_traces = (
+                bool(include_traces)
+                if include_traces is not None
+                else bool(getattr(config, "tracing", None) and config.tracing.enabled)
+            )
 
             # 项目目前仅支持基于K8s的事件与状态分析，暂不支持Trace分析
             should_collect_traces = False
 
             metrics_data = await self._collect_metrics_data(
-                start_time, end_time, metrics
+                start_time, end_time, metrics, namespace=ns
             )
 
             if not metrics_data:
@@ -108,7 +121,7 @@ class RCAAnalyzer:
                 lag_result = {"correlations": correlations, "cross_correlations": {}}
             logger.info(f"分析了 {len(correlations)} 个指标的相关性")
 
-            root_causes = self._generate_root_cause_candidates(anomalies, correlations)
+            root_causes: List[Dict] = []
 
             context_events: List[Dict] = []
             context_state: Dict = {}
@@ -137,6 +150,62 @@ class RCAAnalyzer:
             except Exception:
                 pass
 
+            # 若指标未发现异常，尝试从 K8s 事件构造“伪异常”，用于生成候选与摘要
+            if not anomalies and context_events:
+                try:
+                    synthesized: Dict[str, Dict] = {}
+                    for ev in context_events:
+                        ev_type = str(ev.get("type") or "").lower()
+                        reason = str(ev.get("reason") or "").lower()
+                        first_ts = ev.get("firstTimestamp")
+                        last_ts = ev.get("lastTimestamp")
+                        # 仅统计 Warning 级别及常见异常信号
+                        if ev_type == "warning" or reason in {"unhealthy", "backoff", "failedcreate", "failedscheduling", "crashloopbackoff"}:
+                            # 统一映射为稳定的“指标名”
+                            if "backoff" in reason or "crash" in reason:
+                                key = "pod_restart_backoff"
+                            elif "unhealthy" in reason:
+                                key = "pod_probe_unhealthy"
+                            elif "failedscheduling" in reason:
+                                key = "scheduling_failed"
+                            elif "failedcreate" in reason:
+                                key = "workload_failedcreate"
+                            else:
+                                key = f"k8s_event_{reason or 'warning'}"
+                            entry = synthesized.setdefault(
+                                key,
+                                {
+                                    "count": 0,
+                                    "first_occurrence": None,
+                                    "last_occurrence": None,
+                                    "max_score": 0.9,
+                                    "avg_score": 0.8,
+                                    "detection_methods": {"k8s_events": 0},
+                                },
+                            )
+                            entry["count"] += 1
+                            entry["detection_methods"]["k8s_events"] += 1
+                            try:
+                                if first_ts and (
+                                    not entry["first_occurrence"]
+                                    or str(first_ts) < str(entry["first_occurrence"])
+                                ):
+                                    entry["first_occurrence"] = str(first_ts)
+                                if last_ts and (
+                                    not entry["last_occurrence"]
+                                    or str(last_ts) > str(entry["last_occurrence"])
+                                ):
+                                    entry["last_occurrence"] = str(last_ts)
+                            except Exception:
+                                pass
+                    if synthesized:
+                        anomalies = synthesized
+                        logger.info(
+                            f"基于K8s事件合成异常 {len(anomalies)} 项，用于生成候选与摘要"
+                        )
+                except Exception:
+                    pass
+
             rule_evidence: List[Dict] = []
             try:
                 engine = RuleEngine()
@@ -152,6 +221,9 @@ class RCAAnalyzer:
                 )
             except Exception:
                 pass
+
+            # 事件合成异常完成后再生成根因候选
+            root_causes = self._generate_root_cause_candidates(anomalies, correlations)
 
             summary = await self._generate_summary(anomalies, correlations, root_causes)
             analysis_duration = time.time() - analysis_start_ts
@@ -237,15 +309,196 @@ class RCAAnalyzer:
         end_time: datetime,
         target_metric: Optional[str] = None,
         metrics: Optional[List[str]] = None,
+        namespace: Optional[str] = None,
     ) -> Dict:
         """相关性分析包装方法"""
         metrics = metrics or config.rca.default_metrics
-        metrics_data = await self._collect_metrics_data(start_time, end_time, metrics)
+        # 确保目标指标被纳入分析集合
+        if target_metric and target_metric not in (metrics or []):
+            metrics = list(dict.fromkeys([target_metric] + list(metrics)))
+        effective_ns = namespace or config.k8s.namespace
+        metrics_data = await self._collect_metrics_data(
+            start_time, end_time, metrics, namespace=effective_ns
+        )
+        # 若按命名空间无数据，回退为全局范围再试一次，避免直接返回空结果
+        if not metrics_data and namespace:
+            try:
+                logger.warning(
+                    f"命名空间 {namespace} 无数据，回退为全局相关性分析"
+                )
+                metrics_data = await self._collect_metrics_data(
+                    start_time, end_time, metrics, namespace=None
+                )
+            except Exception:
+                metrics_data = {}
         if not metrics_data:
             return {}
+        # 使用新管线优先获取目标基础指标的Top相关对（带多级阈值与视图兜底）
+        try:
+            if target_metric:
+                from app.core.rca.correlator import Correlator as _Correlator
+                view_corr = _Correlator(config.rca.correlation_threshold).analyze_target_with_views(
+                    metrics_data, target_metric=target_metric, namespace=namespace, thresholds=[
+                        float(getattr(config.rca, "correlation_threshold", 0.7) or 0.7),
+                        0.5,
+                        0.3,
+                        0.0,
+                    ]
+                )
+                # 若有结果，直接返回；否则回退到原算法
+                if view_corr and list(view_corr.values()) and list(view_corr.values())[0]:
+                    return view_corr
+        except Exception:
+            pass
         all_corr = await self.correlator.analyze_correlations(metrics_data)
         if target_metric:
-            return {target_metric: all_corr.get(target_metric, [])}
+            # 按基础指标名（去掉标签后缀）聚合该目标的所有序列相关性
+            # all_corr 的键为 “metric|k:v,...” 形式，或无后缀
+            target_keys = [
+                key
+                for key in all_corr.keys()
+                if key == target_metric or key.startswith(f"{target_metric}|")
+            ]
+            if not target_keys:
+                # 若目标指标在当前过滤条件下完全缺失，则尝试“全局范围+放宽阈值”的兜底回退
+                try:
+                    # 回退：全局范围重取数据
+                    metrics_data_global = await self._collect_metrics_data(
+                        start_time, end_time, metrics, namespace=None
+                    )
+                    if metrics_data_global:
+                        try:
+                            # 放宽阈值（例如 0.5），以避免过严导致完全空结果
+                            relaxed_threshold = min(
+                                float(getattr(config.rca, "correlation_threshold", 0.7) or 0.7), 0.5
+                            )
+                        except Exception:
+                            relaxed_threshold = 0.5
+                        from app.core.rca.correlator import CorrelationAnalyzer as _CA
+                        ca_relaxed = _CA(relaxed_threshold)
+                        all_corr_relaxed = await ca_relaxed.analyze_correlations(metrics_data_global)
+                        target_keys_relaxed = [
+                            key
+                            for key in all_corr_relaxed.keys()
+                            if key == target_metric or key.startswith(f"{target_metric}|")
+                        ]
+                        if target_keys_relaxed:
+                            aggregated_relaxed: Dict[str, float] = {}
+                            for tkey in target_keys_relaxed:
+                                for (other_name, corr_val) in all_corr_relaxed.get(tkey, []) or []:
+                                    base_other = other_name.split("|")[0]
+                                    prev = aggregated_relaxed.get(base_other)
+                                    if prev is None or abs(corr_val) > abs(prev):
+                                        aggregated_relaxed[base_other] = float(corr_val)
+                            filtered_relaxed = {
+                                name: val for name, val in aggregated_relaxed.items() if name != target_metric
+                            }
+                            aggregated_list_relaxed = sorted(
+                                [(name, round(val, 3)) for name, val in filtered_relaxed.items()],
+                                key=lambda x: abs(x[1]),
+                                reverse=True,
+                            )
+                            if aggregated_list_relaxed:
+                                logger.warning(
+                                    f"目标 {target_metric} 在命名空间过滤下无相关性，已回退为全局并放宽阈值，返回 {len(aggregated_list_relaxed)} 项"
+                                )
+                                return {target_metric: aggregated_list_relaxed[:10]}
+                except Exception:
+                    pass
+                return {target_metric: []}
+            aggregated: Dict[str, float] = {}
+            for tkey in target_keys:
+                for (other_name, corr_val) in all_corr.get(tkey, []) or []:
+                    base_other = other_name.split("|")[0]
+                    prev = aggregated.get(base_other)
+                    # 取绝对值更大的相关性（保留符号）
+                    if prev is None or abs(corr_val) > abs(prev):
+                        aggregated[base_other] = float(corr_val)
+            # 排序并限制返回数量
+            # 过滤掉与目标基础名相同的条目，避免“自身强相关”干扰
+            filtered = {
+                name: val for name, val in aggregated.items() if name != target_metric
+            }
+            aggregated_list = sorted(
+                [(name, round(val, 3)) for name, val in filtered.items()],
+                key=lambda x: abs(x[1]),
+                reverse=True,
+            )
+            if not aggregated_list and namespace:
+                # 若存在目标但结果为空，进一步尝试“全局范围+放宽阈值”兜底（目标序列存在但不满足阈值）
+                try:
+                    metrics_data_global = await self._collect_metrics_data(
+                        start_time, end_time, metrics, namespace=None
+                    )
+                    if metrics_data_global:
+                        try:
+                            relaxed_threshold = min(
+                                float(getattr(config.rca, "correlation_threshold", 0.7) or 0.7), 0.5
+                            )
+                        except Exception:
+                            relaxed_threshold = 0.5
+                        from app.core.rca.correlator import CorrelationAnalyzer as _CA
+                        ca_relaxed = _CA(relaxed_threshold)
+                        all_corr_relaxed = await ca_relaxed.analyze_correlations(metrics_data_global)
+                        target_keys_relaxed = [
+                            key
+                            for key in all_corr_relaxed.keys()
+                            if key == target_metric or key.startswith(f"{target_metric}|")
+                        ]
+                        aggregated_relaxed: Dict[str, float] = {}
+                        for tkey in target_keys_relaxed:
+                            for (other_name, corr_val) in all_corr_relaxed.get(tkey, []) or []:
+                                base_other = other_name.split("|")[0]
+                                prev = aggregated_relaxed.get(base_other)
+                                if prev is None or abs(corr_val) > abs(prev):
+                                    aggregated_relaxed[base_other] = float(corr_val)
+                        filtered_relaxed = {
+                            name: val for name, val in aggregated_relaxed.items() if name != target_metric
+                        }
+                        aggregated_list_relaxed = sorted(
+                            [(name, round(val, 3)) for name, val in filtered_relaxed.items()],
+                            key=lambda x: abs(x[1]),
+                            reverse=True,
+                        )
+                        if aggregated_list_relaxed:
+                            logger.warning(
+                                f"目标 {target_metric} 在命名空间过滤下无显著相关性，已回退为全局并放宽阈值，返回 {len(aggregated_list_relaxed)} 项"
+                            )
+                            return {target_metric: aggregated_list_relaxed[:10]}
+                        # 仍为空：最终兜底，阈值降为 0 返回 TOP5，避免空结果
+                        try:
+                            ca_zero = _CA(0.0)
+                            all_corr_zero = await ca_zero.analyze_correlations(metrics_data_global)
+                            target_keys_zero = [
+                                key
+                                for key in all_corr_zero.keys()
+                                if key == target_metric or key.startswith(f"{target_metric}|")
+                            ]
+                            aggregated_zero: Dict[str, float] = {}
+                            for tkey in target_keys_zero:
+                                for (other_name, corr_val) in all_corr_zero.get(tkey, []) or []:
+                                    base_other = other_name.split("|")[0]
+                                    prev = aggregated_zero.get(base_other)
+                                    if prev is None or abs(corr_val) > abs(prev):
+                                        aggregated_zero[base_other] = float(corr_val)
+                            filtered_zero = {
+                                name: val for name, val in aggregated_zero.items() if name != target_metric
+                            }
+                            aggregated_list_zero = sorted(
+                                [(name, round(val, 3)) for name, val in filtered_zero.items()],
+                                key=lambda x: abs(x[1]),
+                                reverse=True,
+                            )
+                            if aggregated_list_zero:
+                                logger.warning(
+                                    f"目标 {target_metric} 采用最终兜底（阈值=0，全局），返回 {len(aggregated_list_zero)} 项"
+                                )
+                                return {target_metric: aggregated_list_zero[:5]}
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            return {target_metric: aggregated_list[:10]}
         return all_corr
 
     async def generate_timeline(
@@ -299,7 +552,11 @@ class RCAAnalyzer:
             return False
 
     async def _collect_metrics_data(
-        self, start_time: datetime, end_time: datetime, metrics: List[str]
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        metrics: List[str],
+        namespace: Optional[str] = None,
     ) -> Dict[str, pd.DataFrame]:
         """收集指标数据"""
         metrics_data = {}
@@ -315,17 +572,36 @@ class RCAAnalyzer:
                 )
 
                 if data is not None and not data.empty and len(data) > 0:
+                    # 如提供命名空间且数据包含命名空间标签，则先按命名空间过滤
+                    if namespace and "label_namespace" in data.columns:
+                        data = data[data["label_namespace"] == namespace]
+                        if data is None or data.empty:
+                            logger.debug(
+                                f"指标 {metric} 在命名空间 {namespace} 下无数据，跳过"
+                            )
+                            continue
+
                     label_columns = [
-                        col for col in data.columns if col.startswith("label_")
+                        col
+                        for col in data.columns
+                        if col.startswith("label_") and col != "label___name__"
                     ]
 
                     if label_columns:
-                        for _, group in data.groupby(label_columns[0]):
+                        # 以全部标签列进行分组，确保唯一序列不被混合
+                        for labels_key, group in data.groupby(label_columns, dropna=False):
                             if len(group) > 0:
-                                label_value = group[label_columns[0]].iloc[0]
-                                if pd.notna(label_value) and str(label_value).strip():
-                                    metric_name = f"{metric}|{label_columns[0].replace('label_', '')}:{label_value}"
-                                    metrics_data[metric_name] = group[["value"]].copy()
+                                # 构造稳定的序列名称：metric|k1:v1,k2:v2
+                                if not isinstance(labels_key, tuple):
+                                    labels_key = (labels_key,)
+                                parts = []
+                                for col_name, col_value in zip(label_columns, labels_key):
+                                    label_name = col_name.replace("label_", "")
+                                    if pd.notna(col_value) and str(col_value).strip():
+                                        parts.append(f"{label_name}:{col_value}")
+                                label_suffix = ",".join(parts) if parts else "series"
+                                metric_name = f"{metric}|{label_suffix}"
+                                metrics_data[metric_name] = group[["value"]].copy()
                     else:
                         metrics_data[metric] = data[["value"]].copy()
                 else:
@@ -429,7 +705,26 @@ class RCAAnalyzer:
     ) -> Optional[str]:
         """生成AI摘要"""
         try:
+            # 若没有候选，但存在异常，则返回基于异常的兜底摘要
             if not candidates:
+                if anomalies:
+                    try:
+                        total_types = len(anomalies)
+                        total_events = sum(int(v.get("count", 0)) for v in anomalies.values())
+                        # 选取前3个最频繁的异常类型
+                        top_items = sorted(
+                            anomalies.items(), key=lambda kv: int(kv[1].get("count", 0)), reverse=True
+                        )[:3]
+                        top_desc = ", ".join(
+                            f"{k}×{int(v.get('count', 0))}"
+                            for k, v in top_items
+                        )
+                        return (
+                            f"检测到 {total_types} 类异常，共 {total_events} 次；主要包括：{top_desc}。"
+                        )
+                    except Exception:
+                        return "检测到异常，但无法生成详细摘要。"
+                # 无候选且无异常
                 return "未发现异常模式，系统运行正常。"
 
             summary = await self.llm.generate_rca_summary(
