@@ -5,12 +5,12 @@ Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 基于Redis的向量存储和检索系统
+Description: RCA 根因分析核心
 """
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -32,8 +32,6 @@ from app.services.prometheus import PrometheusService
 from app.utils.time_utils import iso_utc_now
 
 logger = logging.getLogger("aiops.rca")
-
-UTC_TZ = timezone.utc
 
 
 class RCAAnalyzer:
@@ -755,9 +753,7 @@ class RCAAnalyzer:
             pass
         return timeline
 
-    def get_analysis_history(self, limit: int = 50) -> List[Dict]:
-        """获取分析历史记录"""
-        return []
+    # 已弃用：历史接口不再提供，移除多余占位实现
 
     def is_healthy(self) -> bool:
         """检查分析器健康状态"""
@@ -840,7 +836,6 @@ class RCAAnalyzer:
                         query_text, start_time, end_time, step_str
                     )
                 if data is not None and not data.empty and len(data) > 0:
-                    nonlocal namespace
                     # 如提供命名空间且数据包含命名空间标签，则先按命名空间过滤
                     if namespace and "label_namespace" in data.columns:
                         data = data[data["label_namespace"] == namespace]
@@ -1034,112 +1029,7 @@ class RCAAnalyzer:
             logger.error(f"生成摘要失败: {str(e)}")
             return None
 
-    async def analyze_specific_incident(
-        self,
-        start_time: datetime,
-        end_time: datetime,
-        affected_services: List[str],
-        symptoms: List[str],
-    ) -> Dict:
-        """分析特定事件的根因"""
-        try:
-            logger.info(f"分析事件: 服务={affected_services}, 症状={symptoms}")
-
-            relevant_metrics = self._select_relevant_metrics(
-                affected_services, symptoms
-            )
-
-            result = await self.analyze(start_time, end_time, relevant_metrics)
-
-            if "error" not in result:
-                result["incident_analysis"] = {
-                    "affected_services": affected_services,
-                    "reported_symptoms": symptoms,
-                    "relevant_metrics": relevant_metrics,
-                    "recommendation": self._generate_incident_recommendation(
-                        result.get("root_cause_candidates", []),
-                        affected_services,
-                        symptoms,
-                    ),
-                }
-
-            return result
-
-        except Exception as e:
-            logger.error(f"事件分析失败: {str(e)}")
-            return {"error": f"事件分析失败: {str(e)}"}
-
-    def _select_relevant_metrics(
-        self, services: List[str], symptoms: List[str]
-    ) -> List[str]:
-        """选择相关指标"""
-        relevant_metrics = set(config.rca.default_metrics)
-
-        for symptom in symptoms:
-            symptom_lower = symptom.lower()
-            if "slow" in symptom_lower or "latency" in symptom_lower:
-                relevant_metrics.update(
-                    [
-                        "kubelet_http_requests_duration_seconds_sum",
-                        "kubelet_http_requests_duration_seconds_count",
-                    ]
-                )
-            elif "error" in symptom_lower or "fail" in symptom_lower:
-                relevant_metrics.update(["kube_pod_container_status_restarts_total"])
-            elif "cpu" in symptom_lower:
-                relevant_metrics.update(
-                    ["container_cpu_usage_seconds_total", "node_cpu_seconds_total"]
-                )
-            elif "memory" in symptom_lower:
-                relevant_metrics.update(
-                    ["container_memory_working_set_bytes", "node_memory_MemFree_bytes"]
-                )
-
-        return list(relevant_metrics)
-
-    def _generate_incident_recommendation(
-        self, root_causes: List[Dict], services: List[str], symptoms: List[str]
-    ) -> str:
-        """
-        生成事件处理建议 - 基于根因分析结果的智能建议系统
-        """
-        # 如果没有识别出根因，提供通用建议
-        if not root_causes:
-            return "建议检查服务配置和资源分配，监控系统负载变化。"
-
-        # 获取置信度最高的根因候选
-        top_cause = root_causes[0]
-        metric = top_cause.get("metric", "")
-        confidence = top_cause.get("confidence", 0)
-
-        recommendations = []
-
-        # 根据根因类型生成具体的修复建议
-        if "cpu" in metric.lower():
-            recommendations.append("检查CPU使用率，考虑扩容或优化应用性能")
-        elif "memory" in metric.lower():
-            recommendations.append(
-                "检查内存使用情况，可能需要增加内存限制或优化内存使用"
-            )
-        elif "restart" in metric.lower():
-            recommendations.append("检查容器重启原因，查看相关日志和健康检查配置")
-        elif "network" in metric.lower() or "http" in metric.lower():
-            recommendations.append("检查网络连接和服务间通信，查看负载均衡配置")
-
-        # 根据置信度水平调整建议的紧迫性
-        if confidence > 0.8:
-            recommendations.append(
-                f"根因分析置信度较高({confidence:.2f})，建议优先处理该问题"
-            )
-        elif confidence < 0.5:
-            recommendations.append("根因分析置信度较低，建议进行更详细的调查")
-
-        # 如果没有生成特定建议，提供通用建议
-        return (
-            "; ".join(recommendations)
-            if recommendations
-            else "建议进行详细的系统检查和日志分析。"
-        )
+    # 已移除：事件定向分析与建议接口，避免未使用代码
 
     def _generate_suggestions_from_causes(self, root_causes: List[Dict]) -> List[str]:
         """根据根因候选生成简要建议清单（占位）。"""

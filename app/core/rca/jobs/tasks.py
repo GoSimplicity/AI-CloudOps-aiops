@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Huey 任务定义（RCA）
-
-职责：
-- 统一执行 RCA 相关的异步任务。
-- 负责任务状态持久化（waiting -> running -> success/error）。
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: RCA 异步任务定义（Huey）
 """
 
 from __future__ import annotations

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Huey 队列实例（RCA专用）
-
-说明：
-- 默认在开发/测试环境开启 immediate（同步执行，便于本地与CI运行），生产可通过 ENV=production 或 HUEY_IMMEDIATE=false 关闭。
-- 采用 Redis 作为后端，参数复用全局 Redis 配置。
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: Huey 实例（RCA 队列）
 """
 
 from __future__ import annotations

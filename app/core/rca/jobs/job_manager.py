@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-RCA 任务管理器（Huey版）
-
-职责：
-- 负责生成 job_id、写入数据库初始记录（status=waiting），并委托 Huey 执行。
-- 提供最小化的查询能力（直接读数据库）。
+Redis向量存储实现
+Author: Bamboo
+Email: bamboocloudops@gmail.com
+License: Apache 2.0
+Description: RCA 任务管理器（Huey）
 """
 
 from __future__ import annotations

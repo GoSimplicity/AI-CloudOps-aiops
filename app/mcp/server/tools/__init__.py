@@ -1,9 +1,11 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 基于Redis的向量存储和检索系统
+Description: MCP 工具（__init__）
 """
 
 from .calculator_tool import CalculatorTool, StatisticsTool, UnitConverterTool

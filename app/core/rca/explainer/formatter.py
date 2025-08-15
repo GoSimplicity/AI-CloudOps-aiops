@@ -5,10 +5,9 @@ Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 基于Redis的向量存储和检索系统
+Description: RCA 说明/格式化（占位）
 """
 
 from __future__ import annotations
 
-
-# 占位函数暂未被调用，移除以减少冗余
+# 保留文件作为模块占位，便于后续扩展。当前无实现。

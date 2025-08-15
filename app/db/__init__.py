@@ -5,7 +5,7 @@ Redis向量存储实现
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
-Description: 基于Redis的向量存储和检索系统
+Description: 数据库模块
 """
 
 from .base import Base, get_engine, get_session, get_session_factory
