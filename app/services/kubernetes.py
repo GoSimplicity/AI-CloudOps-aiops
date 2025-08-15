@@ -450,7 +450,9 @@ class KubernetesService:
             if dry_run:
                 kwargs["dry_run"] = "All"
             # 使用 AppsV1Api 的 patch_namespaced_deployment
-            resp = await asyncio.to_thread(self.apps_v1.patch_namespaced_deployment, **kwargs)
+            resp = await asyncio.to_thread(
+                self.apps_v1.patch_namespaced_deployment, **kwargs
+            )
             return resp is not None
         except ApiException as e:
             logger.error(f"Patch Deployment失败: {name}, ns={namespace}, err={str(e)}")

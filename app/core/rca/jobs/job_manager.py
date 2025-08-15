@@ -70,7 +70,9 @@ class RCAJobManager:
             try:
                 with session_scope() as session:
                     rec = (
-                        session.query(RCAJobRecord).filter_by(job_id=job_id).one_or_none()
+                        session.query(RCAJobRecord)
+                        .filter_by(job_id=job_id)
+                        .one_or_none()
                     )
                     if rec:
                         rec.status = "error"
@@ -100,8 +102,12 @@ class RCAJobManager:
                     "params": json.loads(rec.params_json) if rec.params_json else None,
                     "result": json.loads(rec.result_json) if rec.result_json else None,
                     "error": rec.error,
-                    "created_at": rec.created_at.timestamp() if rec.created_at else None,
-                    "updated_at": rec.updated_at.timestamp() if rec.updated_at else None,
+                    "created_at": rec.created_at.timestamp()
+                    if rec.created_at
+                    else None,
+                    "updated_at": rec.updated_at.timestamp()
+                    if rec.updated_at
+                    else None,
                 }
         except Exception:
             return None
@@ -137,6 +143,7 @@ __all__ = ["RCAJobManager"]
 
 
 # ----------------------------- 恢复逻辑（应用启动时调用） ----------------------------- #
+
 
 def _parse_params(params_json: Optional[str]) -> Dict[str, Any]:
     try:

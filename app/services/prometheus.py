@@ -178,7 +178,12 @@ class PrometheusService:
 
             return None
 
-        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout, requests.exceptions.Timeout):
+        except (
+            httpx.ReadTimeout,
+            httpx.ConnectTimeout,
+            httpx.PoolTimeout,
+            requests.exceptions.Timeout,
+        ):
             logger.error(f"Prometheus查询超时: {query}")
             return None
         except (httpx.HTTPError, requests.exceptions.RequestException) as e:
@@ -212,7 +217,12 @@ class PrometheusService:
 
             return data["data"]["result"]
 
-        except (httpx.HTTPError, httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as e:
+        except (
+            httpx.HTTPError,
+            httpx.ReadTimeout,
+            httpx.ConnectTimeout,
+            httpx.PoolTimeout,
+        ) as e:
             logger.error(f"Prometheus即时查询失败: {str(e)}")
             return None
         except Exception as e:
@@ -235,7 +245,12 @@ class PrometheusService:
 
             return []
 
-        except (httpx.HTTPError, httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as e:
+        except (
+            httpx.HTTPError,
+            httpx.ReadTimeout,
+            httpx.ConnectTimeout,
+            httpx.PoolTimeout,
+        ) as e:
             logger.error(f"获取可用指标失败: {str(e)}")
             return []
         except Exception as e:

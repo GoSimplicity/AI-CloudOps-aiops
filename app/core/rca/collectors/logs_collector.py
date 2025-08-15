@@ -40,11 +40,15 @@ class LogsCollector:
         results: List[Dict[str, Any]] = []
 
         try:
-            deployments = await self._svc.get_deployments_async(namespace=self.namespace)
+            deployments = await self._svc.get_deployments_async(
+                namespace=self.namespace
+            )
         except Exception:
             deployments = []
 
-        def _build_label_selector(match_labels: Optional[Dict[str, str]]) -> Optional[str]:
+        def _build_label_selector(
+            match_labels: Optional[Dict[str, str]],
+        ) -> Optional[str]:
             if not match_labels:
                 return None
             parts = []
@@ -62,11 +66,15 @@ class LogsCollector:
             re.IGNORECASE,
         )
 
-        async def _filter_logs_entry(entry: Dict[str, Any], deployment_name: Optional[str] = None) -> Dict[str, Any]:
+        async def _filter_logs_entry(
+            entry: Dict[str, Any], deployment_name: Optional[str] = None
+        ) -> Dict[str, Any]:
             def _filter_text(text: Optional[str]) -> str:
                 if not text:
                     return ""
-                lines = [ln for ln in str(text).splitlines() if severity_pattern.search(ln)]
+                lines = [
+                    ln for ln in str(text).splitlines() if severity_pattern.search(ln)
+                ]
                 # 再次裁剪，避免过多输出
                 return "\n".join(lines[:tail_lines])
 
@@ -96,7 +104,11 @@ class LogsCollector:
                     include_previous=include_prev,
                 )
                 for e in entries:
-                    results.append(await _filter_logs_entry(e, deployment_name=(d.get("metadata") or {}).get("name")))
+                    results.append(
+                        await _filter_logs_entry(
+                            e, deployment_name=(d.get("metadata") or {}).get("name")
+                        )
+                    )
                 remaining = max(0, remaining - len(entries))
             except Exception:
                 continue

@@ -5,4 +5,3 @@
 from .job_manager import RCAJobManager
 
 __all__ = ["RCAJobManager"]
-

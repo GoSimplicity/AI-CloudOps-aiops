@@ -313,8 +313,6 @@ class PredictionRecordListReq(PaginationReq):
     prediction_type: Optional[str] = None
 
 
-
-
 class RCARecordListReq(PaginationReq):
     namespace: Optional[str] = None
     status: Optional[str] = None
@@ -471,13 +469,14 @@ class AutoRCACorrelationReq(BaseModel):
             # 优先JSON
             try:
                 import json as _json
+
                 loaded = _json.loads(text)
                 if isinstance(loaded, list):
                     return loaded
             except Exception:
                 pass
             # 回退逗号分割
-            return [p.strip().strip('\"\'') for p in text.split(',') if p.strip()]
+            return [p.strip().strip("\"'") for p in text.split(",") if p.strip()]
         return v
 
 

@@ -45,9 +45,7 @@ async def lifespan(app: FastAPI):
                 max_age_seconds=int(config.rca.recover_stale_seconds),
                 max_jobs=int(config.rca.recover_max_jobs),
             )
-            logger.info(
-                f"RCA 启动恢复完成：处理={processed}，重投={requeued}"
-            )
+            logger.info(f"RCA 启动恢复完成：处理={processed}，重投={requeued}")
     except Exception as e:
         logger.warning(f"RCA 启动恢复执行失败（忽略）：{e}")
 

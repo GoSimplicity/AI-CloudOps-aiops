@@ -44,15 +44,15 @@ class CorrelationAnalyzer:
 
             # 控制相关性计算的最大列数，避免 O(n^2) 过大
             try:
-                max_cols = int(getattr(config.rca, "correlation_max_columns", 150) or 150)
+                max_cols = int(
+                    getattr(config.rca, "correlation_max_columns", 150) or 150
+                )
             except Exception:
                 max_cols = 150
             if len(combined_df.columns) > max_cols:
                 limited_cols = list(combined_df.columns)[:max_cols]
                 combined_df = combined_df[limited_cols]
-                logger.warning(
-                    f"相关性分析列数过多，已限制为前 {max_cols} 列以降低CPU"
-                )
+                logger.warning(f"相关性分析列数过多，已限制为前 {max_cols} 列以降低CPU")
             logger.info(f"准备了 {len(combined_df.columns)} 个指标进行相关性分析")
 
             # 计算相关性矩阵
@@ -92,12 +92,20 @@ class CorrelationAnalyzer:
             combined_df = self._prepare_correlation_data(metrics_data)
             # 限制列数
             try:
-                max_cols = int(getattr(config.rca, "correlation_max_columns", 150) or 150)
+                max_cols = int(
+                    getattr(config.rca, "correlation_max_columns", 150) or 150
+                )
             except Exception:
                 max_cols = 150
             if len(combined_df.columns) > max_cols:
                 combined_df = combined_df[list(combined_df.columns)[:max_cols]]
             metrics = list(combined_df.columns)
+            # 使用独立阈值以区分零时滞与跨时滞的判定标准
+            try:
+                from app.config.settings import config as _config
+                _cross_thr = float(getattr(_config.rca, "cross_lag_threshold", self.correlation_threshold) or self.correlation_threshold)
+            except Exception:
+                _cross_thr = self.correlation_threshold
             for i, m1 in enumerate(metrics):
                 values_for_m1: List[Tuple[str, int, float]] = []
                 for j, m2 in enumerate(metrics):
@@ -109,15 +117,53 @@ class CorrelationAnalyzer:
                     if cc:
                         best_lag = max(cc.keys(), key=lambda k: abs(cc[k]))
                         best_corr = float(cc[best_lag])
-                        if abs(best_corr) >= self.correlation_threshold:
-                            values_for_m1.append((m2, int(best_lag), round(best_corr, 3)))
+                        if abs(best_corr) >= float(_cross_thr):
+                            values_for_m1.append(
+                                (m2, int(best_lag), round(best_corr, 3))
+                            )
                 if values_for_m1:
                     values_for_m1.sort(key=lambda x: abs(x[2]), reverse=True)
                     try:
-                        max_pairs = int(getattr(config.rca, "cross_lag_max_pairs_per_metric", 3) or 3)
+                        max_pairs = int(
+                            getattr(config.rca, "cross_lag_max_pairs_per_metric", 3)
+                            or 3
+                        )
                     except Exception:
                         max_pairs = 3
                     cross[m1] = values_for_m1[: max(1, max_pairs)]
+            # fallback：若原始序列未产生任何跨时滞结果，回退到“基础指标聚合视图”再尝试一次
+            if not cross:
+                try:
+                    df_view = self._aggregate_views(metrics_data, group_by=None, group_value=None)
+                except Exception:
+                    df_view = pd.DataFrame()
+                if not df_view.empty and len(df_view.columns) > 1:
+                    metrics2 = list(df_view.columns)
+                    for i, x in enumerate(metrics2):
+                        xs: List[Tuple[str, int, float]] = []
+                        for j, y in enumerate(metrics2):
+                            if i == j:
+                                continue
+                            cc2 = await self.calculate_cross_correlation(
+                                df_view[x], df_view[y], max_lags=max_lags
+                            )
+                            if cc2:
+                                best_lag2 = max(cc2.keys(), key=lambda k: abs(cc2[k]))
+                                best_corr2 = float(cc2[best_lag2])
+                                if abs(best_corr2) >= float(_cross_thr):
+                                    xs.append((y, int(best_lag2), round(best_corr2, 3)))
+                        if xs:
+                            try:
+                                max_pairs2 = int(
+                                    getattr(
+                                        config.rca, "cross_lag_max_pairs_per_metric", 3
+                                    )
+                                    or 3
+                                )
+                            except Exception:
+                                max_pairs2 = 3
+                            xs.sort(key=lambda t: abs(t[2]), reverse=True)
+                            cross[x] = xs[: max(1, max_pairs2)]
         except Exception as e:
             logger.error(f"跨时滞相关分析失败: {str(e)}")
             cross = {}
@@ -152,7 +198,11 @@ class CorrelationAnalyzer:
         per_metric_series: Dict[str, List[pd.Series]] = {}
 
         for series_name, df in (metrics_data or {}).items():
-            if not isinstance(df, pd.DataFrame) or df.empty or "value" not in df.columns:
+            if (
+                not isinstance(df, pd.DataFrame)
+                or df.empty
+                or "value" not in df.columns
+            ):
                 continue
             base_name = str(series_name).split("|")[0]
 
@@ -209,7 +259,22 @@ class CorrelationAnalyzer:
                 if len(parts) == 1:
                     aggregated = parts[0]
                 else:
-                    aggregated = pd.concat(parts, axis=1).mean(axis=1, skipna=True)
+                    # 对疑似二值/指示器序列使用按行求和（代表“数量”），否则按均值合并
+                    stack_df = pd.concat(parts, axis=1)
+                    try:
+                        binary_like_cols = 0
+                        for c in stack_df.columns:
+                            vals = pd.to_numeric(stack_df[c], errors="coerce").dropna()
+                            unique_vals = set(pd.Series(vals).unique().tolist())
+                            if unique_vals.issubset({0, 1}):
+                                binary_like_cols += 1
+                        ratio = binary_like_cols / max(1, len(stack_df.columns))
+                        if ratio >= 0.8:
+                            aggregated = stack_df.sum(axis=1, skipna=True)
+                        else:
+                            aggregated = stack_df.mean(axis=1, skipna=True)
+                    except Exception:
+                        aggregated = stack_df.mean(axis=1, skipna=True)
                 # 清理：全空则丢弃
                 if aggregated.isna().all():
                     continue
@@ -343,20 +408,53 @@ class CorrelationAnalyzer:
 
             combined_df = pd.concat(series_list, axis=1, join="outer")
 
-            if not combined_df.empty and isinstance(combined_df.index, pd.DatetimeIndex):
+            if not combined_df.empty and isinstance(
+                combined_df.index, pd.DatetimeIndex
+            ):
                 combined_df = combined_df.resample("1min").mean()
 
             # 将疑似计数器型指标转换为每分钟增量（近似 rate），提升相关性可解释性
             try:
+
                 def _is_counter(col_name: str) -> bool:
                     base = str(col_name).split("|")[0]
-                    return base.endswith("_total") or base.endswith("_count") or base.endswith("_seconds_total")
+                    return (
+                        base.endswith("_total")
+                        or base.endswith("_count")
+                        or base.endswith("_seconds_total")
+                    )
 
                 for col in list(combined_df.columns):
                     if _is_counter(col):
                         numeric = pd.to_numeric(combined_df[col], errors="coerce")
                         diff_vals = numeric.diff().clip(lower=0.0)
                         combined_df[col] = diff_vals
+            except Exception:
+                pass
+
+            # 尝试拯救“二值/阶跃”类序列：若整体方差≈0，但取值类型很少（≤3），
+            # 则改用变化脉冲（绝对一阶差分），用于相关性与交叉相关性。
+            try:
+                for col in list(combined_df.columns):
+                    numeric = pd.to_numeric(combined_df[col], errors="coerce")
+                    try:
+                        variance_val = float(numeric.var())
+                    except Exception:
+                        variance_val = 0.0
+                    if variance_val <= 1e-12:
+                        try:
+                            unique_count = int(pd.Series(numeric).nunique(dropna=True))
+                        except Exception:
+                            unique_count = 0
+                        if unique_count <= 3:
+                            changes = numeric.diff().abs()
+                            # 仅在确有变化时启用脉冲表示，避免仍为全零
+                            try:
+                                has_change = float(changes.fillna(0.0).sum()) > 0.0
+                            except Exception:
+                                has_change = False
+                            if has_change:
+                                combined_df[col] = changes.fillna(0.0)
             except Exception:
                 pass
 
@@ -405,7 +503,9 @@ class CorrelationAnalyzer:
                 for other_metric in correlation_matrix.columns:
                     if metric != other_metric:
                         corr_value = correlation_matrix.loc[metric, other_metric]
-                        if abs(corr_value) >= self.correlation_threshold and not np.isnan(corr_value):
+                        if abs(
+                            corr_value
+                        ) >= self.correlation_threshold and not np.isnan(corr_value):
                             correlations.append((other_metric, round(corr_value, 3)))
                 if correlations:
                     correlations.sort(key=lambda x: abs(x[1]), reverse=True)
@@ -442,7 +542,8 @@ class CorrelationAnalyzer:
 
                     if len(s1) > 3 and len(s2) > 3 and len(s1) == len(s2):
                         corr, p_value = pearsonr(s1, s2)
-                        if not np.isnan(corr) and p_value < 0.05:
+                        # 放宽显著性阈值，以提升稀疏事件脉冲序列的召回
+                        if not np.isnan(corr) and p_value < 0.1:
                             cross_correlations[lag] = round(corr, 3)
                 except Exception:
                     continue
@@ -494,7 +595,9 @@ class CorrelationAnalyzer:
                         {"target": current_target, "predictor": lagged_predictor}
                     ).dropna()
                     if len(valid_data) > 10:
-                        corr, p_value = pearsonr(valid_data["target"], valid_data["predictor"])
+                        corr, p_value = pearsonr(
+                            valid_data["target"], valid_data["predictor"]
+                        )
                         if abs(corr) > 0.3 and p_value < 0.05:
                             significant_lags += 1
             return significant_lags >= 2
@@ -515,13 +618,17 @@ class CorrelationAnalyzer:
                 partial_correlations[metric1] = {}
                 for j, metric2 in enumerate(metrics):
                     if i != j:
-                        control_vars = [m for m in metrics if m != metric1 and m != metric2]
+                        control_vars = [
+                            m for m in metrics if m != metric1 and m != metric2
+                        ]
                         if control_vars:
                             partial_corr = self._calculate_partial_correlation(
                                 combined_df, metric1, metric2, control_vars
                             )
                             if not np.isnan(partial_corr) and abs(partial_corr) > 0.3:
-                                partial_correlations[metric1][metric2] = round(partial_corr, 3)
+                                partial_correlations[metric1][metric2] = round(
+                                    partial_corr, 3
+                                )
             return partial_correlations
         except Exception as e:
             logger.error(f"计算偏相关系数失败: {str(e)}")
@@ -533,6 +640,7 @@ class CorrelationAnalyzer:
         """计算偏相关系数"""
         try:
             from sklearn.linear_model import LinearRegression
+
             clean_df = df[[var1, var2] + control_vars].dropna()
             if len(clean_df) < 10:
                 return np.nan
@@ -569,9 +677,7 @@ class Correlator:
     async def calculate_cross_correlation(
         self, series1: pd.Series, series2: pd.Series, max_lags: int = 10
     ) -> Dict[int, float]:
-        return await self._impl.calculate_cross_correlation(
-            series1, series2, max_lags
-        )
+        return await self._impl.calculate_cross_correlation(series1, series2, max_lags)
 
     async def detect_causal_relationships(
         self, metrics_data: Dict[str, pd.DataFrame], max_lag: int = 5
@@ -593,5 +699,8 @@ class Correlator:
         thresholds: Optional[List[float]] = None,
     ) -> Dict[str, List[Tuple[str, float]]]:
         return self._impl.analyze_target_with_views(
-            metrics_data, target_metric=target_metric, namespace=namespace, thresholds=thresholds
+            metrics_data,
+            target_metric=target_metric,
+            namespace=namespace,
+            thresholds=thresholds,
         )

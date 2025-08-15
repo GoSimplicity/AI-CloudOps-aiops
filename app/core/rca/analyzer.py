@@ -75,7 +75,9 @@ class RCAAnalyzer:
                     if not text:
                         return []
                     if "," in text:
-                        return [p.strip().strip("'\"") for p in text.split(",") if p.strip()]
+                        return [
+                            p.strip().strip("'\"") for p in text.split(",") if p.strip()
+                        ]
                     return [text]
                 except Exception:
                     return []
@@ -83,13 +85,17 @@ class RCAAnalyzer:
             input_metrics = _ensure_metric_list(metrics)
             default_metrics = _ensure_metric_list(config.rca.default_metrics)
             # 合并去重并保持顺序
-            metrics = list(dict.fromkeys(input_metrics + default_metrics)) or default_metrics
+            metrics = (
+                list(dict.fromkeys(input_metrics + default_metrics)) or default_metrics
+            )
 
             # 解析可选采集开关
             ns = namespace or config.k8s.namespace
             # 明确请求优先：include_logs 显式 True 时启用日志采集；否则跟随全局
-            should_collect_logs = bool(include_logs) if include_logs is not None else bool(
-                getattr(config, "logs", None) and config.logs.enabled
+            should_collect_logs = (
+                bool(include_logs)
+                if include_logs is not None
+                else bool(getattr(config, "logs", None) and config.logs.enabled)
             )
             # Trace 暂不启用，但保持逻辑完整
             should_collect_traces = (
@@ -124,11 +130,16 @@ class RCAAnalyzer:
             try:
                 if bool(getattr(config.rca, "enable_cross_lag_in_analyze", False)):
                     max_lags = int(getattr(config.rca, "cross_lag_max_lags", 5) or 5)
-                    lag_result = await self.correlator.analyze_correlations_with_cross_lag(
-                        metrics_data, max_lags=max(1, min(20, max_lags))
+                    lag_result = (
+                        await self.correlator.analyze_correlations_with_cross_lag(
+                            metrics_data, max_lags=max(1, min(20, max_lags))
+                        )
                     )
                 else:
-                    lag_result = {"correlations": correlations, "cross_correlations": {}}
+                    lag_result = {
+                        "correlations": correlations,
+                        "cross_correlations": {},
+                    }
             except Exception:
                 lag_result = {"correlations": correlations, "cross_correlations": {}}
             logger.info(f"分析了 {len(correlations)} 个指标的相关性")
@@ -172,7 +183,13 @@ class RCAAnalyzer:
                         first_ts = ev.get("firstTimestamp")
                         last_ts = ev.get("lastTimestamp")
                         # 仅统计 Warning 级别及常见异常信号
-                        if ev_type == "warning" or reason in {"unhealthy", "backoff", "failedcreate", "failedscheduling", "crashloopbackoff"}:
+                        if ev_type == "warning" or reason in {
+                            "unhealthy",
+                            "backoff",
+                            "failedcreate",
+                            "failedscheduling",
+                            "crashloopbackoff",
+                        }:
                             # 统一映射为稳定的“指标名”
                             if "backoff" in reason or "crash" in reason:
                                 key = "pod_restart_backoff"
@@ -286,7 +303,13 @@ class RCAAnalyzer:
                 "traces": context_traces[:20] if context_traces else [],
                 "evidence": rule_evidence,
                 "timeline": await self.generate_timeline(
-                    start_time, end_time, context_events
+                    start_time,
+                    end_time,
+                    context_events,
+                    anomalies=anomalies,
+                    correlations=correlations,
+                    cross_correlations=lag_result.get("cross_correlations", {}),
+                    logs=context_logs,
                 ),
                 "impact_scope": [],
                 "suggestions": self._generate_suggestions_from_causes(root_causes),
@@ -347,9 +370,7 @@ class RCAAnalyzer:
         # 若按命名空间无数据，回退为全局范围再试一次，避免直接返回空结果
         if not metrics_data and namespace:
             try:
-                logger.warning(
-                    f"命名空间 {namespace} 无数据，回退为全局相关性分析"
-                )
+                logger.warning(f"命名空间 {namespace} 无数据，回退为全局相关性分析")
                 metrics_data = await self._collect_metrics_data(
                     start_time, end_time, metrics, namespace=None
                 )
@@ -361,16 +382,26 @@ class RCAAnalyzer:
         try:
             if target_metric:
                 from app.core.rca.correlator import Correlator as _Correlator
-                view_corr = _Correlator(config.rca.correlation_threshold).analyze_target_with_views(
-                    metrics_data, target_metric=target_metric, namespace=namespace, thresholds=[
+
+                view_corr = _Correlator(
+                    config.rca.correlation_threshold
+                ).analyze_target_with_views(
+                    metrics_data,
+                    target_metric=target_metric,
+                    namespace=namespace,
+                    thresholds=[
                         float(getattr(config.rca, "correlation_threshold", 0.7) or 0.7),
                         0.5,
                         0.3,
                         0.0,
-                    ]
+                    ],
                 )
                 # 若有结果，直接返回；否则回退到原算法
-                if view_corr and list(view_corr.values()) and list(view_corr.values())[0]:
+                if (
+                    view_corr
+                    and list(view_corr.values())
+                    and list(view_corr.values())[0]
+                ):
                     return view_corr
         except Exception:
             pass
@@ -394,31 +425,46 @@ class RCAAnalyzer:
                         try:
                             # 放宽阈值（例如 0.5），以避免过严导致完全空结果
                             relaxed_threshold = min(
-                                float(getattr(config.rca, "correlation_threshold", 0.7) or 0.7), 0.5
+                                float(
+                                    getattr(config.rca, "correlation_threshold", 0.7)
+                                    or 0.7
+                                ),
+                                0.5,
                             )
                         except Exception:
                             relaxed_threshold = 0.5
                         from app.core.rca.correlator import CorrelationAnalyzer as _CA
+
                         ca_relaxed = _CA(relaxed_threshold)
-                        all_corr_relaxed = await ca_relaxed.analyze_correlations(metrics_data_global)
+                        all_corr_relaxed = await ca_relaxed.analyze_correlations(
+                            metrics_data_global
+                        )
                         target_keys_relaxed = [
                             key
                             for key in all_corr_relaxed.keys()
-                            if key == target_metric or key.startswith(f"{target_metric}|")
+                            if key == target_metric
+                            or key.startswith(f"{target_metric}|")
                         ]
                         if target_keys_relaxed:
                             aggregated_relaxed: Dict[str, float] = {}
                             for tkey in target_keys_relaxed:
-                                for (other_name, corr_val) in all_corr_relaxed.get(tkey, []) or []:
+                                for other_name, corr_val in (
+                                    all_corr_relaxed.get(tkey, []) or []
+                                ):
                                     base_other = other_name.split("|")[0]
                                     prev = aggregated_relaxed.get(base_other)
                                     if prev is None or abs(corr_val) > abs(prev):
                                         aggregated_relaxed[base_other] = float(corr_val)
                             filtered_relaxed = {
-                                name: val for name, val in aggregated_relaxed.items() if name != target_metric
+                                name: val
+                                for name, val in aggregated_relaxed.items()
+                                if name != target_metric
                             }
                             aggregated_list_relaxed = sorted(
-                                [(name, round(val, 3)) for name, val in filtered_relaxed.items()],
+                                [
+                                    (name, round(val, 3))
+                                    for name, val in filtered_relaxed.items()
+                                ],
                                 key=lambda x: abs(x[1]),
                                 reverse=True,
                             )
@@ -432,7 +478,7 @@ class RCAAnalyzer:
                 return {target_metric: []}
             aggregated: Dict[str, float] = {}
             for tkey in target_keys:
-                for (other_name, corr_val) in all_corr.get(tkey, []) or []:
+                for other_name, corr_val in all_corr.get(tkey, []) or []:
                     base_other = other_name.split("|")[0]
                     prev = aggregated.get(base_other)
                     # 取绝对值更大的相关性（保留符号）
@@ -457,30 +503,45 @@ class RCAAnalyzer:
                     if metrics_data_global:
                         try:
                             relaxed_threshold = min(
-                                float(getattr(config.rca, "correlation_threshold", 0.7) or 0.7), 0.5
+                                float(
+                                    getattr(config.rca, "correlation_threshold", 0.7)
+                                    or 0.7
+                                ),
+                                0.5,
                             )
                         except Exception:
                             relaxed_threshold = 0.5
                         from app.core.rca.correlator import CorrelationAnalyzer as _CA
+
                         ca_relaxed = _CA(relaxed_threshold)
-                        all_corr_relaxed = await ca_relaxed.analyze_correlations(metrics_data_global)
+                        all_corr_relaxed = await ca_relaxed.analyze_correlations(
+                            metrics_data_global
+                        )
                         target_keys_relaxed = [
                             key
                             for key in all_corr_relaxed.keys()
-                            if key == target_metric or key.startswith(f"{target_metric}|")
+                            if key == target_metric
+                            or key.startswith(f"{target_metric}|")
                         ]
                         aggregated_relaxed: Dict[str, float] = {}
                         for tkey in target_keys_relaxed:
-                            for (other_name, corr_val) in all_corr_relaxed.get(tkey, []) or []:
+                            for other_name, corr_val in (
+                                all_corr_relaxed.get(tkey, []) or []
+                            ):
                                 base_other = other_name.split("|")[0]
                                 prev = aggregated_relaxed.get(base_other)
                                 if prev is None or abs(corr_val) > abs(prev):
                                     aggregated_relaxed[base_other] = float(corr_val)
                         filtered_relaxed = {
-                            name: val for name, val in aggregated_relaxed.items() if name != target_metric
+                            name: val
+                            for name, val in aggregated_relaxed.items()
+                            if name != target_metric
                         }
                         aggregated_list_relaxed = sorted(
-                            [(name, round(val, 3)) for name, val in filtered_relaxed.items()],
+                            [
+                                (name, round(val, 3))
+                                for name, val in filtered_relaxed.items()
+                            ],
                             key=lambda x: abs(x[1]),
                             reverse=True,
                         )
@@ -492,24 +553,34 @@ class RCAAnalyzer:
                         # 仍为空：最终兜底，阈值降为 0 返回 TOP5，避免空结果
                         try:
                             ca_zero = _CA(0.0)
-                            all_corr_zero = await ca_zero.analyze_correlations(metrics_data_global)
+                            all_corr_zero = await ca_zero.analyze_correlations(
+                                metrics_data_global
+                            )
                             target_keys_zero = [
                                 key
                                 for key in all_corr_zero.keys()
-                                if key == target_metric or key.startswith(f"{target_metric}|")
+                                if key == target_metric
+                                or key.startswith(f"{target_metric}|")
                             ]
                             aggregated_zero: Dict[str, float] = {}
                             for tkey in target_keys_zero:
-                                for (other_name, corr_val) in all_corr_zero.get(tkey, []) or []:
+                                for other_name, corr_val in (
+                                    all_corr_zero.get(tkey, []) or []
+                                ):
                                     base_other = other_name.split("|")[0]
                                     prev = aggregated_zero.get(base_other)
                                     if prev is None or abs(corr_val) > abs(prev):
                                         aggregated_zero[base_other] = float(corr_val)
                             filtered_zero = {
-                                name: val for name, val in aggregated_zero.items() if name != target_metric
+                                name: val
+                                for name, val in aggregated_zero.items()
+                                if name != target_metric
                             }
                             aggregated_list_zero = sorted(
-                                [(name, round(val, 3)) for name, val in filtered_zero.items()],
+                                [
+                                    (name, round(val, 3))
+                                    for name, val in filtered_zero.items()
+                                ],
                                 key=lambda x: abs(x[1]),
                                 reverse=True,
                             )
@@ -530,6 +601,11 @@ class RCAAnalyzer:
         start_time: datetime,
         end_time: datetime,
         events: Optional[List[Dict]] = None,
+        *,
+        anomalies: Optional[Dict] = None,
+        correlations: Optional[Dict] = None,
+        cross_correlations: Optional[Dict] = None,
+        logs: Optional[List[Dict]] = None,
     ) -> List[Dict]:
         """生成时间线"""
         timeline: List[Dict] = []
@@ -541,23 +617,140 @@ class RCAAnalyzer:
                     "message": "分析开始",
                 }
             )
+            # 异常点：按首次/末次出现生成事件
+            if anomalies:
+                try:
+                    max_items = 30
+                    count = 0
+                    for metric, info in (anomalies or {}).items():
+                        if count >= max_items:
+                            break
+                        first_ts = info.get("first_occurrence")
+                        last_ts = info.get("last_occurrence")
+                        max_score = float(info.get("max_score") or 0.0)
+                        severity = (
+                            "high" if max_score > 0.8 else "medium" if max_score > 0.6 else "low"
+                        )
+                        if first_ts:
+                            timeline.append(
+                                {
+                                    "timestamp": str(first_ts),
+                                    "type": "anomaly_start",
+                                    "message": f"{metric} 异常开始 (severity={severity})",
+                                }
+                            )
+                        if last_ts and last_ts != first_ts:
+                            timeline.append(
+                                {
+                                    "timestamp": str(last_ts),
+                                    "type": "anomaly_end",
+                                    "message": f"{metric} 异常结束",
+                                }
+                            )
+                        count += 1
+                except Exception:
+                    pass
             if events:
-                for e in events[:50]:
-                    ts = e.get("firstTimestamp") or e.get("lastTimestamp")
+                # 限制事件数量；优先按时间排序，让时间线更直观
+                try:
+                    def _event_ts(ev):
+                        ts = ev.get("firstTimestamp") or ev.get("lastTimestamp")
+                        return str(ts) if ts else ""
+                    events_sorted = sorted(events, key=_event_ts)[:200]
+                except Exception:
+                    events_sorted = events[:200]
+                for e in events_sorted:
+                    ts_raw = e.get("firstTimestamp") or e.get("lastTimestamp")
+                    try:
+                        ts_val = str(ts_raw) if ts_raw else None
+                    except Exception:
+                        ts_val = None
+                    # 文本优先级：reason > message > name@reason
+                    msg_raw = e.get("reason") or e.get("message") or (
+                        f"{e.get('name')}@{e.get('reason')}" if (e.get('name') and e.get('reason')) else None
+                    )
+                    try:
+                        msg_text = str(msg_raw).strip() if msg_raw is not None else None
+                        msg_val = msg_text if msg_text else None
+                    except Exception:
+                        msg_val = None
+                    # 避免空项：若时间戳与消息同时为空则跳过
+                    if ts_val is None and msg_val is None:
+                        continue
+                    # 规范化事件类型标签
+                    ev_type = str(e.get("type") or "event").lower()
+                    reason = str(e.get("reason") or "").lower()
+                    kind = "event"
+                    if "unhealthy" in reason or "probe" in reason:
+                        kind = "probe_unhealthy"
+                    elif "backoff" in reason or "crash" in reason:
+                        kind = "pod_restart"
+                    elif "failedscheduling" in reason:
+                        kind = "scheduling_failed"
+                    elif "failedcreate" in reason:
+                        kind = "workload_failedcreate"
+                    elif ev_type in {"warning", "error"}:
+                        kind = ev_type
                     timeline.append(
                         {
-                            "timestamp": str(ts) if ts else None,
-                            "type": "event",
-                            "message": e.get("reason") or e.get("message"),
+                            "timestamp": ts_val,
+                            "type": kind,
+                            "message": msg_val,
                         }
                     )
-            timeline.append(
-                {
-                    "timestamp": end_time.isoformat(),
-                    "type": "end",
-                    "message": "分析结束",
-                }
-            )
+            # 相关性摘要：在起始后1秒加入概览信息
+            try:
+                from datetime import timedelta as _td
+                summary_parts: List[str] = []
+                if correlations:
+                    try:
+                        corr_pairs = sum(len(v or []) for v in correlations.values())
+                    except Exception:
+                        corr_pairs = 0
+                    summary_parts.append(f"相关性对={corr_pairs}")
+                if cross_correlations:
+                    try:
+                        cc_pairs = sum(len(v or []) for v in cross_correlations.values())
+                    except Exception:
+                        cc_pairs = 0
+                    summary_parts.append(f"跨时滞对={cc_pairs}")
+                if logs:
+                    try:
+                        summary_parts.append(f"日志条目={len(logs)}")
+                    except Exception:
+                        pass
+                if summary_parts:
+                    ts_sum = (start_time + _td(seconds=1)).isoformat()
+                    timeline.append(
+                        {
+                            "timestamp": ts_sum,
+                            "type": "summary",
+                            "message": ", ".join(summary_parts),
+                        }
+                    )
+            except Exception:
+                pass
+            # 若结尾与最后一条事件时间一致，避免重复/冗余
+            try:
+                last_ts = None
+                if timeline:
+                    last_ts = timeline[-1].get("timestamp")
+                if not last_ts or str(last_ts) != end_time.isoformat():
+                    timeline.append(
+                        {
+                            "timestamp": end_time.isoformat(),
+                            "type": "end",
+                            "message": "分析结束",
+                        }
+                    )
+            except Exception:
+                timeline.append(
+                    {
+                        "timestamp": end_time.isoformat(),
+                        "type": "end",
+                        "message": "分析结束",
+                    }
+                )
         except Exception:
             pass
         return timeline
@@ -590,7 +783,10 @@ class RCAAnalyzer:
 
         # Prometheus 可用性快速预检，避免在不可达时大量并发请求导致阻塞
         try:
-            if not self.prometheus.is_healthy() and not self.prometheus.check_connectivity():
+            if (
+                not self.prometheus.is_healthy()
+                and not self.prometheus.check_connectivity()
+            ):
                 logger.warning("Prometheus不可用，跳过指标采集并返回空结果")
                 return {}
         except Exception:
@@ -600,11 +796,32 @@ class RCAAnalyzer:
 
         # 限制并发，防止Prometheus或本服务过载（由配置控制）
         try:
-            configured_concurrency = int(getattr(config.rca, "metrics_fetch_concurrency", 4) or 4)
+            configured_concurrency = int(
+                getattr(config.rca, "metrics_fetch_concurrency", 4) or 4
+            )
         except Exception:
             configured_concurrency = 4
         concurrency_limit = max(1, min(16, configured_concurrency))
         sem = asyncio.Semaphore(concurrency_limit)
+
+        def _derive_promql(metric_name: str) -> str:
+            """针对事件/状态类基础指标派生更适合相关性的查询。
+
+            - *_created -> increase(metric[Wm])
+            - *_info / *_status_* -> changes(metric[Wm])
+            其它保持原样。
+            """
+            try:
+                base = str(metric_name).strip()
+                win = max(1, int(getattr(config.rca, "event_derivation_window_minutes", 5) or 5))
+                window = f"[{win}m]"
+                if base.endswith("_created"):
+                    return f"increase({base}{window})"
+                if base.endswith("_info") or "_status_" in base:
+                    return f"changes({base}{window})"
+                return base
+            except Exception:
+                return str(metric_name)
 
         async def fetch_one(metric: str) -> None:
             try:
@@ -612,12 +829,15 @@ class RCAAnalyzer:
                     logger.debug(f"查询指标: {metric}")
                     # 采样步长由配置控制
                     try:
-                        step_minutes = int(getattr(config.rca, "metrics_step_minutes", 1) or 1)
+                        step_minutes = int(
+                            getattr(config.rca, "metrics_step_minutes", 1) or 1
+                        )
                     except Exception:
                         step_minutes = 1
                     step_str = f"{max(1, step_minutes)}m"
+                    query_text = _derive_promql(metric)
                     data = await self.prometheus.query_range_async(
-                        metric, start_time, end_time, step_str
+                        query_text, start_time, end_time, step_str
                     )
                 if data is not None and not data.empty and len(data) > 0:
                     nonlocal namespace
@@ -639,18 +859,24 @@ class RCAAnalyzer:
                     if label_columns:
                         # 控制每个基础指标的最大序列数
                         try:
-                            max_series = int(getattr(config.rca, "max_series_per_metric", 10) or 10)
+                            max_series = int(
+                                getattr(config.rca, "max_series_per_metric", 10) or 10
+                            )
                         except Exception:
                             max_series = 10
                         series_count = 0
-                        for labels_key, group in data.groupby(label_columns, dropna=False):
+                        for labels_key, group in data.groupby(
+                            label_columns, dropna=False
+                        ):
                             if len(group) > 0:
                                 if series_count >= max(1, max_series):
                                     continue
                                 if not isinstance(labels_key, tuple):
                                     labels_key = (labels_key,)
                                 parts = []
-                                for col_name, col_value in zip(label_columns, labels_key):
+                                for col_name, col_value in zip(
+                                    label_columns, labels_key
+                                ):
                                     label_name = col_name.replace("label_", "")
                                     if pd.notna(col_value) and str(col_value).strip():
                                         parts.append(f"{label_name}:{col_value}")
@@ -675,13 +901,17 @@ class RCAAnalyzer:
             limited_keys = list(metrics_data.keys())[:max_total_series]
             metrics_data = {k: metrics_data[k] for k in limited_keys}
 
-        metrics_data = {k: v for k, v in metrics_data.items() if not v.empty and len(v) > 0}
+        metrics_data = {
+            k: v for k, v in metrics_data.items() if not v.empty and len(v) > 0
+        }
         # 记录实际使用的采样步长
         try:
             _step_minutes_log = int(getattr(config.rca, "metrics_step_minutes", 1) or 1)
         except Exception:
             _step_minutes_log = 1
-        logger.info(f"成功收集 {len(metrics_data)} 个时间序列 (并发={concurrency_limit}, step={_step_minutes_log}m)")
+        logger.info(
+            f"成功收集 {len(metrics_data)} 个时间序列 (并发={concurrency_limit}, step={_step_minutes_log}m)"
+        )
         return metrics_data
 
     def _generate_root_cause_candidates(
@@ -777,18 +1007,19 @@ class RCAAnalyzer:
                 if anomalies:
                     try:
                         total_types = len(anomalies)
-                        total_events = sum(int(v.get("count", 0)) for v in anomalies.values())
+                        total_events = sum(
+                            int(v.get("count", 0)) for v in anomalies.values()
+                        )
                         # 选取前3个最频繁的异常类型
                         top_items = sorted(
-                            anomalies.items(), key=lambda kv: int(kv[1].get("count", 0)), reverse=True
+                            anomalies.items(),
+                            key=lambda kv: int(kv[1].get("count", 0)),
+                            reverse=True,
                         )[:3]
                         top_desc = ", ".join(
-                            f"{k}×{int(v.get('count', 0))}"
-                            for k, v in top_items
+                            f"{k}×{int(v.get('count', 0))}" for k, v in top_items
                         )
-                        return (
-                            f"检测到 {total_types} 类异常，共 {total_events} 次；主要包括：{top_desc}。"
-                        )
+                        return f"检测到 {total_types} 类异常，共 {total_events} 次；主要包括：{top_desc}。"
                     except Exception:
                         return "检测到异常，但无法生成详细摘要。"
                 # 无候选且无异常

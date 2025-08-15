@@ -26,6 +26,7 @@ from app.db.models import (
     RCACorrelationRecord,
     RCASimpleCorrelationRecord,
 )
+from app.core.rca.collectors.k8s_events_collector import K8sEventsCollector
 
 from .huey_app import rca_huey
 
@@ -66,9 +67,7 @@ def _update_job_status(
     """
     try:
         with session_scope() as session:
-            rec = (
-                session.query(RCAJobRecord).filter_by(job_id=job_id).one_or_none()
-            )
+            rec = session.query(RCAJobRecord).filter_by(job_id=job_id).one_or_none()
             if not rec:
                 return
             if status is not None:
@@ -93,9 +92,7 @@ def _update_job_status(
         # 降级重试：不写 result_json，再次仅更新状态/进度/错误
         try:
             with session_scope() as session:
-                rec = (
-                    session.query(RCAJobRecord).filter_by(job_id=job_id).one_or_none()
-                )
+                rec = session.query(RCAJobRecord).filter_by(job_id=job_id).one_or_none()
                 if not rec:
                     return
                 if status is not None:
@@ -136,8 +133,14 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                     rec.status = "skipped"
                     rec.progress = 1.0
                     session.add(rec)
-                logger.info(f"RCA 任务跳过执行（非waiting状态）：{job_id}, status={rec.status}")
-                return {"status": "skipped", "job_id": job_id, "reason": f"status={rec.status}"}
+                logger.info(
+                    f"RCA 任务跳过执行（非waiting状态）：{job_id}, status={rec.status}"
+                )
+                return {
+                    "status": "skipped",
+                    "job_id": job_id,
+                    "reason": f"status={rec.status}",
+                }
             # 将 waiting -> running
             rec.status = "running"
             rec.progress = 0.05
@@ -197,6 +200,7 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
             # 输入指标数量保护，避免过多基础指标导致Prometheus超时
             try:
                 from app.config.settings import config as _config
+
                 _max_input = int(getattr(_config.rca, "input_metrics_max", 80) or 80)
             except Exception:
                 _max_input = 80
@@ -214,6 +218,36 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                 result = await corr_analyzer.analyze_correlations_with_cross_lag(
                     metrics_data, max_lags=max(1, min(20, max_lags))
                 )
+                # 兜底：若跨时滞结果完全为空，尝试叠加默认动态指标再次计算
+                try:
+                    cc_pairs = sum(len(v) for v in (result or {}).get("cross_correlations", {}).values())
+                except Exception:
+                    cc_pairs = 0
+                if cc_pairs == 0:
+                    try:
+                        from app.config.settings import config as _config
+                        dynamic_defaults = [
+                            "container_cpu_usage_seconds_total",
+                            "container_memory_working_set_bytes",
+                            "kube_pod_container_status_restarts_total",
+                        ]
+                        merged = list(dict.fromkeys(list(_metrics_eff) + dynamic_defaults))
+                        _metrics_eff2 = merged[: max(1, int(getattr(_config.rca, "input_metrics_max", 80) or 80))]
+                        metrics_data2 = await analyzer._collect_metrics_data(
+                            params["start_time"], params["end_time"], _metrics_eff2, namespace=params.get("namespace")
+                        )
+                        if metrics_data2:
+                            result2 = await corr_analyzer.analyze_correlations_with_cross_lag(
+                                metrics_data2, max_lags=max(1, min(20, max_lags))
+                            )
+                            try:
+                                cc_pairs2 = sum(len(v) for v in (result2 or {}).get("cross_correlations", {}).values())
+                            except Exception:
+                                cc_pairs2 = 0
+                            if cc_pairs2 > 0:
+                                result = result2
+                    except Exception:
+                        pass
         elif job_type == "correlation":
             target_metric = params.get("target_metric")
             metrics = params.get("metrics")
@@ -227,6 +261,7 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
             # 输入指标数量保护
             try:
                 from app.config.settings import config as _config
+
                 _max_input = int(getattr(_config.rca, "input_metrics_max", 80) or 80)
             except Exception:
                 _max_input = 80
@@ -238,6 +273,62 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                 _metrics_eff,
                 namespace=params.get("namespace"),
             )
+        elif job_type == "timeline":
+            # 生成时间线：可选传入 events；若未提供则自动拉取 K8s 事件
+            try:
+                events = params.get("events") or []
+                if not events:
+                    try:
+                        ns_eff = params.get("namespace")
+                        events = await K8sEventsCollector(namespace=ns_eff).pull(limit=200)
+                    except Exception:
+                        events = []
+                # 尝试轻量异常与相关性以富集时间线（使用默认指标，受 input_metrics_max 限制）
+                metrics = params.get("metrics")
+                if not metrics:
+                    try:
+                        from app.config.settings import config as _config
+                        metrics = _config.rca.default_metrics
+                    except Exception:
+                        metrics = []
+                # 输入指标限制
+                try:
+                    from app.config.settings import config as _config
+                    _max_input = int(getattr(_config.rca, "input_metrics_max", 80) or 80)
+                except Exception:
+                    _max_input = 80
+                _metrics_eff = list(metrics)[: max(1, _max_input)]
+                anomalies = await analyzer.detect_anomalies(
+                    params["start_time"], params["end_time"], _metrics_eff
+                )
+                correlations = await analyzer.analyze_correlations(
+                    params["start_time"], params["end_time"], None, _metrics_eff, namespace=params.get("namespace")
+                )
+            except Exception:
+                events, anomalies, correlations = [], {}, {}
+
+            # 构造时间线
+            try:
+                timeline = await analyzer.generate_timeline(
+                    params["start_time"],
+                    params["end_time"],
+                    events,
+                    anomalies=anomalies,
+                    correlations=correlations,
+                    cross_correlations={},
+                    logs=None,
+                )
+            except Exception:
+                timeline = []
+
+            result = {
+                "timeline": timeline,
+                "period": {
+                    "start": analyzer._jsonify(params.get("start_time")) if hasattr(analyzer, "_jsonify") else str(params.get("start_time")),
+                    "end": analyzer._jsonify(params.get("end_time")) if hasattr(analyzer, "_jsonify") else str(params.get("end_time")),
+                },
+            }
+
         else:
             result = await analyzer.analyze(
                 params["start_time"],
@@ -267,7 +358,9 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                         namespace=params.get("namespace"),
                         start_time=str(params.get("start_time")),
                         end_time=str(params.get("end_time")),
-                        metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                        metrics=json.dumps(
+                            params.get("metrics") or [], ensure_ascii=False
+                        ),
                         params_json=json.dumps(_jsonify(params), ensure_ascii=False),
                         status="success",
                         summary=summary_text,
@@ -282,12 +375,18 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                             namespace=params.get("namespace"),
                             start_time=str(params.get("start_time")),
                             end_time=str(params.get("end_time")),
-                            metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
-                            params_json=json.dumps(_jsonify(params), ensure_ascii=False),
+                            metrics=json.dumps(
+                                params.get("metrics") or [], ensure_ascii=False
+                            ),
+                            params_json=json.dumps(
+                                _jsonify(params), ensure_ascii=False
+                            ),
                             job_id=job_id,
                             status="success",
                             summary=summary_text,
-                            result_json=json.dumps(_jsonify(result), ensure_ascii=False),
+                            result_json=json.dumps(
+                                _jsonify(result), ensure_ascii=False
+                            ),
                             error=None,
                         )
                         session.add(rc)
@@ -307,7 +406,9 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                         namespace=params.get("namespace"),
                         start_time=str(params.get("start_time")),
                         end_time=str(params.get("end_time")),
-                        metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                        metrics=json.dumps(
+                            params.get("metrics") or [], ensure_ascii=False
+                        ),
                         params_json=json.dumps(_jsonify(params), ensure_ascii=False),
                         status="success",
                         summary=summary_text,
@@ -321,11 +422,38 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                             namespace=params.get("namespace"),
                             start_time=str(params.get("start_time")),
                             end_time=str(params.get("end_time")),
-                            metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
-                            params_json=json.dumps(_jsonify(params), ensure_ascii=False),
+                            metrics=json.dumps(
+                                params.get("metrics") or [], ensure_ascii=False
+                            ),
+                            params_json=json.dumps(
+                                _jsonify(params), ensure_ascii=False
+                            ),
                             job_id=job_id,
                             status="success",
                             summary=summary_text,
+                            result_json=json.dumps(
+                                _jsonify(result), ensure_ascii=False
+                            ),
+                            error=None,
+                        )
+                        session.add(rc)
+                    except Exception:
+                        pass
+                elif job_type == "timeline":
+                    # 写入统一记录表
+                    try:
+                        rc = RCARecord(
+                            record_type="timeline",
+                            namespace=params.get("namespace"),
+                            start_time=str(params.get("start_time")),
+                            end_time=str(params.get("end_time")),
+                            metrics=None,
+                            params_json=json.dumps(
+                                {"events_count": len(events or [])}, ensure_ascii=False
+                            ),
+                            job_id=job_id,
+                            status="success",
+                            summary=None,
                             result_json=json.dumps(_jsonify(result), ensure_ascii=False),
                             error=None,
                         )
@@ -341,7 +469,9 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                     analysis = RCAAnalysisRecord(
                         start_time=str(params.get("start_time")),
                         end_time=str(params.get("end_time")),
-                        metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                        metrics=json.dumps(
+                            params.get("metrics") or [], ensure_ascii=False
+                        ),
                         namespace=params.get("namespace"),
                         service_name=None,
                         status="success",
@@ -356,15 +486,51 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                             namespace=params.get("namespace"),
                             start_time=str(params.get("start_time")),
                             end_time=str(params.get("end_time")),
-                            metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
-                            params_json=json.dumps(_jsonify(params), ensure_ascii=False),
+                            metrics=json.dumps(
+                                params.get("metrics") or [], ensure_ascii=False
+                            ),
+                            params_json=json.dumps(
+                                _jsonify(params), ensure_ascii=False
+                            ),
                             job_id=job_id,
                             status="success",
                             summary=summary_text,
-                            result_json=json.dumps(_jsonify(result), ensure_ascii=False),
+                            result_json=json.dumps(
+                                _jsonify(result), ensure_ascii=False
+                            ),
                             error=None,
                         )
                         session.add(rc)
+                    except Exception:
+                        pass
+                    # 同步：将分析结果中的时间线也落入统一记录表，便于 /rca/timelines/list 查询
+                    try:
+                        timeline_data = (result or {}).get("timeline")
+                        if isinstance(timeline_data, list):
+                            tl_result = {
+                                "timeline": timeline_data,
+                                "period": {
+                                    "start": str(params.get("start_time")),
+                                    "end": str(params.get("end_time")),
+                                },
+                            }
+                            tl_rec = RCARecord(
+                                record_type="timeline",
+                                namespace=params.get("namespace"),
+                                start_time=str(params.get("start_time")),
+                                end_time=str(params.get("end_time")),
+                                metrics=None,
+                                params_json=json.dumps(
+                                    {"events_count": len(timeline_data) if timeline_data else 0},
+                                    ensure_ascii=False,
+                                ),
+                                job_id=job_id,
+                                status="success",
+                                summary=None,
+                                result_json=json.dumps(_jsonify(tl_result), ensure_ascii=False),
+                                error=None,
+                            )
+                            session.add(tl_rec)
                     except Exception:
                         pass
         except Exception:
@@ -390,7 +556,9 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                         namespace=params.get("namespace"),
                         start_time=str(params.get("start_time")),
                         end_time=str(params.get("end_time")),
-                        metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                        metrics=json.dumps(
+                            params.get("metrics") or [], ensure_ascii=False
+                        ),
                         params_json=json.dumps(_jsonify(params), ensure_ascii=False),
                         status="error",
                         summary=None,
@@ -404,8 +572,12 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                             namespace=params.get("namespace"),
                             start_time=str(params.get("start_time")),
                             end_time=str(params.get("end_time")),
-                            metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
-                            params_json=json.dumps(_jsonify(params), ensure_ascii=False),
+                            metrics=json.dumps(
+                                params.get("metrics") or [], ensure_ascii=False
+                            ),
+                            params_json=json.dumps(
+                                _jsonify(params), ensure_ascii=False
+                            ),
                             job_id=job_id,
                             status="error",
                             summary=None,
@@ -422,7 +594,9 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                         namespace=params.get("namespace"),
                         start_time=str(params.get("start_time")),
                         end_time=str(params.get("end_time")),
-                        metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                        metrics=json.dumps(
+                            params.get("metrics") or [], ensure_ascii=False
+                        ),
                         params_json=json.dumps(_jsonify(params), ensure_ascii=False),
                         status="error",
                         summary=None,
@@ -436,8 +610,12 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                             namespace=params.get("namespace"),
                             start_time=str(params.get("start_time")),
                             end_time=str(params.get("end_time")),
-                            metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
-                            params_json=json.dumps(_jsonify(params), ensure_ascii=False),
+                            metrics=json.dumps(
+                                params.get("metrics") or [], ensure_ascii=False
+                            ),
+                            params_json=json.dumps(
+                                _jsonify(params), ensure_ascii=False
+                            ),
                             job_id=job_id,
                             status="error",
                             summary=None,
@@ -451,7 +629,9 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                     analysis = RCAAnalysisRecord(
                         start_time=str(params.get("start_time")),
                         end_time=str(params.get("end_time")),
-                        metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
+                        metrics=json.dumps(
+                            params.get("metrics") or [], ensure_ascii=False
+                        ),
                         namespace=params.get("namespace"),
                         service_name=None,
                         status="error",
@@ -466,8 +646,12 @@ async def _rca_execute_job_async(job_id: str, params: Dict[str, Any]) -> Dict[st
                             namespace=params.get("namespace"),
                             start_time=str(params.get("start_time")),
                             end_time=str(params.get("end_time")),
-                            metrics=json.dumps(params.get("metrics") or [], ensure_ascii=False),
-                            params_json=json.dumps(_jsonify(params), ensure_ascii=False),
+                            metrics=json.dumps(
+                                params.get("metrics") or [], ensure_ascii=False
+                            ),
+                            params_json=json.dumps(
+                                _jsonify(params), ensure_ascii=False
+                            ),
                             job_id=job_id,
                             status="error",
                             summary=None,
@@ -507,7 +691,9 @@ def rca_execute_job(job_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
                 except Exception:
                     logger.exception(f"RCA 任务后台线程执行失败: {job_id}")
 
-            t = threading.Thread(target=_runner, name=f"rca-job-{job_id[:8]}", daemon=True)
+            t = threading.Thread(
+                target=_runner, name=f"rca-job-{job_id[:8]}", daemon=True
+            )
             t.start()
             return {"status": "scheduled", "job_id": job_id, "mode": "thread"}
         else:
@@ -520,4 +706,3 @@ def rca_execute_job(job_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 __all__ = ["rca_execute_job"]
-

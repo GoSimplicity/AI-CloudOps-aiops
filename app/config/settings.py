@@ -105,14 +105,14 @@ def get_env_or_config(
     env_key: str, config_key: str, default: Any = None, cast_type=str
 ):
     """从环境变量或配置文件中获取值（优先环境变量），并进行安全类型转换。"""
-    # 1) 环境变量优先
+    # 环境变量优先
     env_value = os.getenv(env_key)
     if env_value is not None:
         converted = _cast_value(env_value, cast_type)
         if converted is not None:
             return converted
 
-    # 2) 配置文件读取（支持 a.b.c 嵌套）
+    # 配置文件读取（支持 a.b.c 嵌套）
     keys = config_key.split(".")
     cursor: Any = _config_data
     for key in keys:
@@ -324,15 +324,29 @@ class RCAConfig:
     )
     default_metrics: List[str] = field(
         default_factory=lambda: get_env_or_config(
-            "",
+            "RCA_DEFAULT_METRICS",
             "rca.default_metrics",
             [
+                # 动态资源与网络
                 "container_cpu_usage_seconds_total",
                 "container_memory_working_set_bytes",
+                "container_network_receive_bytes_total",
+                "container_network_transmit_bytes_total",
+                # 重启与就绪
                 "kube_pod_container_status_restarts_total",
+                "kube_pod_container_status_ready",
+                "kube_pod_container_status_running",
+                "kube_pod_container_status_terminated",
+                "kube_pod_container_status_waiting",
+                # Kubelet 与 Node
+                "kubelet_running_pod_count",
+                "kubelet_running_container_count",
                 "node_cpu_seconds_total",
                 "node_memory_MemFree_bytes",
+                # 工作负载可用性
+                "kube_deployment_status_replicas_unavailable",
             ],
+            list,
         )
     )
     # 性能与资源控制
@@ -383,9 +397,21 @@ class RCAConfig:
             "RCA_CROSS_LAG_MAX_LAGS", "rca.cross_lag_max_lags", 5, int
         )
     )
+    # 跨时滞相关性的阈值（独立于零时滞阈值），默认略低以提升召回
+    cross_lag_threshold: float = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_CROSS_LAG_THRESHOLD", "rca.cross_lag_threshold", 0.3, float
+        )
+    )
     cross_lag_max_pairs_per_metric: int = field(
         default_factory=lambda: get_env_or_config(
             "RCA_CROSS_LAG_MAX_PAIRS", "rca.cross_lag_max_pairs_per_metric", 3, int
+        )
+    )
+    # 事件派生窗口（用于 *_created / *_info / *_status_* 的 changes/increase 派生查询）
+    event_derivation_window_minutes: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_EVENT_DERIVATION_WINDOW", "rca.event_derivation_window_minutes", 5, int
         )
     )
     # 启动恢复：将悬挂的 running 任务重置并重投

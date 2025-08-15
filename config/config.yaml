@@ -46,11 +46,24 @@ rca:
   correlation_threshold: 0.7
   request_override: false
   default_metrics:
+    # 动态资源与网络
     - container_cpu_usage_seconds_total
     - container_memory_working_set_bytes
+    - container_network_receive_bytes_total
+    - container_network_transmit_bytes_total
+    # 重启与就绪
     - kube_pod_container_status_restarts_total
+    - kube_pod_container_status_ready
+    - kube_pod_container_status_running
+    - kube_pod_container_status_terminated
+    - kube_pod_container_status_waiting
+    # Kubelet 与 Node
+    - kubelet_running_pod_count
+    - kubelet_running_container_count
     - node_cpu_seconds_total
     - node_memory_MemFree_bytes
+    # 工作负载可用性
+    - kube_deployment_status_replicas_unavailable
   # 性能与资源控制（根据机器资源调整）
   metrics_step_minutes: 1           # PromQL 步长（分钟）；增大可降低采样点数
   metrics_fetch_concurrency: 3      # 并发抓取 Prometheus 的最大并发

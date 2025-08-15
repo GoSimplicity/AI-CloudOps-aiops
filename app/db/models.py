@@ -76,7 +76,9 @@ class RCAJobRecord(Base, TimestampMixin):
     job_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="waiting", index=True)
     progress: Mapped[float] = mapped_column(default=0.0)
-    namespace: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    namespace: Mapped[Optional[str]] = mapped_column(
+        String(128), nullable=True, index=True
+    )
     params_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     result_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -88,13 +90,17 @@ class RCARecord(Base, TimestampMixin):
     # 记录类型：analysis/anomaly/correlation/cross_correlation/timeline 等
     record_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     # 通用查询维度
-    namespace: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    namespace: Mapped[Optional[str]] = mapped_column(
+        String(128), nullable=True, index=True
+    )
     # 时间范围（字符串保留原始ISO格式，便于展示与简单筛选）
     start_time: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     end_time: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     # 输入参数/上下文
     metrics: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON 字符串
-    params_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 额外参数（如 target_metric/sensitivity/max_lags 等）
+    params_json: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # 额外参数（如 target_metric/sensitivity/max_lags 等）
     job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     # 结果与状态
     status: Mapped[str] = mapped_column(String(32), default="success", index=True)
@@ -102,41 +108,60 @@ class RCARecord(Base, TimestampMixin):
     result_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+
 class RCACorrelationRecord(Base, TimestampMixin):
     __tablename__ = "cl_aiops_rca_cross_correlations"
 
     # 任务与类型
     job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
-    record_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # correlation/cross_correlation
+    record_type: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True
+    )  # correlation/cross_correlation
     # 查询上下文
-    namespace: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    namespace: Mapped[Optional[str]] = mapped_column(
+        String(128), nullable=True, index=True
+    )
     start_time: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     end_time: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    metrics: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON 列表字符串
-    params_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 例如 {"max_lags": 10, "target_metric": "..."}
+    metrics: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # JSON 列表字符串
+    params_json: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # 例如 {"max_lags": 10, "target_metric": "..."}
     # 执行状态与结果
     status: Mapped[str] = mapped_column(String(32), default="success", index=True)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     result_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
 
 class RCASimpleCorrelationRecord(Base, TimestampMixin):
     __tablename__ = "cl_aiops_rca_correlations"
 
     # 任务与类型
     job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
-    record_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # correlation
+    record_type: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True
+    )  # correlation
     # 查询上下文
-    namespace: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    namespace: Mapped[Optional[str]] = mapped_column(
+        String(128), nullable=True, index=True
+    )
     start_time: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     end_time: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    metrics: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON 列表字符串
-    params_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 例如 {"target_metric": "..."}
+    metrics: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # JSON 列表字符串
+    params_json: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # 例如 {"target_metric": "..."}
     # 执行状态与结果
     status: Mapped[str] = mapped_column(String(32), default="success", index=True)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     result_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
 
 class AutoFixJobRecord(Base, TimestampMixin):
     __tablename__ = "cl_aiops_autofix_jobs"
