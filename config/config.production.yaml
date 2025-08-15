@@ -29,7 +29,7 @@ kubernetes:
 # 根因分析配置
 rca:
   default_time_range: 30
-  max_time_range: 1440
+  max_time_range: 4320
   anomaly_threshold: 0.7
   correlation_threshold: 0.75
   request_override: true
@@ -39,6 +39,19 @@ rca:
     - kube_pod_container_status_restarts_total
     - node_cpu_seconds_total
     - node_memory_MemFree_bytes
+  # 生产建议更保守的资源参数
+  metrics_step_minutes: 2
+  metrics_fetch_concurrency: 2
+  max_series_per_metric: 3
+  max_total_series: 200
+  correlation_max_columns: 80
+  correlation_return_top_k: 5
+  enable_cross_lag_in_analyze: false
+  cross_lag_max_lags: 5
+  cross_lag_max_pairs_per_metric: 3
+  recover_on_startup: true
+  recover_stale_seconds: 300
+  recover_max_jobs: 100
 
 # 日志采集配置
 logs:

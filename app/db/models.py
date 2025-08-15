@@ -74,7 +74,7 @@ class RCAJobRecord(Base, TimestampMixin):
     __tablename__ = "cl_aiops_rca_jobs"
 
     job_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="waiting", index=True)
     progress: Mapped[float] = mapped_column(default=0.0)
     namespace: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     params_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

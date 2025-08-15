@@ -36,6 +36,21 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # 启动恢复：扫描并修复悬挂的 RCA running 任务
+    try:
+        if bool(config.rca.recover_on_startup):
+            from app.core.rca.jobs.job_manager import recover_rca_jobs_on_startup
+
+            processed, requeued = recover_rca_jobs_on_startup(
+                max_age_seconds=int(config.rca.recover_stale_seconds),
+                max_jobs=int(config.rca.recover_max_jobs),
+            )
+            logger.info(
+                f"RCA 启动恢复完成：处理={processed}，重投={requeued}"
+            )
+    except Exception as e:
+        logger.warning(f"RCA 启动恢复执行失败（忽略）：{e}")
+
     yield
 
     total_time = time.time() - start_time

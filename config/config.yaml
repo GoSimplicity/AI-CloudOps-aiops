@@ -41,7 +41,7 @@ remediation:
 # 根因分析配置
 rca:
   default_time_range: 30
-  max_time_range: 1440
+  max_time_range: 4320
   anomaly_threshold: 0.65 
   correlation_threshold: 0.7
   request_override: false
@@ -51,6 +51,19 @@ rca:
     - kube_pod_container_status_restarts_total
     - node_cpu_seconds_total
     - node_memory_MemFree_bytes
+  # 性能与资源控制（根据机器资源调整）
+  metrics_step_minutes: 1           # PromQL 步长（分钟）；增大可降低采样点数
+  metrics_fetch_concurrency: 3      # 并发抓取 Prometheus 的最大并发
+  max_series_per_metric: 5          # 每个基础指标最多保留多少条标签序列
+  max_total_series: 300             # 单次分析最多总序列数上限
+  correlation_max_columns: 100      # 相关性计算最多列数（超出将截断）
+  correlation_return_top_k: 5       # 每个指标返回Top K对
+  enable_cross_lag_in_analyze: false # 综合分析是否启用跨时滞（较耗时/CPU）
+  cross_lag_max_lags: 5             # 跨时滞最大滞后窗口
+  cross_lag_max_pairs_per_metric: 3 # 每个指标返回的跨时滞对上限
+  recover_on_startup: true
+  recover_stale_seconds: 300
+  recover_max_jobs: 100
 
 # 日志采集配置
 logs:

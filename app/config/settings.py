@@ -304,7 +304,7 @@ class RCAConfig:
     )
     max_time_range: int = field(
         default_factory=lambda: get_env_or_config(
-            "RCA_MAX_TIME_RANGE", "rca.max_time_range", 1440, int
+            "RCA_MAX_TIME_RANGE", "rca.max_time_range", 4320, int
         )
     )
     anomaly_threshold: float = field(
@@ -333,6 +333,77 @@ class RCAConfig:
                 "node_cpu_seconds_total",
                 "node_memory_MemFree_bytes",
             ],
+        )
+    )
+    # 性能与资源控制
+    metrics_step_minutes: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_METRICS_STEP_MINUTES", "rca.metrics_step_minutes", 1, int
+        )
+    )
+    metrics_fetch_concurrency: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_METRICS_FETCH_CONCURRENCY", "rca.metrics_fetch_concurrency", 4, int
+        )
+    )
+    max_series_per_metric: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_MAX_SERIES_PER_METRIC", "rca.max_series_per_metric", 10, int
+        )
+    )
+    max_total_series: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_MAX_TOTAL_SERIES", "rca.max_total_series", 400, int
+        )
+    )
+    correlation_max_columns: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_CORRELATION_MAX_COLUMNS", "rca.correlation_max_columns", 150, int
+        )
+    )
+    correlation_return_top_k: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_CORRELATION_TOP_K", "rca.correlation_return_top_k", 5, int
+        )
+    )
+    # 单次请求允许的输入基础指标最大数量（防止过载）。超出部分将被截断。
+    input_metrics_max: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_INPUT_METRICS_MAX", "rca.input_metrics_max", 80, int
+        )
+    )
+    # 是否在综合 analyze() 中计算跨时滞相关（开销大，默认关闭）
+    enable_cross_lag_in_analyze: bool = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_ENABLE_CROSS_LAG", "rca.enable_cross_lag_in_analyze", False, bool
+        )
+    )
+    cross_lag_max_lags: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_CROSS_LAG_MAX_LAGS", "rca.cross_lag_max_lags", 5, int
+        )
+    )
+    cross_lag_max_pairs_per_metric: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_CROSS_LAG_MAX_PAIRS", "rca.cross_lag_max_pairs_per_metric", 3, int
+        )
+    )
+    # 启动恢复：将悬挂的 running 任务重置并重投
+    recover_on_startup: bool = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_RECOVER_ON_STARTUP", "rca.recover_on_startup", True, bool
+        )
+    )
+    # 认为“悬挂”的 running 任务阈值（秒）
+    recover_stale_seconds: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_RECOVER_STALE_SECONDS", "rca.recover_stale_seconds", 300, int
+        )
+    )
+    # 启动时最多恢复多少条任务
+    recover_max_jobs: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RCA_RECOVER_MAX_JOBS", "rca.recover_max_jobs", 100, int
         )
     )
 

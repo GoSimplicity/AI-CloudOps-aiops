@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import pandas as pd
+import asyncio
 
 from app.config.settings import config
 from app.core.rca.collectors.k8s_events_collector import K8sEventsCollector
@@ -100,8 +101,14 @@ class RCAAnalyzer:
             # 项目目前仅支持基于K8s的事件与状态分析，暂不支持Trace分析
             should_collect_traces = False
 
+            # 避免一次性请求过多基础指标导致 Prometheus 压力过大
+            try:
+                max_input = int(getattr(config.rca, "input_metrics_max", 80) or 80)
+            except Exception:
+                max_input = 80
+            effective_metrics = list(metrics)[: max(1, max_input)]
             metrics_data = await self._collect_metrics_data(
-                start_time, end_time, metrics, namespace=ns
+                start_time, end_time, effective_metrics, namespace=ns
             )
 
             if not metrics_data:
@@ -113,10 +120,15 @@ class RCAAnalyzer:
             logger.info(f"检测到 {len(anomalies)} 个指标存在异常")
 
             correlations = await self.correlator.analyze_correlations(metrics_data)
+            # 跨时滞分析按配置开关执行（默认关闭以降低CPU）
             try:
-                lag_result = await self.correlator.analyze_correlations_with_cross_lag(
-                    metrics_data, max_lags=5
-                )
+                if bool(getattr(config.rca, "enable_cross_lag_in_analyze", False)):
+                    max_lags = int(getattr(config.rca, "cross_lag_max_lags", 5) or 5)
+                    lag_result = await self.correlator.analyze_correlations_with_cross_lag(
+                        metrics_data, max_lags=max(1, min(20, max_lags))
+                    )
+                else:
+                    lag_result = {"correlations": correlations, "cross_correlations": {}}
             except Exception:
                 lag_result = {"correlations": correlations, "cross_correlations": {}}
             logger.info(f"分析了 {len(correlations)} 个指标的相关性")
@@ -298,6 +310,12 @@ class RCAAnalyzer:
     ) -> Dict:
         """异常检测包装方法"""
         metrics = metrics or config.rca.default_metrics
+        # 输入指标数量保护
+        try:
+            max_input = int(getattr(config.rca, "input_metrics_max", 80) or 80)
+        except Exception:
+            max_input = 80
+        metrics = list(metrics)[: max(1, max_input)]
         metrics_data = await self._collect_metrics_data(start_time, end_time, metrics)
         if not metrics_data:
             return {}
@@ -313,6 +331,12 @@ class RCAAnalyzer:
     ) -> Dict:
         """相关性分析包装方法"""
         metrics = metrics or config.rca.default_metrics
+        # 输入指标数量保护
+        try:
+            max_input = int(getattr(config.rca, "input_metrics_max", 80) or 80)
+        except Exception:
+            max_input = 80
+        metrics = list(metrics)[: max(1, max_input)]
         # 确保目标指标被纳入分析集合
         if target_metric and target_metric not in (metrics or []):
             metrics = list(dict.fromkeys([target_metric] + list(metrics)))
@@ -559,19 +583,44 @@ class RCAAnalyzer:
         namespace: Optional[str] = None,
     ) -> Dict[str, pd.DataFrame]:
         """收集指标数据"""
-        metrics_data = {}
+        metrics_data: Dict[str, pd.DataFrame] = {}
         logger.info(
             f"开始收集指标数据: {start_time} - {end_time}, 指标数: {len(metrics)}"
         )
 
-        for metric in metrics:
-            try:
-                logger.debug(f"查询指标: {metric}")
-                data = await self.prometheus.query_range_async(
-                    metric, start_time, end_time, "1m"
-                )
+        # Prometheus 可用性快速预检，避免在不可达时大量并发请求导致阻塞
+        try:
+            if not self.prometheus.is_healthy() and not self.prometheus.check_connectivity():
+                logger.warning("Prometheus不可用，跳过指标采集并返回空结果")
+                return {}
+        except Exception:
+            # 预检异常时保守返回空，避免阻塞
+            logger.warning("Prometheus可用性预检失败，跳过指标采集")
+            return {}
 
+        # 限制并发，防止Prometheus或本服务过载（由配置控制）
+        try:
+            configured_concurrency = int(getattr(config.rca, "metrics_fetch_concurrency", 4) or 4)
+        except Exception:
+            configured_concurrency = 4
+        concurrency_limit = max(1, min(16, configured_concurrency))
+        sem = asyncio.Semaphore(concurrency_limit)
+
+        async def fetch_one(metric: str) -> None:
+            try:
+                async with sem:
+                    logger.debug(f"查询指标: {metric}")
+                    # 采样步长由配置控制
+                    try:
+                        step_minutes = int(getattr(config.rca, "metrics_step_minutes", 1) or 1)
+                    except Exception:
+                        step_minutes = 1
+                    step_str = f"{max(1, step_minutes)}m"
+                    data = await self.prometheus.query_range_async(
+                        metric, start_time, end_time, step_str
+                    )
                 if data is not None and not data.empty and len(data) > 0:
+                    nonlocal namespace
                     # 如提供命名空间且数据包含命名空间标签，则先按命名空间过滤
                     if namespace and "label_namespace" in data.columns:
                         data = data[data["label_namespace"] == namespace]
@@ -579,7 +628,7 @@ class RCAAnalyzer:
                             logger.debug(
                                 f"指标 {metric} 在命名空间 {namespace} 下无数据，跳过"
                             )
-                            continue
+                            return
 
                     label_columns = [
                         col
@@ -588,10 +637,16 @@ class RCAAnalyzer:
                     ]
 
                     if label_columns:
-                        # 以全部标签列进行分组，确保唯一序列不被混合
+                        # 控制每个基础指标的最大序列数
+                        try:
+                            max_series = int(getattr(config.rca, "max_series_per_metric", 10) or 10)
+                        except Exception:
+                            max_series = 10
+                        series_count = 0
                         for labels_key, group in data.groupby(label_columns, dropna=False):
                             if len(group) > 0:
-                                # 构造稳定的序列名称：metric|k1:v1,k2:v2
+                                if series_count >= max(1, max_series):
+                                    continue
                                 if not isinstance(labels_key, tuple):
                                     labels_key = (labels_key,)
                                 parts = []
@@ -602,19 +657,31 @@ class RCAAnalyzer:
                                 label_suffix = ",".join(parts) if parts else "series"
                                 metric_name = f"{metric}|{label_suffix}"
                                 metrics_data[metric_name] = group[["value"]].copy()
+                                series_count += 1
                     else:
                         metrics_data[metric] = data[["value"]].copy()
                 else:
                     logger.warning(f"指标 {metric} 无数据")
-
             except Exception as e:
                 logger.error(f"获取指标 {metric} 失败: {str(e)}")
-                continue
 
-        metrics_data = {
-            k: v for k, v in metrics_data.items() if not v.empty and len(v) > 0
-        }
-        logger.info(f"成功收集 {len(metrics_data)} 个时间序列")
+        # 若序列总数过多，提前限制以降低后续CPU（按插入顺序截断）
+        await asyncio.gather(*(fetch_one(m) for m in metrics))
+        try:
+            max_total_series = int(getattr(config.rca, "max_total_series", 400) or 400)
+        except Exception:
+            max_total_series = 400
+        if len(metrics_data) > max_total_series:
+            limited_keys = list(metrics_data.keys())[:max_total_series]
+            metrics_data = {k: metrics_data[k] for k in limited_keys}
+
+        metrics_data = {k: v for k, v in metrics_data.items() if not v.empty and len(v) > 0}
+        # 记录实际使用的采样步长
+        try:
+            _step_minutes_log = int(getattr(config.rca, "metrics_step_minutes", 1) or 1)
+        except Exception:
+            _step_minutes_log = 1
+        logger.info(f"成功收集 {len(metrics_data)} 个时间序列 (并发={concurrency_limit}, step={_step_minutes_log}m)")
         return metrics_data
 
     def _generate_root_cause_candidates(

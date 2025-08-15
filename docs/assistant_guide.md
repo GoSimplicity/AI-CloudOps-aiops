@@ -1,63 +1,6 @@
-```mermaid
-graph TD
-  A["API /assistant/chat"] --> B["GetOrCreate Session"]
-  B --> C{"Mode"}
-  C -- "MCP" --> MC["MCP Client (tools)\nexecute/tools"]
-  MC --> Z["Persist History + Response"]
+# 智能小助手使用指南
 
-  C -- "RAG" --> C0["Cache Lookup (Redis)\nkey=session+question"]
-  C0 -- "Hit" --> Z
-  C0 -- "Miss" --> D["Normalize Query\n(clean, dedupe, detect lang)"]
-  D --> E["Intent & Safety Gate\n(classify: info/howto/troubleshoot; PII/PII-safe)"]
-  E --> F["Multi-Query Rewrite\n(LangGraph node)"]
-  F --> G["Hybrid Retrieve (optional)\n(Vector kNN + keyword)"]
-  G --> H["Re-rank (optional)\n(Cross-Encoder/BGE/Jina) + TF-IDF fallback"]
-  H --> I["Context Compression\n(MMR + summarization)"]
-  I --> J["Answer Synthesis\n(LLM w/ citations)"]
-  J --> K["Attribution & Grounding Check\n(source coverage, quote match)"]
-  K --> L{"Confidence < threshold?"}
-  L -- "Yes" --> F
-  L -- "No" --> M["Calibrate Confidence\n(signal fusion)"]
-  M --> N["Cache Write (Redis)"]
-  N --> Z
-
-  subgraph "LangGraph StateGraph"
-    D --> E --> F --> G --> H --> I --> J --> K --> L --> M --> N
-  end
-```
-
-```mermaid
-classDiagram
-  class AssistantState {
-    +str session_id
-    +str question
-    +list~Message~ history
-    +list~str~ queries
-    +list~Document~ retrieved_docs
-    +list~(Document,float)~ reranked
-    +list~Document~ compressed_ctx
-    +str draft_answer
-    +float confidence
-    +dict telemetry
-  }
-
-  class Nodes {
-    +normalize_query()
-    +intent_and_safety()
-    +rewrite_queries()
-    +hybrid_retrieve()
-    +rerank()
-    +compress_context()
-    +synthesize_answer()
-    +grounding_check()
-    +calibrate_confidence()
-    +cache_read_write()
-  }
-
-  AssistantState <.. Nodes: read/write
-```
-
-### 流程图
+## 智能小助手（Assistant）架构总览
 
 ```mermaid
 graph TD
@@ -66,19 +9,19 @@ graph TD
   C -- "MCP" --> MC["MCP Client (tools)\nexecute/tools"]
   MC --> Z["Persist History + Response"]
 
-  C -- "RAG" --> C0["Cache Lookup (Redis)\nkey=session+question"]
+  C -- "RAG" --> C0["Cache Lookup (Redis)\nkey=hash(question+last2 history)"]
   C0 -- "Hit" --> Z
-  C0 -- "Miss" --> D["Normalize Query\n(clean, dedupe, detect lang)"]
-  D --> E["Intent & Safety Gate\n(classify: info/howto/troubleshoot; PII/PII-safe)"]
-  E --> F["Multi-Query Rewrite\n(LangGraph node)"]
-  F --> G["Hybrid Retrieve (optional)\n(Vector kNN + keyword)"]
-  G --> H["Re-rank (optional)\n(Cross-Encoder/BGE/Jina) + TF-IDF fallback"]
-  H --> I["Context Compression\n(MMR + summarization)"]
-  I --> J["Answer Synthesis\n(LLM w/ citations)"]
-  J --> K["Attribution & Grounding Check\n(source coverage, quote match)"]
-  K --> L{"Confidence < threshold?"}
+  C0 -- "Miss" --> D["Normalize\n(trim, dedupe)"]
+  D --> E["Intent & Safety\n(overview/deploy/monitor/troubleshoot; PII-lite)"]
+  E --> F["Multi-Query Rewrite\n(limit=max_rewrite_queries)"]
+  F --> G["Retrieve\nRedisVectorStore kNN"]
+  G --> H["Re-rank\nTF-IDF + token overlap\n(optional cross-encoder)"]
+  H --> I["Compress\nMMR select top N"]
+  I --> J["Synthesize\nLLM w/ [filename] citations"]
+  J --> K["Grounding Check\n(source coverage)"]
+  K --> L{"confidence < threshold & iter < max_loops?"}
   L -- "Yes" --> F
-  L -- "No" --> M["Calibrate Confidence\n(signal fusion)"]
+  L -- "No" --> M["Calibrate Confidence"]
   M --> N["Cache Write (Redis)"]
   N --> Z
 
@@ -87,97 +30,145 @@ graph TD
   end
 ```
 
-### 知识入库流水线
-
-```mermaid
-graph TD
-  U["/assistant/knowledge/create | upload | update | refresh"] --> P1["Parse & Split\n(token-aware chunker)"]
-  P1 --> P2{"Doc Type"}
-  P2 -- "Text/MD" --> C1["Clean Markdown\n(remove boilerplate)"]
-  P2 -- "Others" --> C2["Light OCR/Extract"]
-  C1 --> E1
-  C2 --> E1
-  E1["Embedding Encode\n(Async batch)\nOpenAI/Ollama fallback"] --> V["VectorStore Upsert\n(Chroma/FAISS)\ncollection=assistant"]
-  V --> R1["Build BM25 Index\n(optional Whoosh/Lucene)"]
-  V --> R2["DocRanker.fit()\n(TFIDF model state)"]
-  R1 --> M1["Metadata Sync -> DB: DocumentRecord"]
-  R2 --> M1
-  M1 --> O["Warm Cache Keys\n(top queries heuristics)"]
-```
-
-### LangGraph 全局状态
+## LangGraph 状态与节点
 
 ```mermaid
 classDiagram
   class AssistantState {
     +str session_id
     +str question
-    +list~Message~ history
+    +list~dict~ history
+    +str normalized_question
+    +str intent
+    +bool safe
     +list~str~ queries
     +list~Document~ retrieved_docs
     +list~(Document,float)~ reranked
-    +list~Document~ compressed_ctx
+    +list~Document~ context_docs
     +str draft_answer
     +float confidence
+    +int iter_count
     +dict telemetry
   }
 
   class Nodes {
-    +normalize_query()
-    +intent_and_safety()
-    +rewrite_queries()
-    +hybrid_retrieve()
+    +normalize()
+    +intent_safety()
+    +rewrite()
+    +retrieve()
     +rerank()
-    +compress_context()
-    +synthesize_answer()
-    +grounding_check()
-    +calibrate_confidence()
-    +cache_read_write()
+    +compress()
+    +synthesize()
+    +grounding()
+    +calibrate()
+    +cache_write()
   }
 
   AssistantState <.. Nodes: read/write
 ```
 
-### 配置项（与流程联动）
+## 知识入库流水线
+
+```mermaid
+graph TD
+  U["/assistant/knowledge/create | upload | update | refresh"] --> P1["Parse & Split\n(MarkdownHeaderTextSplitter)"]
+  P1 --> C1["Clean & Normalize\n(trim, collapse spaces)"]
+  C1 --> E1["Embedding Encode\n(OpenAI/Ollama)"]
+  E1 --> V["RedisVectorStore Upsert\n(collection=rag.collection_name)"]
+  V --> M1["Persist Metadata (DB)\nDocumentRecord"]
+  M1 --> O["(Optional) Warm cache keys"]
+```
+
+## 关键组件与实现
+
+- **LLM与Embedding**: `config.llm.provider` 选择 `openai` 或 `ollama`。推理使用 `ChatOpenAI/ChatOllama`；向量使用 `OpenAIEmbeddings/OllamaEmbeddings`（模型取自 `config.llm.embedding_model`）。
+- **向量存储**: 自研 `RedisVectorStore`，向量与元数据落在 Redis；内存缓存加速索引与向量读取；检索支持 `similarity_search` 与可选 `keyword_search`（当 `rag.retrieve.hybrid_enabled=true` 时补充召回）。
+- **会话管理**: 进程内 `SessionManager`，保存最近 20 条消息并生成简要 `context_summary`；`/assistant/session/create` 返回 `session_id`。
+- **缓存**: `RedisCacheManager`，key=hash(question+最近2条history)，TTL 默认 3600s，支持压缩与LRU清理；命中直接返回并记录统计。
+- **改写与并发检索**: `rewrite` 生成多变体查询，最多 `rag.max_rewrite_queries` 条；`retrieve` 对这些查询并发检索并去重合并。
+- **重排与压缩**: 默认 TF-IDF + 关键词重叠打分；`compression` 使用 MMR 选择 `rag.compression.mmr_top_k` 篇上下文。
+- **生成与归因**: 生成严格限制长度（`rag.answer.max_chars`），引用 `[filename]`；`grounding` 统计覆盖率。
+- **置信度校准与迭代**: `calibrate` 融合召回分、长度、覆盖率给出 `confidence`；若低于 `rag.iteration.retry_confidence_threshold` 且 `iter_count < rag.iteration.max_loops`，回到 `rewrite` 进行一次自我迭代。
+- **空召回回退**: 无文档时走最佳实践模板，返回可执行排障步骤（K8s 场景优化）。
+
+## API 一览
+
+- **聊天**: POST `/assistant/chat`
+  - 请求: `{ "session_id": "...", "query": "...", "mode": 1|2 }`（1=RAG，2=MCP）
+  - 响应: `{ "response": str, "confidence": float }`
+- **会话**: POST `/assistant/session/create`
+- **历史记录**: GET `/assistant/history/list` | GET `/assistant/history/detail/{id}` | DELETE `/assistant/history/delete/{id}`
+- **知识库**:
+  - 列表/详情: GET `/assistant/knowledge/list` | GET `/assistant/knowledge/detail/{id}`
+  - 创建/更新/删除: POST `/assistant/knowledge/create` | PUT `/assistant/knowledge/update/{id}` | DELETE `/assistant/knowledge/delete/{id}`
+  - 上传/下载: POST `/assistant/knowledge/upload` | GET `/assistant/knowledge/download`
+  - 刷新向量库: POST `/assistant/knowledge/refresh`
+- **缓存**: POST `/assistant/cache/clear`
+- **健康检查**: GET `/assistant/health`
+- **强制重建实例**: POST `/assistant/reinitialize`
+
+## 配置项（与流程联动）
 
 ```yaml
+llm:
+  provider: openai            # openai 或 ollama
+  model: Qwen/Qwen3-14B
+  ollama_model: qwen2.5:3b
+  base_url: https://api.siliconflow.cn/v1
+  ollama_base_url: http://127.0.0.1:11434/v1
+
 rag:
+  vector_db_path: data/vector_db
+  collection_name: aiops-assistant
+  knowledge_base_path: data/knowledge_base
+  openai_embedding_model: Pro/BAAI/bge-m3
+  ollama_embedding_model: nomic-embed-text
+  max_rewrite_queries: 6      # 并发检索的最大改写数
+
   retrieve:
-    k: 12                    # 检索候选数量（默认12）
-    score_threshold: 0.0     # 相似阈值（默认0.0）
-    hybrid_enabled: false    # 可选：向量+关键词混合
+    k: 12
+    score_threshold: 0.0
+    hybrid_enabled: false
   reranker:
-    enabled: false           # 可选：交叉重排模型
+    enabled: false
     model: bge-reranker-base
     top_k: 20
   iteration:
-    max_loops: 1             # 自我迭代最多轮次
+    max_loops: 1
     retry_confidence_threshold: 0.6
   compression:
-    mmr_top_k: 6             # 上下文去冗文档数
+    mmr_top_k: 6
     mmr_lambda: 0.7
   answer:
-    max_chars: 300           # 生成答案最大字数
-    source_limit: 4          # 返回来源上限
+    max_chars: 300
+    source_limit: 4
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+  db: 0
 ```
 
-说明：默认仅启用向量检索 + TF-IDF 排序的精简稳定路径；Hybrid 与 Re-rank 为可选增强，开启后对 RAG 召回与排序进行进一步优化。
+提示: 缓存使用独立的 Redis DB（默认 `redis.db + 1`），前缀 `aiops_assistant_cache:`，默认 TTL 3600 秒。
 
-### 关键设计与实现要点
+### 初始化与运行
 
-- 核心节点
-  - normalize_query: 清洗、归一化、语言检测、去重。
-  - intent_and_safety: 问题意图分类（info/howto/troubleshoot/overview），轻量安全检验（避免注入、PII）。
-  - rewrite_queries: 多变体改写（同义词/术语拼接/关键词组合），保留 ≤ 12 个候选。
-  - hybrid_retrieve: 向量检索 + 关键词/BM25 混合召回，扩大覆盖面。
-  - rerank: 交叉重排（可选 bge-reranker/jina-reranker）结合 TF-IDF 排序器，融合分数。
-  - compress_context: MMR 去冗 + 结构化摘要，限制上下文长度。
-  - synthesize_answer: 带来源引用的生成，平台类问题追加平台聚焦提示。
-  - grounding_check: 引用定位与覆盖率检查，必要时回退到 rewrite 节点循环一次。
-  - calibrate_confidence: 基于召回质量、重排分、覆盖率、答案长度等打分。
-  - cache_read_write: Redis 按 session+question+history 哈希缓存。
+- 首次启动：读取 `rag.knowledge_base_path` 下的 `.md/.markdown/.txt`，按 Markdown 头分段并清洗后入库；向量库为空时仍可通过空召回回退提供建议。
+- 运行时切换 RAG/MCP：`/assistant/chat` 通过 `mode` 切换；RAG 路径走 LangGraph，MCP 路径调用 `app.mcp.mcp_client`。
+- 变更知识：上传或直接创建后，可调用 `/assistant/knowledge/refresh` 异步重建向量；或用 `/assistant/reinitialize` 重新初始化实例。
 
-- RAG 提质策略
-  - 多路召回（向量+BM25+关键词）、交叉重排、引用覆盖校验、置信度校准、低置信度自我迭代一跳。
-  - 平台概览/架构类问题的专门 prompt 附加，确保平台内容优先。
-  - 无召回时的最佳实践回退（保留你现有的优势，但作为 LangGraph 的降级分支）。
+### 返回数据示例（/assistant/chat, RAG）
+
+```json
+{
+  "response": "...",
+  "confidence": 0.83
+}
+```
+
+### 性能与调优要点
+
+- **并发检索**: 将 `rag.max_rewrite_queries` 控制在 4–8；超大值会增加向量检索开销。
+- **生成长度**: 内置最大输出 token 做了上限保护（≤800），减少延迟与费用。
+- **Hybrid 检索**: 对术语不规范/短问句可开启 `rag.retrieve.hybrid_enabled=true` 提升覆盖。
+- **缓存命中**: 提问相同或上下文相近（最近2条）时可直接命中缓存，显著降低时延。

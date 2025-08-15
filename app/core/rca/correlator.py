@@ -42,15 +42,38 @@ class CorrelationAnalyzer:
                 logger.warning("准备相关性分析数据失败")
                 return {}
 
+            # 控制相关性计算的最大列数，避免 O(n^2) 过大
+            try:
+                max_cols = int(getattr(config.rca, "correlation_max_columns", 150) or 150)
+            except Exception:
+                max_cols = 150
+            if len(combined_df.columns) > max_cols:
+                limited_cols = list(combined_df.columns)[:max_cols]
+                combined_df = combined_df[limited_cols]
+                logger.warning(
+                    f"相关性分析列数过多，已限制为前 {max_cols} 列以降低CPU"
+                )
             logger.info(f"准备了 {len(combined_df.columns)} 个指标进行相关性分析")
 
             # 计算相关性矩阵
             correlation_matrix = self._calculate_correlation_matrix(combined_df)
 
             # 提取显著相关性
+            # 控制每个指标返回的TopK数量
+            try:
+                top_k = int(getattr(config.rca, "correlation_return_top_k", 5) or 5)
+            except Exception:
+                top_k = 5
             significant_correlations = self._extract_significant_correlations(
                 correlation_matrix
             )
+            if top_k != 5:
+                try:
+                    for k in list(significant_correlations.keys()):
+                        vals = significant_correlations.get(k) or []
+                        significant_correlations[k] = vals[: max(1, top_k)]
+                except Exception:
+                    pass
 
             logger.info(f"发现 {len(significant_correlations)} 组显著相关性")
             return significant_correlations
@@ -67,6 +90,13 @@ class CorrelationAnalyzer:
         cross: Dict[str, List[Tuple[str, int, float]]] = {}
         try:
             combined_df = self._prepare_correlation_data(metrics_data)
+            # 限制列数
+            try:
+                max_cols = int(getattr(config.rca, "correlation_max_columns", 150) or 150)
+            except Exception:
+                max_cols = 150
+            if len(combined_df.columns) > max_cols:
+                combined_df = combined_df[list(combined_df.columns)[:max_cols]]
             metrics = list(combined_df.columns)
             for i, m1 in enumerate(metrics):
                 values_for_m1: List[Tuple[str, int, float]] = []
@@ -83,7 +113,11 @@ class CorrelationAnalyzer:
                             values_for_m1.append((m2, int(best_lag), round(best_corr, 3)))
                 if values_for_m1:
                     values_for_m1.sort(key=lambda x: abs(x[2]), reverse=True)
-                    cross[m1] = values_for_m1[:5]
+                    try:
+                        max_pairs = int(getattr(config.rca, "cross_lag_max_pairs_per_metric", 3) or 3)
+                    except Exception:
+                        max_pairs = 3
+                    cross[m1] = values_for_m1[: max(1, max_pairs)]
         except Exception as e:
             logger.error(f"跨时滞相关分析失败: {str(e)}")
             cross = {}

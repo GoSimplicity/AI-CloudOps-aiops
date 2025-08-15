@@ -9,6 +9,7 @@ Description: 基于Redis的向量存储和检索系统
 """
 
 import logging
+import asyncio
 import os
 import time
 from typing import Any, Dict, List, Optional
@@ -156,8 +157,8 @@ class KubernetesService:
 
         try:
             namespace = namespace or config.k8s.namespace
-            deployment = self.apps_v1.read_namespaced_deployment(
-                name=name, namespace=namespace
+            deployment = await asyncio.to_thread(
+                self.apps_v1.read_namespaced_deployment, name=name, namespace=namespace
             )
 
             deployment_dict = deployment.to_dict()
@@ -220,8 +221,10 @@ class KubernetesService:
 
         try:
             namespace = namespace or config.k8s.namespace
-            pods = self.core_v1.list_namespaced_pod(
-                namespace=namespace, label_selector=label_selector
+            pods = await asyncio.to_thread(
+                self.core_v1.list_namespaced_pod,
+                namespace=namespace,
+                label_selector=label_selector,
             )
 
             pod_list = []
@@ -251,8 +254,11 @@ class KubernetesService:
 
         try:
             namespace = namespace or config.k8s.namespace
-            events = self.core_v1.list_namespaced_event(
-                namespace=namespace, field_selector=field_selector, limit=limit
+            events = await asyncio.to_thread(
+                self.core_v1.list_namespaced_event,
+                namespace=namespace,
+                field_selector=field_selector,
+                limit=limit,
             )
 
             event_list: List[Dict[str, Any]] = []
@@ -291,7 +297,8 @@ class KubernetesService:
 
         try:
             namespace = namespace or config.k8s.namespace
-            logs = self.core_v1.read_namespaced_pod_log(
+            logs = await asyncio.to_thread(
+                self.core_v1.read_namespaced_pod_log,
                 name=pod_name,
                 namespace=namespace,
                 container=container,
@@ -403,7 +410,7 @@ class KubernetesService:
             logger.warning("Kubernetes未初始化，无法获取节点列表")
             return []
         try:
-            nodes = self.core_v1.list_node()
+            nodes = await asyncio.to_thread(self.core_v1.list_node)
             node_list: List[Dict[str, Any]] = []
             for n in nodes.items or []:
                 node_dict = n.to_dict() if hasattr(n, "to_dict") else {}
@@ -443,7 +450,7 @@ class KubernetesService:
             if dry_run:
                 kwargs["dry_run"] = "All"
             # 使用 AppsV1Api 的 patch_namespaced_deployment
-            resp = self.apps_v1.patch_namespaced_deployment(**kwargs)
+            resp = await asyncio.to_thread(self.apps_v1.patch_namespaced_deployment, **kwargs)
             return resp is not None
         except ApiException as e:
             logger.error(f"Patch Deployment失败: {name}, ns={namespace}, err={str(e)}")
@@ -460,7 +467,9 @@ class KubernetesService:
 
         try:
             namespace = namespace or config.k8s.namespace
-            deployments = self.apps_v1.list_namespaced_deployment(namespace=namespace)
+            deployments = await asyncio.to_thread(
+                self.apps_v1.list_namespaced_deployment, namespace=namespace
+            )
 
             deployment_list = []
             for deployment in deployments.items:
@@ -487,7 +496,9 @@ class KubernetesService:
 
         try:
             namespace = namespace or config.k8s.namespace
-            services = self.core_v1.list_namespaced_service(namespace=namespace)
+            services = await asyncio.to_thread(
+                self.core_v1.list_namespaced_service, namespace=namespace
+            )
 
             service_list = []
             for service in services.items:

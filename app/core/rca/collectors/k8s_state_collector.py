@@ -24,9 +24,10 @@ class K8sStateCollector:
         self._svc = KubernetesService()
 
     async def snapshot(self) -> Dict[str, Any]:
-        pods_objs = self._svc.get_pods(namespace=self.namespace)
-        deps_objs = self._svc.get_deployments(namespace=self.namespace)
-        svcs_objs = self._svc.get_services(namespace=self.namespace)
+        # 使用异步版本以避免阻塞事件循环
+        pods_objs = await self._svc.get_pods_async(namespace=self.namespace)
+        deps_objs = await self._svc.get_deployments_async(namespace=self.namespace)
+        svcs_objs = await self._svc.get_services_async(namespace=self.namespace)
         pods = [p.to_dict() if hasattr(p, "to_dict") else p for p in (pods_objs or [])]
         deployments = [
             d.to_dict() if hasattr(d, "to_dict") else d for d in (deps_objs or [])
