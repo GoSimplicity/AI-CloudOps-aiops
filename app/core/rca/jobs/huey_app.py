@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from app.config.settings import config, ENV
 
-# 动态导入 huey：在未安装 huey 的环境（如最小化测试环境）下不报错，提供兜底实现
+# 动态导入 huey，在未安装 huey 的环境（如最小化测试环境）下不报错，提供兜底实现
 _huey_mod = None
 try:
     _huey_mod = __import__("huey")

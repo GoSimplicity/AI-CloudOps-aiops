@@ -11,5 +11,4 @@ Description: 多Agent 模块（assistant）
 # 导入重新组织后的助手类
 from app.core.agents.assistant.core import AssistantAgent
 
-# 向后兼容，保持原有接口
 __all__ = ["AssistantAgent"]

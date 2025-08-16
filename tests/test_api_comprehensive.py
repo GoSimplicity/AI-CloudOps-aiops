@@ -91,31 +91,13 @@ class TestHealthAPI:
             data = response.json()
             assert "data" in data
 
-    @patch("app.api.routes.health.KubernetesService")
-    def test_health_k8s(self, mock_k8s, client):
-        """测试Kubernetes健康检查"""
-        # 模拟成功的Kubernetes连接
-        mock_k8s.return_value.check_connectivity.return_value = True
+    def test_health_k8s(self, client):
+        """测试Kubernetes健康检查 - 已移除，统一使用 /health 接口"""
+        pass
 
-        response = client.get("/api/v1/health/k8s")
-
-        assert response.status_code in [200, 503, 404]
-        if response.status_code in [200, 503]:
-            data = response.json()
-            assert "data" in data
-
-    @patch("app.api.routes.health.PrometheusService")
-    def test_health_prometheus(self, mock_prometheus, client):
-        """测试Prometheus健康检查"""
-        # 模拟成功的Prometheus连接
-        mock_prometheus.return_value.check_connectivity.return_value = True
-
-        response = client.get("/api/v1/health/prometheus")
-
-        assert response.status_code in [200, 503, 404]
-        if response.status_code in [200, 503]:
-            data = response.json()
-            assert "data" in data
+    def test_health_prometheus(self, client):
+        """测试Prometheus健康检查 - 已移除，统一使用 /health 接口"""
+        pass
 
     def test_health_system(self, client):
         """测试系统健康检查"""

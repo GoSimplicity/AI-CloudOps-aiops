@@ -32,7 +32,7 @@ class PrometheusService:
             self._fast_timeout = 5
         logger.info(f"初始化Prometheus服务: {self.base_url}")
 
-    # 新增：同步健康检查，供单元测试使用
+    # 同步健康检查，供单元测试使用
     def check_connectivity(self) -> bool:
         try:
             url = f"{self.base_url}/api/v1/labels"
@@ -42,7 +42,7 @@ class PrometheusService:
             logger.error(f"Prometheus连通性检查失败: {str(e)}")
             return False
 
-    # 新增：同步即时查询，供单元测试使用
+    # 同步即时查询，供单元测试使用
     def query(self, query: str) -> Optional[Dict[str, Any]]:
         try:
             url = f"{self.base_url}/api/v1/query"
@@ -53,7 +53,7 @@ class PrometheusService:
             logger.error(f"Prometheus同步查询失败: {str(e)}")
             return None
 
-    # 新增：同步范围查询，供单元测试使用
+    # 同步范围查询，供单元测试使用
     def query_range(
         self, query: str, start: str, end: str, step: str = "1m"
     ) -> Optional[Dict[str, Any]]:

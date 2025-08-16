@@ -329,8 +329,6 @@ async def run_async_func_safely(func, *args, **kwargs):
 def run_async_func_in_background(func, *args, **kwargs) -> None:
     """
     将异步函数放到后台线程执行，不阻塞当前请求。
-    - 在新线程中创建事件循环并运行到完成
-    - 后台线程为 daemon，进程退出时自动结束
     """
 
     def _bg_target():
@@ -381,7 +379,6 @@ async def assistant_chat(payload: AutoAssistantChatReq):
                 )
 
             # 针对平台介绍类问题，强制引导检索平台文档
-            # 仅当命中平台意图时才附加提示关键词，否则保持原问题，避免过度引导
             if any(
                 k in question
                 for k in [

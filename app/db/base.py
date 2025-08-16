@@ -36,15 +36,12 @@ def _set_session_timezone_utc(dbapi_connection, connection_record):
         finally:
             cursor.close()
     except Exception:
-        # Non-MySQL backends may not support this; ignore
         pass
 
 
 def get_engine():
     global _engine
     if _engine is None:
-        # 只创建一次引擎，避免多进程/多线程重复初始化
-        # 兼容 SQLAlchemy 2.0：移除已废弃的 future 参数
         _engine = create_engine(
             config.database.sqlalchemy_url,
             echo=bool(config.database.echo),
@@ -53,7 +50,6 @@ def get_engine():
             pool_size=int(config.database.pool_size),
             max_overflow=int(config.database.max_overflow),
         )
-        # 尝试将数据库会话时区统一为 UTC（对 MySQL 生效，其他后端忽略）
         try:
             event.listen(_engine, "connect", _set_session_timezone_utc)
         except Exception:
@@ -64,7 +60,6 @@ def get_engine():
 def get_session_factory() -> sessionmaker[Session]:
     global _SessionFactory
     if _SessionFactory is None:
-        # 兼容 SQLAlchemy 2.0：移除 autocommit 参数（默认即为 False）
         _SessionFactory = sessionmaker(
             bind=get_engine(),
             autoflush=False,

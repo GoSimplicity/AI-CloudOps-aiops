@@ -24,7 +24,6 @@ class K8sStateCollector:
         self._svc = KubernetesService()
 
     async def snapshot(self) -> Dict[str, Any]:
-        # 使用异步版本以避免阻塞事件循环
         pods_objs = await self._svc.get_pods_async(namespace=self.namespace)
         deps_objs = await self._svc.get_deployments_async(namespace=self.namespace)
         svcs_objs = await self._svc.get_services_async(namespace=self.namespace)

@@ -23,9 +23,6 @@ class APIResponse(BaseModel, Generic[T]):
     data: Optional[T] = None
 
 
-# 备注：分页信息由各API响应直接提供字段，独立模型未直接被引用，移除以减小冗余
-
-
 class PaginatedListAPIResponse(BaseModel, Generic[T]):
     """分页列表API响应格式 - 包含分页信息"""
 
@@ -92,6 +89,3 @@ class HealthResponse(BaseModel):
     timestamp: str
     version: Optional[str] = None
     uptime: Optional[float] = None
-
-
-# 智能小助手响应直接使用通用 `APIResponse` 包裹，删除未用的专用模型

@@ -28,11 +28,7 @@ def iso_utc_now() -> str:
 
 
 def ensure_aware_utc(dt: datetime) -> datetime:
-    """将传入时间安全转换为时区感知的UTC时间。
-
-    - 如果是naive时间，默认按UTC处理
-    - 如果已有时区，转换到UTC
-    """
+    """将传入时间安全转换为时区感知的UTC时间。"""
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC_TZ)
     return dt.astimezone(UTC_TZ)

@@ -16,14 +16,6 @@ def apply_search_filter(
 ) -> List[Dict[str, Any]]:
     """
     对列表数据应用搜索过滤
-
-    Args:
-        items: 原始数据列表
-        search: 搜索关键词
-        search_fields: 搜索字段列表（在这些字段中进行模糊匹配）
-
-    Returns:
-        过滤后的数据列表
     """
     if not search or not search.strip():
         return items

@@ -13,27 +13,13 @@ import time
 from typing import Any, Dict
 
 import psutil
-from fastapi import APIRouter, HTTPException, status, Depends
-from fastapi.responses import JSONResponse
-from sqlalchemy import text
+from fastapi import APIRouter, HTTPException
 
 from app.core.prediction.predictor import PredictionService
-from app.db.base import get_engine
+from app.core.agents.coordinator import K8sCoordinatorAgent
 from app.di import get_service
 from app.models.response_models import APIResponse
-from app.models.entities import (
-    HealthEntity,
-    HealthSnapshotRecordEntity,
-    DeletionResultEntity,
-)
-from app.models.request_models import (
-    HealthSnapshotCreateReq,
-    HealthSnapshotUpdateReq,
-    HealthSnapshotListReq,
-)
-from app.db.base import session_scope
-from app.db.models import HealthSnapshotRecord, utcnow
-from sqlalchemy import select, func
+from app.models.entities import HealthEntity
 from app.services.kubernetes import KubernetesService
 from app.services.llm import LLMService
 from app.services.notification import NotificationService
@@ -48,23 +34,13 @@ router = APIRouter(tags=["health"])
 # 应用启动时间戳，用于计算系统运行时间（uptime）
 start_time = time.time()
 
-# 统一的服务配置，避免重复定义
+# 统一的服务配置
 HEALTH_CHECK_SERVICES = [
-    (
-        "prometheus",
-        PrometheusService,
-        "Prometheus监控服务",
-        "负责收集和存储系统监控数据",
-    ),
-    (
-        "kubernetes",
-        KubernetesService,
-        "Kubernetes集群服务",
-        "负责容器编排和集群资源管理",
-    ),
-    ("llm", LLMService, "大语言模型服务", "负责AI推理和智能分析"),
-    ("notification", NotificationService, "通知服务", "负责告警通知和消息推送"),
-    ("prediction", PredictionService, "预测服务", "负责负载预测和容量规划"),
+    ("prometheus", PrometheusService),
+    ("kubernetes", KubernetesService),
+    ("llm", LLMService),
+    ("notification", NotificationService),
+    ("prediction", PredictionService),
 ]
 
 
@@ -78,25 +54,11 @@ def get_service_instance(service_name: str, service_class):
 
 
 @router.get("/health")
-async def system_health_root() -> Dict[str, Any]:
-    """基础健康检查（向后兼容的简化路径）。"""
-    return await system_health()
-
-
-@router.get("/health/detail")
 async def system_health() -> Dict[str, Any]:
     """系统综合健康检查"""
     try:
-        # 返回数据统一使用 iso_utc_now()
         uptime = time.time() - start_time
-        components_status = check_components_health()
-        # 附加数据库健康探针（不影响总体健康判断）
-        try:
-            with get_engine().connect() as conn:
-                conn.execute(text("SELECT 1"))
-            components_status["database"] = True
-        except Exception:
-            components_status["database"] = False
+        components_status = await check_components_health()
         system_status = get_system_status()
         is_healthy = all(components_status.values())
 
@@ -118,113 +80,66 @@ async def system_health() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"健康检查失败: {str(e)}") from e
 
 
-@router.get("/health/detailed")
-async def system_health_detailed() -> Dict[str, Any]:
-    """详细健康检查（兼容测试所需路径）。"""
-    return await system_health()
-
-
-@router.get("/health/k8s")
-async def k8s_health() -> JSONResponse:
-    try:
-        svc = get_service_instance("kubernetes", KubernetesService)
-        ok = bool(svc and svc.check_connectivity())
-        payload = APIResponse(
-            code=0 if ok else 503,
-            message="ok" if ok else "unavailable",
-            data={"healthy": ok},
-        ).model_dump()
-        return JSONResponse(
-            content=payload,
-            status_code=(
-                status.HTTP_200_OK if ok else status.HTTP_503_SERVICE_UNAVAILABLE
-            ),
-        )
-    except Exception:
-        payload = APIResponse(
-            code=503, message="unavailable", data={"healthy": False}
-        ).model_dump()
-        return JSONResponse(
-            content=payload, status_code=status.HTTP_503_SERVICE_UNAVAILABLE
-        )
-
-
-@router.get("/health/prometheus")
-async def prometheus_health() -> JSONResponse:
-    try:
-        svc = get_service_instance("prometheus", PrometheusService)
-        ok = bool(svc and svc.check_connectivity())
-        payload = APIResponse(
-            code=0 if ok else 503,
-            message="ok" if ok else "unavailable",
-            data={"healthy": ok},
-        ).model_dump()
-        return JSONResponse(
-            content=payload,
-            status_code=(
-                status.HTTP_200_OK if ok else status.HTTP_503_SERVICE_UNAVAILABLE
-            ),
-        )
-    except Exception:
-        payload = APIResponse(
-            code=503, message="unavailable", data={"healthy": False}
-        ).model_dump()
-        return JSONResponse(
-            content=payload, status_code=status.HTTP_503_SERVICE_UNAVAILABLE
-        )
-
-
-@router.get("/health/system")
-async def system_resources() -> Dict[str, Any]:
-    """系统资源健康（兼容测试返回扁平字段）。"""
-    try:
-        cpu_percent = psutil.cpu_percent(interval=0)
-        mem = psutil.virtual_memory()
-        disk = psutil.disk_usage("/")
-        data = {
-            "cpu_percent": round(cpu_percent, 2),
-            "memory_percent": round(mem.percent, 2),
-            "disk_usage": {
-                "total": disk.total,
-                "used": disk.used,
-                "free": disk.free,
-                "percent": round((disk.used / disk.total) * 100, 2)
-                if disk.total
-                else 0.0,
-            },
-        }
-        return APIResponse(code=0, message="ok", data=data).model_dump()
-    except Exception:
-        return APIResponse(code=500, message="error", data={}).model_dump()
-
-
-def check_components_health() -> Dict[str, bool]:
+async def check_components_health() -> Dict[str, bool]:
     """检查各组件健康状态"""
     components_status = {}
-    for service_name, service_class, _, _ in HEALTH_CHECK_SERVICES:
+    
+    # 检查基础服务
+    for service_name, service_class in HEALTH_CHECK_SERVICES:
         try:
             service = get_service_instance(service_name, service_class)
-            components_status[service_name] = service.is_healthy() if service else False
+            if service:
+                if hasattr(service, 'health_check') and callable(getattr(service, 'health_check')):
+                    health_result = await service.health_check()
+                    components_status[service_name] = health_result.get('healthy', False) if isinstance(health_result, dict) else bool(health_result)
+                elif hasattr(service, 'is_healthy') and callable(getattr(service, 'is_healthy')):
+                    components_status[service_name] = service.is_healthy()
+                else:
+                    components_status[service_name] = True
+            else:
+                components_status[service_name] = False
         except Exception as e:
             logger.warning(f"{service_name}健康检查异常: {str(e)}")
             components_status[service_name] = False
+
+    # 检查协调器组件
+    try:
+        coordinator = K8sCoordinatorAgent()
+        coordinator_health = await coordinator.health_check()
+        components_status["coordinator"] = coordinator_health.get("healthy", False)
+        
+        if "components" in coordinator_health:
+            for comp_name, comp_status in coordinator_health["components"].items():
+                components_status[f"coordinator_{comp_name}"] = comp_status
+                
+    except Exception as e:
+        logger.warning(f"协调器健康检查异常: {str(e)}")
+        components_status["coordinator"] = False
 
     return components_status
 
 
 def get_system_status() -> Dict[str, Any]:
-    """获取系统资源状态（非阻塞）"""
+    """获取系统资源状态"""
     try:
-        # 获取CPU使用率（instantaneous，避免1秒阻塞）
         cpu_percent = psutil.cpu_percent(interval=0)
-
-        # 获取内存使用情况
         memory = psutil.virtual_memory()
-        memory_percent = memory.percent
-
-        # 获取磁盘使用情况
         disk = psutil.disk_usage("/")
         disk_percent = (disk.used / disk.total) * 100
+        
+        # 获取进程指标
+        process = psutil.Process()
+        
+        # 安全地获取网络连接数和打开文件数
+        try:
+            connections_count = len(process.net_connections())
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            connections_count = 0
+            
+        try:
+            open_files_count = len(process.open_files())
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            open_files_count = 0
 
         return {
             "cpu": {
@@ -232,7 +147,7 @@ def get_system_status() -> Dict[str, Any]:
                 "count": psutil.cpu_count(),
             },
             "memory": {
-                "usage_percent": round(memory_percent, 2),
+                "usage_percent": round(memory.percent, 2),
                 "total_gb": round(memory.total / (1024**3), 2),
                 "used_gb": round(memory.used / (1024**3), 2),
                 "available_gb": round(memory.available / (1024**3), 2),
@@ -243,199 +158,20 @@ def get_system_status() -> Dict[str, Any]:
                 "used_gb": round(disk.used / (1024**3), 2),
                 "free_gb": round(disk.free / (1024**3), 2),
             },
+            "process": {
+                "pid": process.pid,
+                "cpu_percent": round(process.cpu_percent(), 2),
+                "memory_mb": round(process.memory_info().rss / (1024**2), 2),
+                "threads": process.num_threads(),
+                "open_files": open_files_count,
+                "connections": connections_count,
+            }
         }
     except Exception as e:
         logger.error(f"获取系统状态失败: {str(e)}")
         return {
             "cpu": {"usage_percent": 0, "count": 0},
-            "memory": {
-                "usage_percent": 0,
-                "total_gb": 0,
-                "used_gb": 0,
-                "available_gb": 0,
-            },
+            "memory": {"usage_percent": 0, "total_gb": 0, "used_gb": 0, "available_gb": 0},
             "disk": {"usage_percent": 0, "total_gb": 0, "used_gb": 0, "free_gb": 0},
-        }
-
-
-# ========== Health 模块：标准化 CRUD（直连数据库） ==========
-
-
-@router.get("/health/records")
-async def list_health_records(params: HealthSnapshotListReq = Depends()):
-    try:
-        with session_scope() as session:
-            stmt = select(HealthSnapshotRecord).where(
-                HealthSnapshotRecord.deleted_at.is_(None)
-            )
-            if params.status:
-                stmt = stmt.where(HealthSnapshotRecord.status == params.status)
-            total = (
-                session.execute(
-                    select(func.count()).select_from(stmt.subquery())
-                ).scalar()
-                or 0
-            )
-            page = max(1, int(params.page or 1))
-            size = max(1, min(100, int(params.size or 20)))
-            rows = (
-                session.execute(
-                    stmt.order_by(HealthSnapshotRecord.id.desc())
-                    .offset((page - 1) * size)
-                    .limit(size)
-                )
-                .scalars()
-                .all()
-            )
-            items = [
-                HealthSnapshotRecordEntity(
-                    id=r.id,
-                    status=r.status,
-                    components=None,
-                    system=None,
-                    version=r.version,
-                    uptime=r.uptime,
-                    created_at=r.created_at.isoformat() if r.created_at else None,
-                    updated_at=r.updated_at.isoformat() if r.updated_at else None,
-                ).model_dump()
-                for r in rows
-            ]
-        return APIResponse(
-            code=0, message="ok", data={"items": items, "total": total}
-        ).model_dump()
-    except Exception:
-        return APIResponse(
-            code=0, message="ok", data={"items": [], "total": 0}
-        ).model_dump()
-
-
-@router.post("/health/records")
-async def create_health_record(payload: HealthSnapshotCreateReq):
-    try:
-        with session_scope() as session:
-            rec = HealthSnapshotRecord(
-                status=payload.status,
-                components=(str(payload.components) if payload.components else None),
-                system=(str(payload.system) if payload.system else None),
-                version=payload.version,
-                uptime=payload.uptime,
-            )
-            session.add(rec)
-            session.flush()
-            entity = HealthSnapshotRecordEntity(
-                id=rec.id,
-                status=rec.status,
-                components=None,
-                system=None,
-                version=rec.version,
-                uptime=rec.uptime,
-                created_at=rec.created_at.isoformat() if rec.created_at else None,
-                updated_at=rec.updated_at.isoformat() if rec.updated_at else None,
-            )
-        return APIResponse(
-            code=0, message="created", data=entity.model_dump()
-        ).model_dump()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="创建记录失败") from e
-
-
-@router.get("/health/records/{record_id}")
-async def get_health_record(record_id: int):
-    try:
-        with session_scope() as session:
-            r = session.get(HealthSnapshotRecord, record_id)
-            if not r or r.deleted_at is not None:
-                return APIResponse(
-                    code=404, message="not found", data=None
-                ).model_dump()
-            entity = HealthSnapshotRecordEntity(
-                id=r.id,
-                status=r.status,
-                components=None,
-                system=None,
-                version=r.version,
-                uptime=r.uptime,
-                created_at=r.created_at.isoformat() if r.created_at else None,
-                updated_at=r.updated_at.isoformat() if r.updated_at else None,
-            )
-        return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="获取记录失败") from e
-
-
-@router.put("/health/records/{record_id}")
-async def update_health_record(record_id: int, payload: HealthSnapshotUpdateReq):
-    try:
-        with session_scope() as session:
-            r = session.get(HealthSnapshotRecord, record_id)
-            if not r or r.deleted_at is not None:
-                return APIResponse(
-                    code=404, message="not found", data=None
-                ).model_dump()
-            for field in ("status", "version", "uptime"):
-                value = getattr(payload, field)
-                if value is not None:
-                    setattr(r, field, value)
-            if payload.components is not None:
-                r.components = str(payload.components)
-            if payload.system is not None:
-                r.system = str(payload.system)
-            session.add(r)
-            entity = HealthSnapshotRecordEntity(
-                id=r.id,
-                status=r.status,
-                components=None,
-                system=None,
-                version=r.version,
-                uptime=r.uptime,
-                created_at=r.created_at.isoformat() if r.created_at else None,
-                updated_at=r.updated_at.isoformat() if r.updated_at else None,
-            )
-        return APIResponse(
-            code=0, message="updated", data=entity.model_dump()
-        ).model_dump()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="更新记录失败") from e
-
-
-@router.delete("/health/records/{record_id}")
-async def delete_health_record(record_id: int):
-    try:
-        with session_scope() as session:
-            r = session.get(HealthSnapshotRecord, record_id)
-            if not r:
-                return APIResponse(
-                    code=404, message="not found", data=None
-                ).model_dump()
-            r.deleted_at = utcnow()
-            session.add(r)
-        entity = DeletionResultEntity(id=record_id)
-        return APIResponse(
-            code=0, message="deleted", data=entity.model_dump()
-        ).model_dump()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="删除记录失败") from e
-
-
-def get_process_metrics():
-    """获取当前进程的监控指标（非阻塞）"""
-    try:
-        process = psutil.Process()
-        return {
-            "pid": process.pid,
-            "cpu_percent": round(process.cpu_percent(), 2),
-            "memory_mb": round(process.memory_info().rss / (1024**2), 2),
-            "threads": process.num_threads(),
-            "open_files": len(process.open_files()),
-            "connections": len(process.connections()),
-        }
-    except Exception as e:
-        logger.error(f"获取进程指标失败: {str(e)}")
-        return {
-            "pid": 0,
-            "cpu_percent": 0,
-            "memory_mb": 0,
-            "threads": 0,
-            "open_files": 0,
-            "connections": 0,
+            "process": {"pid": 0, "cpu_percent": 0, "memory_mb": 0, "threads": 0, "open_files": 0, "connections": 0}
         }

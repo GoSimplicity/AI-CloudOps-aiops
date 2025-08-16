@@ -171,85 +171,8 @@ class TestDetailedHealthChecks:
 
 
 class TestSpecificServiceHealthChecks:
-    """特定服务健康检查测试"""
-
-    @patch("app.api.routes.health.KubernetesService")
-    def test_k8s_health_success(self, mock_k8s, client):
-        """测试Kubernetes健康检查成功"""
-        mock_k8s.return_value.check_connectivity.return_value = True
-
-        response = client.get("/api/v1/health/k8s")
-
-        assert response.status_code in [status.HTTP_200_OK, status.HTTP_404_NOT_FOUND]
-        if response.status_code == status.HTTP_200_OK:
-            data = response.json()
-            assert data["code"] == 0
-
-    @patch("app.api.routes.health.KubernetesService")
-    def test_k8s_health_failure(self, mock_k8s, client):
-        """测试Kubernetes健康检查失败"""
-        mock_k8s.return_value.check_connectivity.return_value = False
-
-        response = client.get("/api/v1/health/k8s")
-
-        assert response.status_code in [
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            status.HTTP_404_NOT_FOUND,
-        ]
-
-    @patch("app.api.routes.health.KubernetesService")
-    def test_k8s_health_exception(self, mock_k8s, client):
-        """测试Kubernetes健康检查异常"""
-        mock_k8s.return_value.check_connectivity.side_effect = Exception(
-            "K8s API不可达"
-        )
-
-        response = client.get("/api/v1/health/k8s")
-
-        # 应该优雅处理异常
-        assert response.status_code in [
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            status.HTTP_404_NOT_FOUND,
-        ]
-
-    @patch("app.api.routes.health.PrometheusService")
-    def test_prometheus_health_success(self, mock_prometheus, client):
-        """测试Prometheus健康检查成功"""
-        mock_prometheus.return_value.check_connectivity.return_value = True
-
-        response = client.get("/api/v1/health/prometheus")
-
-        assert response.status_code in [status.HTTP_200_OK, status.HTTP_404_NOT_FOUND]
-        if response.status_code == status.HTTP_200_OK:
-            data = response.json()
-            assert data["code"] == 0
-
-    @patch("app.api.routes.health.PrometheusService")
-    def test_prometheus_health_failure(self, mock_prometheus, client):
-        """测试Prometheus健康检查失败"""
-        mock_prometheus.return_value.check_connectivity.return_value = False
-
-        response = client.get("/api/v1/health/prometheus")
-
-        assert response.status_code in [
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            status.HTTP_404_NOT_FOUND,
-        ]
-
-    @patch("app.api.routes.health.PrometheusService")
-    def test_prometheus_health_exception(self, mock_prometheus, client):
-        """测试Prometheus健康检查异常"""
-        mock_prometheus.return_value.check_connectivity.side_effect = Exception(
-            "Prometheus不可达"
-        )
-
-        response = client.get("/api/v1/health/prometheus")
-
-        # 应该优雅处理异常
-        assert response.status_code in [
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            status.HTTP_404_NOT_FOUND,
-        ]
+    """特定服务健康检查测试 - 已移除，统一使用 /health 接口"""
+    pass
 
 
 class TestSystemHealthChecks:
