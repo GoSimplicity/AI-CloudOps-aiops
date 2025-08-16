@@ -10,6 +10,7 @@ Description: 健康检查 API 路由
 
 import logging
 import time
+from typing import Any, Dict
 
 import psutil
 from fastapi import APIRouter, HTTPException, status, Depends
@@ -77,13 +78,13 @@ def get_service_instance(service_name: str, service_class):
 
 
 @router.get("/health")
-async def system_health_root():
+async def system_health_root() -> Dict[str, Any]:
     """基础健康检查（向后兼容的简化路径）。"""
     return await system_health()
 
 
 @router.get("/health/detail")
-async def system_health():
+async def system_health() -> Dict[str, Any]:
     """系统综合健康检查"""
     try:
         # 返回数据统一使用 iso_utc_now()
@@ -118,13 +119,13 @@ async def system_health():
 
 
 @router.get("/health/detailed")
-async def system_health_detailed():
+async def system_health_detailed() -> Dict[str, Any]:
     """详细健康检查（兼容测试所需路径）。"""
     return await system_health()
 
 
 @router.get("/health/k8s")
-async def k8s_health():
+async def k8s_health() -> JSONResponse:
     try:
         svc = get_service_instance("kubernetes", KubernetesService)
         ok = bool(svc and svc.check_connectivity())
@@ -149,7 +150,7 @@ async def k8s_health():
 
 
 @router.get("/health/prometheus")
-async def prometheus_health():
+async def prometheus_health() -> JSONResponse:
     try:
         svc = get_service_instance("prometheus", PrometheusService)
         ok = bool(svc and svc.check_connectivity())
@@ -174,7 +175,7 @@ async def prometheus_health():
 
 
 @router.get("/health/system")
-async def system_resources():
+async def system_resources() -> Dict[str, Any]:
     """系统资源健康（兼容测试返回扁平字段）。"""
     try:
         cpu_percent = psutil.cpu_percent(interval=0)
@@ -197,7 +198,7 @@ async def system_resources():
         return APIResponse(code=500, message="error", data={}).model_dump()
 
 
-def check_components_health():
+def check_components_health() -> Dict[str, bool]:
     """检查各组件健康状态"""
     components_status = {}
     for service_name, service_class, _, _ in HEALTH_CHECK_SERVICES:
@@ -211,7 +212,7 @@ def check_components_health():
     return components_status
 
 
-def get_system_status():
+def get_system_status() -> Dict[str, Any]:
     """获取系统资源状态（非阻塞）"""
     try:
         # 获取CPU使用率（instantaneous，避免1秒阻塞）
@@ -335,7 +336,7 @@ async def create_health_record(payload: HealthSnapshotCreateReq):
             code=0, message="created", data=entity.model_dump()
         ).model_dump()
     except Exception as e:
-        raise HTTPException(status_code=500, detail="create record failed") from e
+        raise HTTPException(status_code=500, detail="创建记录失败") from e
 
 
 @router.get("/health/records/{record_id}")
@@ -359,7 +360,7 @@ async def get_health_record(record_id: int):
             )
         return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
     except Exception as e:
-        raise HTTPException(status_code=500, detail="get record failed") from e
+        raise HTTPException(status_code=500, detail="获取记录失败") from e
 
 
 @router.put("/health/records/{record_id}")
@@ -394,7 +395,7 @@ async def update_health_record(record_id: int, payload: HealthSnapshotUpdateReq)
             code=0, message="updated", data=entity.model_dump()
         ).model_dump()
     except Exception as e:
-        raise HTTPException(status_code=500, detail="update record failed") from e
+        raise HTTPException(status_code=500, detail="更新记录失败") from e
 
 
 @router.delete("/health/records/{record_id}")
@@ -413,7 +414,7 @@ async def delete_health_record(record_id: int):
             code=0, message="deleted", data=entity.model_dump()
         ).model_dump()
     except Exception as e:
-        raise HTTPException(status_code=500, detail="delete record failed") from e
+        raise HTTPException(status_code=500, detail="删除记录失败") from e
 
 
 def get_process_metrics():

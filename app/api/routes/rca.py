@@ -253,7 +253,7 @@ async def get_rca_record_db(record_id: int):
         return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
     except Exception as e:
         logger.error(f"get_rca_record 失败: {e}")
-        raise HTTPException(status_code=500, detail="get record failed") from e
+        raise HTTPException(status_code=500, detail="获取记录失败") from e
 
 
 @router.delete("/rca/records/delete/{record_id}")
@@ -273,7 +273,7 @@ async def delete_rca_record_db(record_id: int):
         ).model_dump()
     except Exception as e:
         logger.error(f"delete_rca_record 失败: {e}")
-        raise HTTPException(status_code=500, detail="delete record failed") from e
+        raise HTTPException(status_code=500, detail="删除记录失败") from e
 
 
 @router.post(
@@ -780,7 +780,7 @@ async def get_correlation_detail(job_id: str):
         return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
     except Exception as e:
         logger.error(f"获取相关性分析任务详情失败: {e}")
-        raise HTTPException(status_code=500, detail="get job failed") from e
+        raise HTTPException(status_code=500, detail="获取任务失败") from e
 
 
 @router.post(
@@ -1095,7 +1095,7 @@ async def get_rca_analysis_detail(job_id: str):
         return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
     except Exception as e:
         logger.error(f"获取RCA任务详情失败: {e}")
-        raise HTTPException(status_code=500, detail="get job failed") from e
+        raise HTTPException(status_code=500, detail="获取任务失败") from e
 
 
 @router.delete(
@@ -1326,7 +1326,7 @@ async def get_cross_correlation_detail(job_id: str):
         return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
     except Exception as e:
         logger.error(f"获取跨时滞相关任务详情失败: {e}")
-        raise HTTPException(status_code=500, detail="get job failed") from e
+        raise HTTPException(status_code=500, detail="获取任务失败") from e
 
 
 @router.delete(
@@ -1503,7 +1503,7 @@ async def get_timeline_detail(record_id: str):
         return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
     except Exception as e:
         logger.error(f"获取时间线详情失败: {e}")
-        raise HTTPException(status_code=500, detail="get timeline failed") from e
+        raise HTTPException(status_code=500, detail="获取时间线失败") from e
 
 
 @router.delete(

@@ -362,7 +362,7 @@ async def assistant_chat(payload: AutoAssistantChatReq):
         trace_id = f"req-{int(time.time() * 1000)}-{os.getpid()}"
         question = (payload.query or "").strip()
         if not question:
-            raise HTTPException(status_code=400, detail="query 必填")
+            raise HTTPException(status_code=400, detail="query 为必填项")
 
         mode_value = int(getattr(payload, "mode", 1) or 1)
         if mode_value not in (1, 2):

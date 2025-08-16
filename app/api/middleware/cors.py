@@ -10,12 +10,13 @@ Description: API 中间件（CORS 跨域）
 
 import logging
 
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 logger = logging.getLogger("aiops.cors")
 
 
-def setup_cors(app):
+def setup_cors(app: FastAPI) -> None:
     """设置CORS中间件"""
     try:
         # 配置CORS中间件

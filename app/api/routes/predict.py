@@ -64,7 +64,9 @@ def _save_trend_result(result: Dict[str, Any]) -> str:
 
 
 @router.get("/predict/record/list")
-async def list_prediction_records(params: PredictionRecordListReq = Depends()):
+async def list_prediction_records(
+    params: PredictionRecordListReq = Depends(),
+) -> Dict[str, Any]:
     """列出预测记录（分页+过滤）。
 
     仅保留查询能力以满足运营查看场景；创建/更新接口已按规划移除。
@@ -130,7 +132,7 @@ async def list_prediction_records(params: PredictionRecordListReq = Depends()):
 
 
 @router.get("/predict/record/detail/{record_id}")
-async def get_prediction_record(record_id: int):
+async def get_prediction_record(record_id: int) -> Dict[str, Any]:
     """获取预测记录详情。"""
     try:
         with session_scope() as session:
@@ -159,11 +161,11 @@ async def get_prediction_record(record_id: int):
         return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
     except Exception as e:
         logger.error(f"get_prediction_record 失败: {e}")
-        raise HTTPException(status_code=500, detail="get record failed") from e
+        raise HTTPException(status_code=500, detail="获取记录失败") from e
 
 
 @router.delete("/predict/record/delete/{record_id}")
-async def delete_prediction_record(record_id: int):
+async def delete_prediction_record(record_id: int) -> Dict[str, Any]:
     try:
         with session_scope() as session:
             r = session.get(PredictionRecord, record_id)
@@ -180,7 +182,7 @@ async def delete_prediction_record(record_id: int):
         ).model_dump()
     except Exception as e:
         logger.error(f"delete_prediction_record 失败: {e}")
-        raise HTTPException(status_code=500, detail="delete record failed") from e
+        raise HTTPException(status_code=500, detail="删除记录失败") from e
 
 
 ## =============================
@@ -189,7 +191,7 @@ async def delete_prediction_record(record_id: int):
 
 
 @router.post("/predict/model/refresh")
-async def refresh_model():
+async def refresh_model() -> Dict[str, Any]:
     """刷新（重新加载）预测模型。
 
     为什么：按规划提供标准化的模型刷新入口，便于运维在热更新模型文件后无重启生效。
@@ -207,7 +209,7 @@ async def refresh_model():
 
 
 @router.get("/predict/model/list")
-async def list_models():
+async def list_models() -> Dict[str, Any]:
     """列出可用模型与当前加载状态。
 
     简化实现：基于 `ModelLoader.models` 注册表提供可用类型，同时返回当前加载器元数据。
@@ -227,7 +229,7 @@ async def list_models():
 
 
 @router.get("/predict/model/detail/{model_id}")
-async def model_detail(model_id: str):
+async def model_detail(model_id: str) -> Dict[str, Any]:
     """获取指定模型的详情（占位实现）。
 
     为什么：按规划提供模型详情入口；由于未引入多模型切换，这里返回默认配置与注册表信息。
@@ -262,7 +264,7 @@ async def model_detail(model_id: str):
 
 
 @router.post("/predict/reinitialize")
-async def reinitialize_service():
+async def reinitialize_service() -> Dict[str, Any]:
     """重新初始化预测服务。
 
     为什么：提供与刷新不同层级的重置能力（包括内部状态），但为简单与可维护，复用 reload 实现。
@@ -287,7 +289,7 @@ async def reinitialize_service():
 
 
 @router.get("/predict/health")
-async def predict_health():
+async def predict_health() -> Dict[str, Any]:
     """预测服务健康检查。"""
     try:
         health_status = await asyncio.to_thread(prediction_service.is_healthy)
@@ -313,7 +315,7 @@ async def predict_health():
 
 
 @router.get("/predict/trend/list")
-async def trend_list(params: AutoTrendReq = Depends()):
+async def trend_list(params: AutoTrendReq = Depends()) -> Dict[str, Any]:
     """获取趋势预测列表（按请求参数即时生成并缓存）。
 
     设计动机：
@@ -427,7 +429,7 @@ async def trend_list(params: AutoTrendReq = Depends()):
 
 
 @router.get("/predict/trend/detail/{trend_id}")
-async def trend_detail(trend_id: str):
+async def trend_detail(trend_id: str) -> Dict[str, Any]:
     """获取趋势预测详情。"""
     try:
         if trend_id not in _trend_cache:

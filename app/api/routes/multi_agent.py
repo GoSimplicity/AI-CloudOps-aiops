@@ -9,7 +9,7 @@ Description: 多Agent 编排 API 路由
 """
 
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 import json
 
 from fastapi import APIRouter, HTTPException, Query, Depends
@@ -61,7 +61,7 @@ _detector = K8sDetectorAgent()
     summary="获取多智能体指标详情",
     description="获取多智能体协作系统的运行指标，包括工作流统计、成功率等关键性能数据",
 )
-async def multi_agent_metrics():
+async def multi_agent_metrics() -> Dict[str, Any]:
     """导出多Agent修复指标（内存级）。"""
     try:
         m = coordinator.metrics if hasattr(coordinator, "metrics") else {}
@@ -94,7 +94,7 @@ async def multi_agent_metrics():
     summary="创建单个部署修复任务",
     description="为指定命名空间下的单个Kubernetes部署创建智能修复任务，通过多智能体协作进行故障诊断和自动修复",
 )
-async def create_deployment_repair(request_data: AutoMultiAgentRepairReq):
+async def create_deployment_repair(request_data: AutoMultiAgentRepairReq) -> Dict[str, Any]:
     """创建单个部署修复"""
     try:
         deployment = sanitize_input(request_data.deployment)
@@ -130,7 +130,7 @@ async def create_deployment_repair(request_data: AutoMultiAgentRepairReq):
     summary="创建批量部署修复任务",
     description="为指定命名空间下的所有Kubernetes部署创建批量修复任务，通过多智能体协作批量处理故障修复",
 )
-async def create_all_repairs(request_data: AutoMultiAgentRepairAllReq):
+async def create_all_repairs(request_data: AutoMultiAgentRepairAllReq) -> Dict[str, Any]:
     """创建命名空间下所有部署修复"""
     try:
         namespace = sanitize_input(request_data.namespace)
@@ -156,7 +156,7 @@ async def create_all_repairs(request_data: AutoMultiAgentRepairAllReq):
     summary="创建集群健康分析任务",
     description="对指定Kubernetes集群进行全面的健康状态分析，检测潜在问题并提供优化建议",
 )
-async def create_cluster_analysis(request_data: AutoMultiAgentClusterReq):
+async def create_cluster_analysis(request_data: AutoMultiAgentClusterReq) -> Dict[str, Any]:
     """创建集群健康状态分析"""
     try:
         cluster_name = sanitize_input(request_data.cluster_name)
@@ -181,7 +181,7 @@ async def create_cluster_analysis(request_data: AutoMultiAgentClusterReq):
     summary="获取协调器状态详情",
     description="获取多智能体协调器的详细运行状态，包括各组件健康状况和连接状态",
 )
-async def get_coordinator_status():
+async def get_coordinator_status() -> Dict[str, Any]:
     """获取协调器状态"""
     try:
         logger.info("获取多Agent协调器状态")
@@ -211,7 +211,7 @@ async def list_agents(
     page: Optional[int] = Query(1, description="页码（从1开始）"),
     size: Optional[int] = Query(20, description="每页大小"),
     search: Optional[str] = Query(None, description="搜索关键词"),
-):
+) -> Dict[str, Any]:
     """列出所有Agent（支持分页和搜索）"""
     try:
         logger.info(f"获取Agent列表: page={page}, size={size}, search={search}")
@@ -266,7 +266,7 @@ async def list_agents(
     summary="多智能体服务健康检查",
     description="检查多智能体系统的整体健康状态，包括协调器和各个智能体组件的运行状况",
 )
-async def multi_agent_health():
+async def multi_agent_health() -> Dict[str, Any]:
     """多Agent服务健康检查"""
     try:
         # 检查协调器健康状态
@@ -292,7 +292,7 @@ async def multi_agent_health():
     summary="获取多智能体系统状态",
     description="获取多智能体系统的当前运行状态和活跃智能体信息",
 )
-async def multi_agent_status():
+async def multi_agent_status() -> Dict[str, Any]:
     try:
         entity = MultiAgentStatusEntity(
             agents=[{"name": "detector", "status": "active"}]
@@ -302,7 +302,7 @@ async def multi_agent_status():
         logger.error(f"状态获取失败: {e}")
         from fastapi import HTTPException as _HTTPException
 
-        raise _HTTPException(status_code=500, detail="status failed") from e
+        raise _HTTPException(status_code=500, detail="状态获取失败") from e
 
 
 @router.post(
@@ -310,7 +310,7 @@ async def multi_agent_status():
     summary="执行多智能体任务",
     description="执行指定的多智能体协作任务，包括任务分发、执行监控和结果汇总",
 )
-async def multi_agent_execute(payload: AutoMultiAgentExecuteReq):
+async def multi_agent_execute(payload: AutoMultiAgentExecuteReq) -> Dict[str, Any]:
     try:
         return APIResponse(
             code=0, message="ok", data={"task_id": "task_1", "status": "started"}
@@ -319,7 +319,7 @@ async def multi_agent_execute(payload: AutoMultiAgentExecuteReq):
         logger.error(f"任务执行失败: {e}")
         from fastapi import HTTPException as _HTTPException
 
-        raise _HTTPException(status_code=500, detail="execute failed") from e
+        raise _HTTPException(status_code=500, detail="任务执行失败") from e
 
 
 @router.get(
@@ -327,7 +327,7 @@ async def multi_agent_execute(payload: AutoMultiAgentExecuteReq):
     summary="获取智能体协调详情",
     description="获取多智能体协调机制的详细信息，包括任务分配、执行进度和资源利用率",
 )
-async def multi_agent_coordination():
+async def multi_agent_coordination() -> Dict[str, Any]:
     try:
         return APIResponse(
             code=0,
@@ -338,7 +338,7 @@ async def multi_agent_coordination():
         logger.error(f"协调状态失败: {e}")
         from fastapi import HTTPException as _HTTPException
 
-        raise _HTTPException(status_code=500, detail="coordination failed") from e
+        raise _HTTPException(status_code=500, detail="协调状态获取失败") from e
 
 
 # ========== Multi-Agent 模块：标准化 CRUD（直连数据库） ==========
@@ -349,7 +349,7 @@ async def multi_agent_coordination():
     summary="获取工作流记录列表",
     description="获取多智能体工作流执行记录列表，支持按命名空间、状态筛选和分页查询",
 )
-async def list_workflow_records(params: WorkflowRecordListReq = Depends()):
+async def list_workflow_records(params: WorkflowRecordListReq = Depends()) -> Dict[str, Any]:
     try:
         with session_scope() as session:
             stmt = select(WorkflowRecord).where(WorkflowRecord.deleted_at.is_(None))
@@ -431,7 +431,7 @@ async def create_workflow_record(payload: WorkflowRecordCreateReq):
         ).model_dump()
     except Exception as e:
         logger.error(f"create_workflow_record 失败: {e}")
-        raise HTTPException(status_code=500, detail="create record failed") from e
+        raise HTTPException(status_code=500, detail="创建记录失败") from e
 
 
 @router.get(
@@ -460,7 +460,7 @@ async def get_workflow_record(record_id: int):
         return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
     except Exception as e:
         logger.error(f"get_workflow_record 失败: {e}")
-        raise HTTPException(status_code=500, detail="get record failed") from e
+        raise HTTPException(status_code=500, detail="获取记录失败") from e
 
 
 @router.put(
@@ -501,7 +501,7 @@ async def update_workflow_record(record_id: int, payload: WorkflowRecordUpdateRe
         ).model_dump()
     except Exception as e:
         logger.error(f"update_workflow_record 失败: {e}")
-        raise HTTPException(status_code=500, detail="update record failed") from e
+        raise HTTPException(status_code=500, detail="更新记录失败") from e
 
 
 @router.delete(
@@ -525,4 +525,4 @@ async def delete_workflow_record(record_id: int):
         ).model_dump()
     except Exception as e:
         logger.error(f"delete_workflow_record 失败: {e}")
-        raise HTTPException(status_code=500, detail="delete record failed") from e
+        raise HTTPException(status_code=500, detail="删除记录失败") from e

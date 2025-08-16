@@ -10,7 +10,7 @@ Description: Autofix 自动修复 API 路由
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Depends
 from sqlalchemy import select, func
@@ -71,7 +71,7 @@ k8s_service = KubernetesService()
     summary="诊断Kubernetes问题",
     description="诊断指定命名空间中的Kubernetes问题，返回问题列表",
 )
-async def diagnose(payload: AutoAutofixDiagnoseReq):
+async def diagnose(payload: AutoAutofixDiagnoseReq) -> Dict[str, Any]:
     try:
         namespace = payload.namespace or "default"
         entity = AutofixDiagnoseEntity(namespace=namespace, issues=[])
@@ -84,12 +84,12 @@ async def diagnose(payload: AutoAutofixDiagnoseReq):
 @router.post(
     "/fix", summary="修复Kubernetes问题", description="修复指定部署的Kubernetes问题"
 )
-async def fix(payload: AutoAutofixFixReq):
+async def fix(payload: AutoAutofixFixReq) -> Dict[str, Any]:
     try:
         namespace = payload.namespace or "default"
         deployment = payload.deployment or ""
         if not deployment:
-            raise HTTPException(status_code=400, detail="deployment 必填")
+            raise HTTPException(status_code=400, detail="deployment 为必填项")
         entity = AutofixActionResultEntity(
             namespace=namespace, deployment=deployment, status="success"
         )
@@ -106,7 +106,7 @@ async def fix(payload: AutoAutofixFixReq):
     summary="执行修复工作流",
     description="启动自动修复工作流，处理复杂的Kubernetes问题",
 )
-async def workflow(payload: AutoAutofixWorkflowReq):
+async def workflow(payload: AutoAutofixWorkflowReq) -> Dict[str, Any]:
     try:
         entity = WorkflowEntity(workflow_id="wf_1", status="started")
         return APIResponse(code=0, message="ok", data=entity.model_dump()).model_dump()
@@ -120,7 +120,7 @@ async def workflow(payload: AutoAutofixWorkflowReq):
     summary="创建自动修复任务",
     description="创建新的自动修复任务，对指定的Kubernetes部署进行诊断和修复",
 )
-async def create_autofix(request_data: AutoAutofixCreateReq):
+async def create_autofix(request_data: AutoAutofixCreateReq) -> Dict[str, Any]:
     """创建自动修复Kubernetes问题"""
     try:
         # 验证请求参数
@@ -230,7 +230,7 @@ async def list_fix_history(
     status: Optional[str] = Query(None, description="状态过滤(success/failed)"),
     start: Optional[str] = Query(None, description="起始时间(ISO8601)"),
     end: Optional[str] = Query(None, description="结束时间(ISO8601)"),
-):
+) -> Dict[str, Any]:
     """获取修复历史列表（支持分页和搜索）"""
     try:
         logger.info(f"获取修复历史: page={page}, size={size}, search={search}")
@@ -303,7 +303,7 @@ async def list_fix_history(
     summary="获取修复记录详情",
     description="根据记录ID获取指定自动修复记录的详细信息",
 )
-async def get_autofix_record(record_id: int):
+async def get_autofix_record(record_id: int) -> Dict[str, Any]:
     """获取自动修复记录详情"""
     try:
         with get_session() as session:
@@ -338,7 +338,7 @@ async def get_autofix_record(record_id: int):
     summary="删除修复记录",
     description="软删除指定的自动修复记录",
 )
-async def delete_autofix_record(record_id: int):
+async def delete_autofix_record(record_id: int) -> Dict[str, Any]:
     """软删除自动修复记录"""
     try:
         with session_scope() as session:
@@ -366,7 +366,7 @@ async def delete_autofix_record(record_id: int):
     summary="自动修复服务健康检查",
     description="检查自动修复服务各组件的健康状态",
 )
-async def autofix_health():
+async def autofix_health() -> Dict[str, Any]:
     """自动修复服务健康检查"""
     try:
         # 协调器健康
@@ -407,7 +407,7 @@ async def autofix_health():
 @router.post(
     "/notify/create", summary="发送通知", description="发送自动修复相关的通知消息"
 )
-async def send_notify(payload: AutoAutofixNotifyReq):
+async def send_notify(payload: AutoAutofixNotifyReq) -> Dict[str, Any]:
     try:
         import app.services.notification as notification_mod
 
@@ -436,7 +436,7 @@ async def send_notify(payload: AutoAutofixNotifyReq):
     summary="获取修复记录列表",
     description="获取自动修复记录列表，支持分页和条件过滤",
 )
-async def list_autofix_records(params: AutoFixRecordListReq = Depends()):
+async def list_autofix_records(params: AutoFixRecordListReq = Depends()) -> Dict[str, Any]:
     try:
         with session_scope() as session:
             stmt = select(AutoFixJobRecord).where(AutoFixJobRecord.deleted_at.is_(None))
@@ -487,7 +487,7 @@ async def list_autofix_records(params: AutoFixRecordListReq = Depends()):
 @router.post(
     "/records/create", summary="创建修复记录", description="创建新的自动修复记录"
 )
-async def create_autofix_record(payload: AutoFixRecordCreateReq):
+async def create_autofix_record(payload: AutoFixRecordCreateReq) -> Dict[str, Any]:
     try:
         with session_scope() as session:
             rec = AutoFixJobRecord(

@@ -12,7 +12,7 @@ import logging
 import traceback
 from datetime import datetime, timezone
 
-from fastapi import HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.common.exceptions import AppError
@@ -183,7 +183,7 @@ async def app_error_handler(request: Request, exc: AppError):
         return _create_error_response(500, "处理业务异常时发生错误")
 
 
-def setup_error_handlers(app):
+def setup_error_handlers(app: FastAPI) -> None:
     """设置错误处理器"""
     try:
         # 添加HTTP异常处理器
