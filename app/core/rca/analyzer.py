@@ -178,8 +178,8 @@ class RCAAnalyzer:
                     for ev in context_events:
                         ev_type = str(ev.get("type") or "").lower()
                         reason = str(ev.get("reason") or "").lower()
-                        first_ts = ev.get("firstTimestamp")
-                        last_ts = ev.get("lastTimestamp")
+                        first_ts = ev.get("first_timestamp")
+                        last_ts = ev.get("last_timestamp")
                         # 仅统计 Warning 级别及常见异常信号
                         if ev_type == "warning" or reason in {
                             "unhealthy",
@@ -652,13 +652,13 @@ class RCAAnalyzer:
                 # 限制事件数量；优先按时间排序，让时间线更直观
                 try:
                     def _event_ts(ev):
-                        ts = ev.get("firstTimestamp") or ev.get("lastTimestamp")
+                        ts = ev.get("first_timestamp") or ev.get("last_timestamp")
                         return str(ts) if ts else ""
                     events_sorted = sorted(events, key=_event_ts)[:200]
                 except Exception:
                     events_sorted = events[:200]
                 for e in events_sorted:
-                    ts_raw = e.get("firstTimestamp") or e.get("lastTimestamp")
+                    ts_raw = e.get("first_timestamp") or e.get("last_timestamp")
                     try:
                         ts_val = str(ts_raw) if ts_raw else None
                     except Exception:

@@ -35,9 +35,9 @@ class K8sEventsCollector:
                     "type": e.get("type"),
                     "reason": e.get("reason"),
                     "message": e.get("message"),
-                    "firstTimestamp": e.get("first_timestamp")
+                    "first_timestamp": e.get("first_timestamp")
                     or meta.get("creation_timestamp"),
-                    "lastTimestamp": e.get("last_timestamp"),
+                    "last_timestamp": e.get("last_timestamp"),
                 }
             )
         return trimmed

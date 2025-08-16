@@ -55,8 +55,8 @@ class RuleEngine:
                                 "reason": ev.get("reason"),
                                 "message": ev.get("message"),
                                 "namespace": ev.get("namespace"),
-                                "firstTimestamp": ev.get("firstTimestamp"),
-                                "lastTimestamp": ev.get("lastTimestamp"),
+                                "first_timestamp": ev.get("first_timestamp"),
+                                "last_timestamp": ev.get("last_timestamp"),
                             }
                         )
                         break
