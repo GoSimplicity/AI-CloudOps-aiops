@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Redis向量存储实现
+AI-CloudOps 智能运维平台
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
     logger.info("AIOps平台已关闭")
 
 
-def create_app():
+def create_app() -> FastAPI:
     """创建FastAPI应用实例"""
     app = FastAPI(
         title="AIOps Platform",

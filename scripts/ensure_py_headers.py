@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Redis向量存储实现
+AI-CloudOps 智能运维平台
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
@@ -169,7 +169,7 @@ def build_header_for(path: Path, content: str) -> str:
         "#!/usr/bin/env python3\n"
         "# -*- coding: utf-8 -*-\n"
         '"""\n'
-        "Redis向量存储实现\n"
+        "AI-CloudOps 智能运维平台\n"
         "Author: Bamboo\n"
         "Email: bamboocloudops@gmail.com\n"
         "License: Apache 2.0\n"

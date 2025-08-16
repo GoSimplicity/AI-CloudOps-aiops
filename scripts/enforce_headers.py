@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Redis向量存储实现
+AI-CloudOps 智能运维平台
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
@@ -61,11 +61,11 @@ def extract_existing_docstring(body: str) -> Tuple[str, str]:
 
 HEADER_DOCSTRING = (
     '"""\n'
-    "Redis向量存储实现\n"
+    "AI-CloudOps 智能运维平台\n"
     "Author: Bamboo\n"
     "Email: bamboocloudops@gmail.com\n"
     "License: Apache 2.0\n"
-    "Description: 基于Redis的向量存储和检索系统\n"
+    "Description: 统一头部注释（请使用 ensure_py_headers 脚本生成准确描述）\n"
     '"""\n'
 )
 

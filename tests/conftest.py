@@ -1,12 +1,44 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Redis向量存储实现
+AI-CloudOps 智能运维平台
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
 Description: 测试：conftest
 """
+
+import sys
+from pathlib import Path
+
+# 确保项目根目录在 Python 路径中，避免 `import app` 失败
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+# 兼容性修复：部分测试用例使用 `Mock(spec=Mock(...))` 来构造具有 `spec` 属性的对象，
+# 但 `unittest.mock.Mock` 的 `spec` 是保留参数，会触发 InvalidSpecError。
+# 这里将 `unittest.mock.Mock` 替换为一个安全包装器：当传入的 `spec` 参数是 Mock 实例时，
+# 将其视为普通属性赋值，而非规格约束参数。
+import unittest.mock as _um
+
+if not getattr(_um, "_aiops_safe_mock_installed", False):
+    _original_mock_cls = _um.Mock
+
+    def _safe_mock(*args, **kwargs):  # type: ignore[override]
+        spec_value = kwargs.get("spec")
+        if isinstance(spec_value, (_original_mock_cls, _um.MagicMock)):
+            kwargs.pop("spec", None)
+            m = _original_mock_cls(*args, **kwargs)
+            try:
+                setattr(m, "spec", spec_value)
+            except Exception:
+                pass
+            return m
+        return _original_mock_cls(*args, **kwargs)
+
+    _um.Mock = _safe_mock  # type: ignore[assignment]
+    _um._aiops_safe_mock_installed = True
 
 import warnings
 from typing import Any

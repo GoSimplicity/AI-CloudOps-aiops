@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Redis向量存储实现
+AI-CloudOps 智能运维平台
 Author: Bamboo
 Email: bamboocloudops@gmail.com
 License: Apache 2.0
@@ -10,7 +10,7 @@ Description: API 路由（__init__）
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 
 from app.models.response_models import APIResponse
 
@@ -71,7 +71,7 @@ except Exception as e:
 # storage 路由已移除，保留空位以便未来需要时在此统一注册
 
 
-def register_routes(app):
+def register_routes(app: FastAPI) -> None:
     """注册所有路由"""
 
     # 注册API v1路由
