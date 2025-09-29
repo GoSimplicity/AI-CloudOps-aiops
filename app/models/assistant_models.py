@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 # 请求模型
 class AssistantRequest(BaseModel):
     question: str = Field(..., min_length=1, description="用户提问")
-    mode: int = Field(default=1, description="助手模式:1=RAG,2=MCP", ge=1, le=2)
+    mode: str = Field(default="rag", description="助手模式:rag或mcp")
     chat_history: Optional[List[Dict[str, str]]] = Field(
         default=None, description="对话历史"
     )
