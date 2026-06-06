@@ -221,6 +221,17 @@ async def refresh_knowledge_base() -> Dict[str, Any]:
 
 
 @router.get(
+    "/health",
+    summary="智能助手健康检查",
+    response_model=BaseResponse,
+)
+@api_response("智能助手健康检查")
+async def assistant_health() -> Dict[str, Any]:
+    """兼容前端健康检查入口，复用就绪检查逻辑。"""
+    return await assistant_ready()
+
+
+@router.get(
     "/ready",
     summary="智能助手就绪检查",
     response_model=BaseResponse,

@@ -194,6 +194,17 @@ async def get_all_prometheus_metrics() -> Dict[str, Any]:
 
 
 @router.get(
+    "/health",
+    summary="AI-CloudOps RCA服务健康检查",
+    response_model=BaseResponse,
+)
+@api_response("AI-CloudOps RCA服务健康检查")
+async def rca_health() -> Dict[str, Any]:
+    """兼容前端健康检查入口，复用就绪检查逻辑。"""
+    return await rca_ready()
+
+
+@router.get(
     "/ready",
     summary="AI-CloudOps RCA服务就绪检查",
     response_model=BaseResponse,
@@ -204,20 +215,19 @@ async def rca_ready() -> Dict[str, Any]:
     try:
         await (await get_rca_service()).initialize()
         health_status = await (await get_rca_service()).get_health_status()
-
-        is_ready = health_status.get("status") == "healthy"
-
-        if not is_ready:
-            raise ServiceUnavailableError("rca")
+        status = health_status.get("status", "unhealthy")
+        is_ready = status in {"healthy", "degraded"}
+        is_healthy = status == "healthy"
+        message = "服务就绪" if is_healthy else "服务已降级，可继续使用受限功能"
 
         response = ServiceReadyResponse(
-            ready=True,
+            ready=is_ready,
             service="rca",
             timestamp=datetime.now().isoformat(),
-            message="服务就绪",
+            message=message,
             initialized=True,
-            healthy=True,
-            status="ready",
+            healthy=is_healthy,
+            status=status,
         )
         return response.model_dump()
     except (AIOpsException, DomainValidationError):

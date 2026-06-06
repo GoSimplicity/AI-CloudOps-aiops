@@ -68,16 +68,15 @@ async def autofix_ready() -> Dict[str, Any]:
     try:
         await (await get_autofix_service()).initialize()
         is_healthy = await (await get_autofix_service()).health_check()
-        if not is_healthy:
-            raise ServiceUnavailableError("autofix")
+        status = "healthy" if is_healthy else "degraded"
         return {
             "ready": True,
             "service": "autofix",
             "timestamp": datetime.now().isoformat(),
-            "message": "服务就绪",
+            "message": "服务就绪" if is_healthy else "服务已降级，可继续使用受限功能",
             "initialized": True,
-            "healthy": True,
-            "status": "ready",
+            "healthy": is_healthy,
+            "status": status,
         }
     except (AIOpsException, DomainValidationError):
         raise

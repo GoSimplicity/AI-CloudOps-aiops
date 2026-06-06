@@ -448,6 +448,17 @@ async def predict_disk(
 
 
 @router.get(
+    "/health",
+    summary="AI-CloudOps 预测服务健康检查",
+    response_model=BaseResponse,
+)
+@api_response("AI-CloudOps 预测服务健康检查")
+async def prediction_health() -> Dict[str, Any]:
+    """兼容前端健康检查入口，复用就绪检查逻辑。"""
+    return await prediction_ready()
+
+
+@router.get(
     "/ready",
     summary="AI-CloudOps 预测服务就绪检查",
     response_model=BaseResponse,
