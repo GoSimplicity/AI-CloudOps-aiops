@@ -31,22 +31,31 @@ class BaseService(ABC):
         except Exception:
             self.logger = logging.getLogger(f"aiops.services.{service_name}")
         self._initialized = False
+        self._initialize_lock = asyncio.Lock()
         self._last_health_check = None
         self._health_status = False
 
     async def initialize(self) -> None:
-        self.logger.info(f"正在初始化服务: {self.service_name}")
+        if self._initialized:
+            return
 
-        try:
-            await self._do_initialize()
-            self._initialized = True
-            self.logger.info(f"服务 {self.service_name} 初始化完成")
-        except Exception as e:
-            self.logger.error(f"服务 {self.service_name} 初始化失败: {str(e)}")
-            raise ServiceUnavailableError(
-                service_name=self.service_name,
-                details={"error": str(e), "phase": "initialization"},
-            )
+        async with self._initialize_lock:
+            if self._initialized:
+                return
+
+            self.logger.info(f"正在初始化服务: {self.service_name}")
+
+            try:
+                await self._do_initialize()
+                self._initialized = True
+                self.logger.info(f"服务 {self.service_name} 初始化完成")
+            except Exception as e:
+                self._initialized = False
+                self.logger.error(f"服务 {self.service_name} 初始化失败: {str(e)}")
+                raise ServiceUnavailableError(
+                    service_name=self.service_name,
+                    details={"error": str(e), "phase": "initialization"},
+                )
 
     @abstractmethod
     async def _do_initialize(self) -> None:

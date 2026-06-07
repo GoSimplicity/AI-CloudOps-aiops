@@ -10,16 +10,20 @@ Description: AI-CloudOps智能自动修复服务
 """
 
 import asyncio
+from copy import deepcopy
 from datetime import datetime
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from ..common.constants import ServiceConstants
 from ..common.exceptions import AutoFixError, ResourceNotFoundError, ValidationError
 from ..core.agents.k8s_fixer import K8sFixerAgent
+from ..core.agents.ops_workflow import OpsMultiAgentWorkflow
 from ..core.agents.supervisor import SupervisorAgent
+from ..core.autofix import AutoFixRemediationEngine
 from ..core.interfaces.k8s_client import K8sClient
+from ..core.interfaces.llm_client import NullLLMClient
 from .base import BaseService
 
 logger = logging.getLogger("aiops.services.autofix")
@@ -32,6 +36,9 @@ class AutoFixService(BaseService):
         super().__init__("autofix")
         self._k8s_fixer: Optional[K8sFixerAgent] = None
         self._supervisor: Optional[SupervisorAgent] = None
+        self._remediation_engine: Optional[AutoFixRemediationEngine] = None
+        self._ops_workflow: Optional[OpsMultiAgentWorkflow] = None
+        self._pending_workflows: Dict[str, Dict[str, Any]] = {}
 
     async def _do_initialize(self) -> None:
         try:
@@ -49,6 +56,13 @@ class AutoFixService(BaseService):
             # 初始化监督代理（注入LLM）
             self._supervisor = SupervisorAgent(llm_client=llm_client)
             self.logger.info("监督代理初始化完成")
+
+            self._remediation_engine = AutoFixRemediationEngine(k8s_client=k8s_client)
+            self._ops_workflow = OpsMultiAgentWorkflow(
+                remediation_engine=self._remediation_engine,
+                llm_client=llm_client,
+            )
+            self.logger.info("自动修复执行引擎和多智能体工作流初始化完成")
 
         except Exception as e:
             self.logger.error(f"自动修复服务组件初始化失败: {str(e)}")
@@ -71,6 +85,253 @@ class AutoFixService(BaseService):
         except Exception as e:
             self.logger.warning(f"自动修复服务健康检查失败: {str(e)}")
             return False
+
+    async def execute_multi_agent_workflow(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """执行基于LangGraph的多智能体自动修复工作流。"""
+        self._ensure_initialized()
+
+        problem_description = (request or {}).get("problem_description")
+        if not problem_description or not isinstance(problem_description, str):
+            raise ValidationError("problem_description", "问题描述不能为空")
+
+        if self._ops_workflow is None:
+            if self._remediation_engine is None:
+                if not self._k8s_fixer:
+                    raise AutoFixError("自动修复执行引擎未初始化")
+                self._remediation_engine = AutoFixRemediationEngine(
+                    k8s_client=self._k8s_fixer.k8s_service
+                )
+            llm_client = (
+                self._k8s_fixer.llm_service
+                if self._k8s_fixer and getattr(self._k8s_fixer, "llm_service", None)
+                else NullLLMClient()
+            )
+            self._ops_workflow = OpsMultiAgentWorkflow(
+                remediation_engine=self._remediation_engine,
+                llm_client=llm_client,
+            )
+
+        workflow_input = {
+            "problem_description": problem_description,
+            "deployment": request.get("deployment", ""),
+            "namespace": request.get("namespace", "default"),
+            "event": request.get("event", problem_description),
+            "diagnosis": request.get("diagnosis", {}),
+        }
+        result = await self._ops_workflow.run(workflow_input)
+        result["workflow_engine"] = "langgraph"
+        result["workflow_nodes"] = [
+            "Coordinator",
+            "Analyzer",
+            "Planner",
+            "Reviewer",
+            "Executor",
+        ]
+        plan_id = result.get("plan", {}).get("plan_id")
+        if plan_id:
+            if result.get("status") == "needs_human_confirmation":
+                self._pending_workflows[plan_id] = deepcopy(result)
+            else:
+                self._pending_workflows.pop(plan_id, None)
+        return result
+
+    async def confirm_multi_agent_workflow(
+        self, plan_id: str, approved_action_ids: List[str]
+    ) -> Dict[str, Any]:
+        """人工确认后继续执行多智能体工作流中被阻断的动作。"""
+        self._ensure_initialized()
+
+        normalized_plan_id = str(plan_id or "").strip()
+        if not normalized_plan_id:
+            raise ValidationError("plan_id", "计划ID不能为空")
+
+        workflow_result = deepcopy(self._pending_workflows.get(normalized_plan_id) or {})
+        if not workflow_result:
+            raise ValidationError("plan_id", "待确认工作流不存在或已过期")
+
+        if workflow_result.get("status") != "needs_human_confirmation":
+            raise ValidationError("plan_id", "当前工作流不处于待人工确认状态")
+
+        normalized_action_ids = [str(action_id).strip() for action_id in approved_action_ids if str(action_id).strip()]
+        if not normalized_action_ids:
+            raise ValidationError("approved_action_ids", "至少选择一个待确认动作")
+
+        if self._remediation_engine is None:
+            if not self._k8s_fixer:
+                raise AutoFixError("自动修复执行引擎未初始化")
+            self._remediation_engine = AutoFixRemediationEngine(
+                k8s_client=self._k8s_fixer.k8s_service
+            )
+
+        diagnosis = deepcopy(workflow_result.get("diagnosis") or {})
+        if not diagnosis:
+            raise ValidationError("plan_id", "工作流结果缺少诊断上下文")
+
+        plan = await self._remediation_engine.build_plan(diagnosis)
+        plan["plan_id"] = normalized_plan_id
+        review = deepcopy(workflow_result.get("review") or {})
+        previous_executed_actions = deepcopy(workflow_result.get("executed_actions") or [])
+        previous_approved_action_ids = [
+            str(action_id)
+            for action_id in (review.get("approved_action_ids") or [])
+            if action_id
+        ]
+        previous_executed_action_ids = {
+            str(action.get("action_id"))
+            for action in previous_executed_actions
+            if action.get("action_id")
+        }
+        previous_executed_action_ids.update(previous_approved_action_ids)
+        blocked_actions = [
+            deepcopy(action)
+            for action in (plan.get("blocked_actions") or [])
+            if str(action.get("action_id") or "") not in previous_executed_action_ids
+        ]
+        allowed_actions = deepcopy(plan.get("allowed_actions") or [])
+        allowed_actions = [
+            action
+            for action in allowed_actions
+            if str(action.get("action_id") or "") not in previous_executed_action_ids
+        ]
+        candidate_actions = deepcopy(plan.get("candidate_actions") or [])
+
+        blocked_by_id = {
+            action.get("action_id"): action
+            for action in blocked_actions
+            if action.get("action_id")
+        }
+        invalid_action_ids = [
+            action_id for action_id in normalized_action_ids if action_id not in blocked_by_id
+        ]
+        if invalid_action_ids:
+            raise ValidationError(
+                "approved_action_ids",
+                f"存在无效动作ID: {', '.join(invalid_action_ids)}",
+            )
+
+        approved_actions = []
+        remaining_blocked_actions = []
+        for action in blocked_actions:
+            action_id = action.get("action_id")
+            if action_id in normalized_action_ids:
+                approved_action = deepcopy(action)
+                risk = deepcopy(approved_action.get("risk_assessment") or {})
+                reasons = list(risk.get("reasons") or [])
+                if "human confirmed" not in reasons:
+                    reasons.append("human confirmed")
+                risk["allowed"] = True
+                risk["requires_human_confirmation"] = False
+                risk["reasons"] = reasons
+                approved_action["risk_assessment"] = risk
+                approved_actions.append(approved_action)
+            else:
+                remaining_blocked_actions.append(deepcopy(action))
+
+        for action in candidate_actions:
+            action_id = action.get("action_id")
+            if action_id in normalized_action_ids or action_id in previous_executed_action_ids:
+                risk = deepcopy(action.get("risk_assessment") or {})
+                reasons = list(risk.get("reasons") or [])
+                marker = (
+                    "human confirmed"
+                    if action_id in normalized_action_ids
+                    else "previously confirmed"
+                )
+                if marker not in reasons:
+                    reasons.append(marker)
+                risk["allowed"] = True
+                risk["requires_human_confirmation"] = False
+                risk["reasons"] = reasons
+                action["risk_assessment"] = risk
+
+        plan["candidate_actions"] = candidate_actions
+        plan["allowed_actions"] = allowed_actions + approved_actions
+        plan["blocked_actions"] = remaining_blocked_actions
+
+        execution = await self._remediation_engine.execute_plan(plan)
+        current_executed_actions = execution.get("executed_actions", [])
+        cumulative_executed_actions = previous_executed_actions + current_executed_actions
+        execution_payload = deepcopy(execution)
+        execution_payload["executed_actions"] = cumulative_executed_actions
+        execution_payload["blocked_actions"] = remaining_blocked_actions
+
+        agents_used = list(workflow_result.get("agents_used") or [])
+        for agent in ["HumanConfirm", "Executor"]:
+            if agent not in agents_used:
+                agents_used.append(agent)
+
+        messages = list(workflow_result.get("messages") or [])
+        messages.append(
+            {
+                "agent": "HumanConfirm",
+                "action": f"人工批准 {len(approved_actions)} 个高风险动作继续执行",
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+        messages.append(
+            {
+                "agent": "Executor",
+                "action": "执行人工确认后放行的动作",
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+
+        remaining_blocked_count = len(remaining_blocked_actions)
+        executed_count = len(current_executed_actions)
+        if remaining_blocked_count > 0:
+            review_reason = (
+                f"已执行 {executed_count} 个经人工确认动作，仍有 "
+                f"{remaining_blocked_count} 个动作待确认"
+            )
+            status = "needs_human_confirmation"
+            next_action = "human_confirm"
+            review_approved = False
+        else:
+            review_reason = f"已执行 {executed_count} 个经人工确认动作"
+            status = execution.get("status", "completed")
+            next_action = "finish"
+            review_approved = True
+
+        review.update(
+            {
+                "approved": review_approved,
+                "reason": review_reason,
+                "approved_action_ids": list(
+                    dict.fromkeys(previous_approved_action_ids + normalized_action_ids)
+                ),
+                "blocked_actions": remaining_blocked_actions,
+                "allowed_actions": plan["allowed_actions"],
+            }
+        )
+
+        response = {
+            "status": status,
+            "next_action": next_action,
+            "agents_used": agents_used,
+            "diagnosis": diagnosis,
+            "plan": plan,
+            "review": review,
+            "execution": execution_payload,
+            "candidate_actions": plan.get("candidate_actions", []),
+            "executed_actions": cumulative_executed_actions,
+            "blocked_actions": remaining_blocked_actions,
+            "messages": messages,
+            "timestamp": datetime.now().isoformat(),
+            "workflow_engine": "langgraph",
+            "workflow_nodes": [
+                "Coordinator",
+                "Analyzer",
+                "Planner",
+                "Reviewer",
+                "HumanConfirm",
+                "Executor",
+            ],
+        }
+        if remaining_blocked_count > 0:
+            self._pending_workflows[normalized_plan_id] = deepcopy(response)
+        else:
+            self._pending_workflows.pop(normalized_plan_id, None)
+        return response
 
     async def fix_kubernetes_deployment(
         self,
@@ -373,6 +634,14 @@ class AutoFixService(BaseService):
                 "analysis_timeout": ServiceConstants.AUTOFIX_ANALYSIS_TIMEOUT,
                 "retry_attempts": getattr(config, "autofix_retry_attempts", 3),
                 "retry_delay": getattr(config, "autofix_retry_delay", 5),
+                "workflow_engine": "langgraph",
+                "workflow_nodes": [
+                    "Coordinator",
+                    "Analyzer",
+                    "Planner",
+                    "Reviewer",
+                    "Executor",
+                ],
             },
             "supported_resources": [
                 "deployments",
@@ -387,6 +656,8 @@ class AutoFixService(BaseService):
                 "update_image",
                 "fix_configuration",
                 "resource_adjustment",
+                "risk_assessment",
+                "multi_agent_workflow",
             ],
             "constraints": {
                 "max_deployment_name_length": ServiceConstants.AUTOFIX_MAX_NAME_LENGTH,
@@ -413,6 +684,8 @@ class AutoFixService(BaseService):
                     "k8s_fixer": "unknown",
                     "supervisor": "unknown",
                     "k8s_service": "unknown",
+                    "remediation_engine": "unknown",
+                    "ops_workflow": "unknown",
                 },
             }
 
@@ -451,6 +724,17 @@ class AutoFixService(BaseService):
                 health_status["components"]["supervisor"] = (
                     ServiceConstants.STATUS_UNHEALTHY
                 )
+
+            health_status["components"]["remediation_engine"] = (
+                ServiceConstants.STATUS_HEALTHY
+                if self._remediation_engine
+                else ServiceConstants.STATUS_UNHEALTHY
+            )
+            health_status["components"]["ops_workflow"] = (
+                ServiceConstants.STATUS_HEALTHY
+                if self._ops_workflow
+                else ServiceConstants.STATUS_UNHEALTHY
+            )
 
             return health_status
 
@@ -551,6 +835,9 @@ class AutoFixService(BaseService):
                 except Exception as e:
                     self.logger.warning(f"清理监督代理失败: {e}")
                 self._supervisor = None
+
+            self._ops_workflow = None
+            self._remediation_engine = None
 
             # 调用父类清理方法
             await super().cleanup()

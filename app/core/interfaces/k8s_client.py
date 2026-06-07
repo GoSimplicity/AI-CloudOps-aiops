@@ -47,6 +47,8 @@ class K8sClient(Protocol):
         self, name: str, patch: Dict[str, Any], namespace: str
     ) -> bool: ...
 
+    async def can_i(self, verb: str, resource: str, namespace: str) -> bool: ...
+
 
 class NullK8sClient:
     async def health_check(self) -> bool:
@@ -87,4 +89,7 @@ class NullK8sClient:
     async def patch_deployment(
         self, name: str, patch: Dict[str, Any], namespace: str
     ) -> bool:
+        return False
+
+    async def can_i(self, verb: str, resource: str, namespace: str) -> bool:
         return False

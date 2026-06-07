@@ -9,7 +9,7 @@ License: Apache 2.0
 Description: 自动修复模块模型定义
 """
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -39,3 +39,13 @@ class AutoFixResponse(BaseModel):
     execution_time: float
     success: bool = True
     error_message: Optional[str] = None
+
+
+class AutoFixWorkflowConfirmRequest(BaseModel):
+    """人工确认后继续执行自动修复工作流请求模型"""
+
+    plan_id: str = Field(..., min_length=1, description="待确认工作流的计划ID")
+    approved_action_ids: List[str] = Field(
+        default_factory=list,
+        description="人工确认允许继续执行的动作ID列表，必须显式传入",
+    )

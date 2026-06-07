@@ -24,6 +24,7 @@ from .assistant_models import (
     UploadKnowledgeResponse,
 )
 from .autofix_models import (
+    AutoFixWorkflowConfirmRequest,
     AutoFixRequest,
     AutoFixResponse,
 )
@@ -77,6 +78,7 @@ __all__ = [
     # 请求模型
     "AddDocumentRequest",
     "AutoFixRequest",
+    "AutoFixWorkflowConfirmRequest",
     "AssistantRequest",
     "DiagnoseRequest",
     # 响应模型

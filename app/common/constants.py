@@ -181,6 +181,8 @@ class ApiEndpoints:
 
     # 自动修复端点
     AUTOFIX = f"{AppConstants.API_VERSION_V1}/autofix"
+    AUTOFIX_WORKFLOW = f"{AUTOFIX}/workflow"
+    AUTOFIX_WORKFLOW_CONFIRM = f"{AUTOFIX_WORKFLOW}/confirm"
     AUTOFIX_DIAGNOSE = f"{AUTOFIX}/diagnose"
     AUTOFIX_CONFIG = f"{AUTOFIX}/config"
     AUTOFIX_READY = f"{AUTOFIX}/ready"
@@ -220,6 +222,8 @@ def get_api_info() -> Dict[str, Any]:
             },
             "autofix": {
                 "fix": ApiEndpoints.AUTOFIX,
+                "workflow": ApiEndpoints.AUTOFIX_WORKFLOW,
+                "workflow_confirm": ApiEndpoints.AUTOFIX_WORKFLOW_CONFIRM,
                 "diagnose": ApiEndpoints.AUTOFIX_DIAGNOSE,
                 "ready": ApiEndpoints.AUTOFIX_READY,
                 "info": ApiEndpoints.AUTOFIX_INFO,

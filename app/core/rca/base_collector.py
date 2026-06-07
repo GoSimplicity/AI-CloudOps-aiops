@@ -10,6 +10,7 @@ Description: 数据收集器基础类
 """
 
 from abc import ABC, abstractmethod
+import asyncio
 from datetime import datetime
 import logging
 from typing import Any, Dict, List, Optional
@@ -37,6 +38,7 @@ class BaseDataCollector(ABC):
         self.config = config or {}
         self.logger = logging.getLogger(f"aiops.rca.collectors.{name}")
         self._initialized = False
+        self._initialize_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         """
@@ -44,13 +46,21 @@ class BaseDataCollector(ABC):
 
         可能涉及建立连接、验证配置等操作
         """
-        try:
-            await self._do_initialize()
-            self._initialized = True
-            self.logger.info(f"数据收集器 {self.name} 初始化成功")
-        except Exception as e:
-            self.logger.error(f"数据收集器 {self.name} 初始化失败: {str(e)}")
-            raise
+        if self._initialized:
+            return
+
+        async with self._initialize_lock:
+            if self._initialized:
+                return
+
+            try:
+                await self._do_initialize()
+                self._initialized = True
+                self.logger.info(f"数据收集器 {self.name} 初始化成功")
+            except Exception as e:
+                self._initialized = False
+                self.logger.error(f"数据收集器 {self.name} 初始化失败: {str(e)}")
+                raise
 
     @abstractmethod
     async def _do_initialize(self) -> None:

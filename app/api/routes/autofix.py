@@ -32,6 +32,7 @@ from app.common.exceptions import (
     ValidationError as DomainValidationError,
 )
 from app.models import (
+    AutoFixWorkflowConfirmRequest,
     AutoFixRequest,
     BaseResponse,
     DiagnoseRequest,
@@ -135,14 +136,41 @@ async def execute_workflow(
             detail="缺少problem_description参数",
         )
 
-    await (await get_autofix_service()).initialize()
-    # 简化返回，强调工作流接受
-    return {
-        "accepted": True,
-        "status": "queued",
-        "problem_description": description,
-        "timestamp": datetime.now().isoformat(),
-    }
+    service = await get_autofix_service()
+    await service.initialize()
+    result = await asyncio.wait_for(
+        service.execute_multi_agent_workflow(request),
+        timeout=ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT,
+    )
+    return result
+
+
+@router.post(
+    "/workflow/confirm",
+    summary="人工确认后继续执行自动修复工作流",
+    response_model=BaseResponse,
+)
+@api_response("确认自动修复工作流")
+async def confirm_workflow(
+    request: AutoFixWorkflowConfirmRequest = Body(
+        ...,
+        examples={
+            "default": {
+                "value": {
+                    "plan_id": "autofix-default-payment-service-1234567890",
+                    "approved_action_ids": ["patch-image-pull-policy"],
+                }
+            }
+        },
+    ),
+) -> Dict[str, Any]:
+    service = await get_autofix_service()
+    await service.initialize()
+    result = await asyncio.wait_for(
+        service.confirm_multi_agent_workflow(request.plan_id, request.approved_action_ids),
+        timeout=ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT,
+    )
+    return result
 
 
 @router.post(
@@ -570,9 +598,18 @@ async def autofix_info() -> Dict[str, Any]:
         "service": "自动修复",
         "version": AppConstants.APP_VERSION,
         "description": "Kubernetes自动修复服务",
-        "capabilities": ["部署问题诊断", "自动修复建议", "工作流执行", "故障自愈"],
+        "capabilities": [
+            "部署问题诊断",
+            "自动修复建议",
+            "风险评估",
+            "多智能体协作",
+            "工作流执行",
+            "故障自愈",
+        ],
         "endpoints": {
             "autofix": ApiEndpoints.AUTOFIX,
+            "workflow": ApiEndpoints.AUTOFIX_WORKFLOW,
+            "workflow_confirm": ApiEndpoints.AUTOFIX_WORKFLOW_CONFIRM,
             "diagnose": ApiEndpoints.AUTOFIX_DIAGNOSE,
             "config": ApiEndpoints.AUTOFIX_CONFIG,
             "info": ApiEndpoints.AUTOFIX_INFO,
@@ -590,6 +627,17 @@ async def autofix_info() -> Dict[str, Any]:
             "update_image",
             "fix_configuration",
             "resource_adjustment",
+            "risk_assessment",
+            "multi_agent_workflow",
+        ],
+        "workflow_engine": "langgraph",
+        "workflow_nodes": [
+            "Coordinator",
+            "Analyzer",
+            "Planner",
+            "Reviewer",
+            "HumanConfirm",
+            "Executor",
         ],
         "constraints": {
             "max_name_length": ServiceConstants.AUTOFIX_MAX_NAME_LENGTH,

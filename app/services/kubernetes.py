@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 from kubernetes import client, config as k8s_config, utils as k8s_utils
 from kubernetes.client.rest import ApiException
 
-from app.config.settings import config
+from app.config.settings import ROOT_DIR, config
 
 logger = logging.getLogger("aiops.kubernetes")
 
@@ -72,43 +72,90 @@ class KubernetesService:
                 f"尝试加载K8s配置: in_cluster={config.k8s.in_cluster}, config_path={config_file}"
             )
 
-            # 检查配置文件是否存在
-            if not config.k8s.in_cluster and config_file:
-                # 检查文件是否存在
-                if not os.path.exists(config_file):
-                    logger.error(f"K8s配置文件不存在: {config_file}")
-                    # 尝试查找其他可能的位置
-                    alternate_paths = [
-                        os.path.join(os.getcwd(), "deploy/kubernetes/config"),
-                        os.path.join(os.getcwd(), "config"),
-                        os.path.expanduser("~/.kube/config"),
-                    ]
-
-                    for path in alternate_paths:
-                        if os.path.exists(path):
-                            logger.info(f"找到替代配置文件: {path}")
-                            config_file = path
-                            break
-                    else:
-                        logger.info("尝试从默认位置加载配置")
-                        try:
-                            k8s_config.load_kube_config()
-                            logger.info("成功从默认位置加载K8s配置")
-                            return
-                        except Exception as e:
-                            logger.error(f"从默认位置加载K8s配置失败: {str(e)}")
-                            raise
-
             if config.k8s.in_cluster:
                 k8s_config.load_incluster_config()
                 logger.info("使用集群内K8s配置")
             else:
+                config_file = self._resolve_kube_config_path(config_file)
                 k8s_config.load_kube_config(config_file=config_file)
-                logger.info(f"使用本地K8s配置文件: {config_file}")
+                if config_file:
+                    logger.info(f"使用本地K8s配置文件: {config_file}")
+                else:
+                    logger.info("使用默认K8s配置")
 
         except Exception as e:
             logger.error(f"无法加载K8s配置: {str(e)}")
             raise
+
+    def _resolve_kube_config_path(self, configured_path: Optional[str]) -> Optional[str]:
+        explicit_config_path = os.getenv("K8S_CONFIG_PATH")
+        if explicit_config_path:
+            path = os.path.expanduser(explicit_config_path)
+            if os.path.exists(path):
+                return path
+            raise FileNotFoundError(f"K8s配置文件不存在: {path}")
+
+        configured_path = (configured_path or "").strip()
+        configured_is_default = self._is_default_project_kube_config(configured_path)
+
+        candidate_paths: List[Optional[str]] = []
+        kubeconfig_env = os.getenv("KUBECONFIG")
+        if kubeconfig_env:
+            candidate_paths.extend(kubeconfig_env.split(os.pathsep))
+
+        if configured_path and not configured_is_default:
+            candidate_paths.append(configured_path)
+
+        candidate_paths.append(os.path.expanduser("~/.kube/config"))
+
+        if configured_path and configured_is_default:
+            candidate_paths.append(configured_path)
+        elif configured_path:
+            logger.debug("使用显式K8s配置候选: %s", configured_path)
+
+        candidate_paths.extend(
+            [
+                os.path.join(os.getcwd(), "deploy/kubernetes/config"),
+                os.path.join(os.getcwd(), "config"),
+            ]
+        )
+
+        seen = set()
+        for raw_path in candidate_paths:
+            if not raw_path:
+                continue
+            path = os.path.abspath(os.path.expanduser(raw_path))
+            if path in seen:
+                continue
+            seen.add(path)
+            if os.path.exists(path):
+                configured_abs_path = (
+                    os.path.abspath(os.path.expanduser(configured_path))
+                    if configured_path
+                    else None
+                )
+                if configured_abs_path and configured_abs_path != path:
+                    logger.info(f"找到替代K8s配置文件: {path}")
+                return path
+
+        if configured_path:
+            logger.error(f"K8s配置文件不存在: {configured_path}")
+
+        return None
+
+    def _is_default_project_kube_config(self, path: str) -> bool:
+        if not path:
+            return False
+
+        normalized = os.path.normpath(os.path.expanduser(path))
+        default_suffix = os.path.normpath("deploy/kubernetes/config")
+        project_default = os.path.normpath(str(ROOT_DIR / default_suffix))
+
+        return normalized in {
+            default_suffix,
+            os.path.normpath(f".{os.sep}{default_suffix}"),
+            project_default,
+        }
 
     def _ensure_initialized(self):
         """确保Kubernetes客户端已初始化"""
@@ -553,6 +600,35 @@ class KubernetesService:
 
         except Exception as e:
             logger.error(f"扩缩容Deployment失败: {str(e)}")
+            return False
+
+    async def can_i(self, verb: str, resource: str, namespace: str = None) -> bool:
+        """检查当前Kubernetes身份是否具备指定资源操作权限。"""
+        if not self._ensure_initialized():
+            raise RuntimeError("Kubernetes未初始化，无法检查RBAC权限")
+
+        namespace = namespace or config.k8s.namespace
+        resource_group = "apps" if resource in {"deployments", "replicasets", "statefulsets", "daemonsets"} else ""
+
+        try:
+            auth_v1 = client.AuthorizationV1Api()
+            review = client.V1SelfSubjectAccessReview(
+                spec=client.V1SelfSubjectAccessReviewSpec(
+                    resource_attributes=client.V1ResourceAttributes(
+                        group=resource_group,
+                        namespace=namespace,
+                        resource=resource,
+                        verb=verb,
+                    )
+                )
+            )
+            result = auth_v1.create_self_subject_access_review(body=review)
+            return bool(result.status and result.status.allowed)
+        except ApiException as e:
+            logger.error(f"RBAC权限检查失败: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"RBAC权限检查异常: {str(e)}")
             return False
 
     def is_healthy(self) -> bool:
