@@ -949,8 +949,6 @@ class RCAService(BaseService, HealthCheckMixin):
   async def get_config_info(self) -> Dict[str, Any]:
     """获取RCA服务配置信息"""
     try:
-      self._ensure_initialized()
-
       config_info = {
         "service_name": self.service_name,
         "status": "initialized" if self._initialized else "not_initialized",
@@ -1090,45 +1088,34 @@ class RCAService(BaseService, HealthCheckMixin):
       }
 
   async def get_cache_stats(self) -> Dict[str, Any]:
-    """获取缓存统计信息"""
+    """Read an existing cache only; metadata access must not initialize RCA."""
+    unavailable = {
+      "available": False,
+      "healthy": False,
+      "message": "缓存管理器尚未初始化或不可用",
+      "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if self._cache_manager is None:
+      return unavailable
     try:
-      if not self._cache_manager:
-        return {
-          "available": False,
-          "message": "缓存管理器不可用",
-        }
-
-      # 获取缓存管理器的健康状态
-      health_status = self._cache_manager.health_check()
-
-      # 尝试获取Redis信息（如果可用）
-      cache_info = {
-        "available": True,
-        "healthy": health_status.get("status") == "healthy"
-        if isinstance(health_status, dict)
-        else health_status,
+      health = await asyncio.to_thread(self._cache_manager.health_check)
+      healthy = health.get("status") == "healthy" if isinstance(health, dict) else bool(health)
+      available = bool(health.get("redis_connected", healthy)) if isinstance(health, dict) else healthy
+      info = {
+        "available": available,
+        "healthy": healthy,
         "cache_prefix": "rca_cache:",
         "default_ttl": 1800,
         "timestamp": datetime.now(timezone.utc).isoformat(),
       }
-
-      # 如果缓存管理器有统计方法，调用它
-      if hasattr(self._cache_manager, "get_stats"):
-        try:
-          stats = self._cache_manager.get_stats()
-          cache_info.update(stats)
-        except Exception as e:
-          self.logger.debug(f"获取缓存统计信息失败: {str(e)}")
-
-      return cache_info
-
-    except Exception as e:
-      self.logger.error(f"获取缓存统计失败: {str(e)}")
-      return {
-        "available": False,
-        "message": f"获取缓存统计失败: {str(e)}",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-      }
+      if available and hasattr(self._cache_manager, "get_stats"):
+        stats = await asyncio.to_thread(self._cache_manager.get_stats)
+        for key in ("hit_rate", "total_keys", "memory_usage"):
+          if key in stats:
+            info[key] = str(stats[key]) if key == "memory_usage" else stats[key]
+      return info
+    except Exception:
+      return unavailable
 
   async def _clear_cache_by_pattern(self, pattern: str) -> int:
     """根据模式清理缓存（内部方法）"""

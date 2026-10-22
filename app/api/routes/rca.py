@@ -250,8 +250,8 @@ async def rca_ready() -> Dict[str, Any]:
 async def get_rca_config() -> Dict[str, Any]:
     """获取RCA配置信息"""
     try:
-        await (await get_rca_service()).initialize()
-        config_info = await (await get_rca_service()).get_config_info()
+        service = ServiceFactory.peek("rca") or RCAService()
+        config_info = await service.get_config_info()
 
         response = ServiceConfigResponse(
             service="rca", config=config_info, timestamp=datetime.now().isoformat()
@@ -610,8 +610,8 @@ async def query_logs_data(
 async def get_cache_stats() -> Dict[str, Any]:
     """获取RCA缓存统计信息"""
     try:
-        await (await get_rca_service()).initialize()
-        cache_stats = await (await get_rca_service()).get_cache_stats()
+        service = ServiceFactory.peek("rca") or RCAService()
+        cache_stats = await service.get_cache_stats()
 
         response = RCACacheStatsResponse(
             available=cache_stats.get("available", False),
@@ -735,7 +735,9 @@ async def clear_operation_cache(
 )
 @api_response("AI-CloudOps RCA服务信息")
 async def rca_info() -> Dict[str, Any]:
-    """获取RCA服务信息"""
+    """获取RCA服务信息，不触发依赖初始化或健康探测。"""
+    service = ServiceFactory.peek("rca")
+    initialized = bool(service and service.is_initialized())
     info = {
         "service": "根因分析",
         "version": AppConstants.APP_VERSION,
@@ -773,15 +775,11 @@ async def rca_info() -> Dict[str, Any]:
             "default_log_lines": 100,
             "timeout": 300,
         },
-        "status": "available" if rca_service else "unavailable",
+        "status": "initialized" if initialized else "not_initialized",
     }
 
-    # 添加 components 以满足测试
-    components = {
-        "prometheus": True,
-        "kubernetes": True,
-        "redis": False,
-    }
+    # Metadata does not imply connectivity; /ready performs live checks.
+    components = {"prometheus": None, "kubernetes": None, "redis": None}
 
     response = ServiceInfoResponse(
         service=info["service"],
@@ -794,6 +792,8 @@ async def rca_info() -> Dict[str, Any]:
     )
     data = response.model_dump()
     data["components"] = components
+    data["initialized"] = initialized
+    data["health_status"] = "not_checked"
     return data
 
 

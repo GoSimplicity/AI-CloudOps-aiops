@@ -596,6 +596,8 @@ async def get_autofix_config() -> Dict[str, Any]:
 )
 @api_response("AI-CloudOps自动修复服务信息")
 async def autofix_info() -> Dict[str, Any]:
+    service = ServiceFactory.peek("autofix")
+    initialized = bool(service and service.is_initialized())
     info = {
         "service": "自动修复",
         "version": AppConstants.APP_VERSION,
@@ -652,16 +654,10 @@ async def autofix_info() -> Dict[str, Any]:
             "success_rate": f"{_api_stats['successful_requests'] / max(_api_stats['total_requests'], 1) * 100:.2f}%",
             "average_response_time": f"{_api_stats['average_response_time']:.3f}s",
         },
-        "status": "available",
+        "status": "initialized" if initialized else "not_initialized",
     }
 
-    # 增加components和features满足测试
-    components = {
-        "kubernetes": True,
-        "llm": True,
-        "notification": True,
-        "supervisor": True,
-    }
+    components = {"kubernetes": None, "llm": None, "notification": None, "supervisor": None}
     info["components"] = components
     info["features"] = info.get("fix_strategies", [])
 
@@ -678,6 +674,8 @@ async def autofix_info() -> Dict[str, Any]:
     data = response.dict()
     data["components"] = components
     data["features"] = info["features"]
+    data["initialized"] = initialized
+    data["health_status"] = "not_checked"
     return data
 
 
