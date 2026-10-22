@@ -1,5 +1,5 @@
 .git
-.venv
+.venv*
 .env
 .env.*
 !.env.example

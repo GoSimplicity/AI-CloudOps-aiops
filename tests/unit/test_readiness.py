@@ -31,3 +31,20 @@ def test_available_dependencies_are_ready(monkeypatch, module):
     response = TestClient(app).get("/service/ready")
     assert response.status_code == 200
     assert response.json()["data"]["ready"] is True
+
+
+@pytest.mark.parametrize("metrics_healthy, expected", [(False, 503), (True, 200)])
+def test_prediction_readiness_requires_metrics(monkeypatch, metrics_healthy, expected):
+    from unittest.mock import Mock
+
+    from app.api.routes import predict
+    from app.services.prometheus import PrometheusService
+
+    service = AsyncMock()
+    service.is_initialized = Mock(return_value=True)
+    service.health_check.return_value = True
+    monkeypatch.setattr(predict, "get_prediction_service", AsyncMock(return_value=service))
+    monkeypatch.setattr(PrometheusService, "is_healthy", lambda self: metrics_healthy)
+    app = FastAPI()
+    app.include_router(predict.router, prefix="/service")
+    assert TestClient(app).get("/service/ready").status_code == expected

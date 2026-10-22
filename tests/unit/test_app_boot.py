@@ -10,7 +10,7 @@ def test_lazy_boot_health_and_route_registration(monkeypatch):
     monkeypatch.setenv("AIOPS_PREWARM", "false")
     monkeypatch.setattr(config.security, "api_key", "offline-key")
     app = create_app()
-    paths = {route.path for route in app.routes}
+    paths = set(app.openapi()["paths"])
     for prefix in ["predict", "rca", "autofix", "assistant", "cache", "inspection"]:
         assert any(path.startswith(f"/api/v1/{prefix}") for path in paths)
     # Repeat lifespan to verify shutdown state does not poison a later app instance.

@@ -1817,7 +1817,7 @@ async def _create_embedding_model():
                 openai_api_base=config.llm.effective_base_url,
             )
         elif provider == "ollama":
-            from langchain_community.embeddings import OllamaEmbeddings
+            from langchain_ollama import OllamaEmbeddings
 
             return OllamaEmbeddings(
                 model=model_name, base_url=config.llm.ollama_base_url.replace("/v1", "")

@@ -10,13 +10,13 @@ Description: AI-CloudOps智能助手服务
 """
 
 import asyncio
-import json
-import time
-import traceback
 from datetime import datetime
+import json
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union, Type
+import time
+import traceback
+from typing import TYPE_CHECKING, Any, Dict, Optional, Type, Union
 import uuid
 
 from pydantic import BaseModel
@@ -25,10 +25,10 @@ from starlette.websockets import WebSocket
 from ..common.exceptions import AssistantError, ValidationError
 from ..config.settings import config
 from ..core.agents.enterprise_assistant import get_enterprise_assistant
-from .base import BaseService
-from .factory import ServiceFactory
 from ..models import AssistantRequest
 from ..models.assistant_models import StreamResponse
+from .base import BaseService
+from .factory import ServiceFactory
 
 if TYPE_CHECKING:
     from .mcp_service import MCPService
@@ -1215,7 +1215,7 @@ class WebSocketManager:
                         break
                     try:
                         await websocket.send_text("__ping__")
-                    except:
+                    except Exception:
                         continue
             self.tasks[websocket] = asyncio.create_task(loop())
 

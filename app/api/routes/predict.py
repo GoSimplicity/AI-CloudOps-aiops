@@ -9,6 +9,7 @@ License: Apache 2.0
 Description: AI-CloudOps智能预测服务API接口
 """
 
+import asyncio
 from datetime import datetime
 import logging
 from typing import Any, Dict
@@ -471,7 +472,12 @@ async def prediction_ready() -> Dict[str, Any]:
 
         is_initialized = (await get_prediction_service()).is_initialized()
         is_healthy = await (await get_prediction_service()).health_check()
-        is_ready = is_initialized and is_healthy
+        from app.services.prometheus import PrometheusService
+
+        metrics = PrometheusService()
+        metrics.timeout = min(metrics.timeout, 5)
+        metrics_healthy = await asyncio.to_thread(metrics.is_healthy)
+        is_ready = is_initialized and is_healthy and metrics_healthy
 
         if not is_ready:
             raise ServiceUnavailableError("prediction")
