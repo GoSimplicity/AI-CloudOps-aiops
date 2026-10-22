@@ -357,9 +357,7 @@ async def add_document(request: Dict[str, Any]) -> Dict[str, Any]:
 )
 @api_response("获取智能助手配置")
 async def get_assistant_config() -> Dict[str, Any]:
-    await (await get_assistant_service()).initialize()
-
-    config_info = await (await get_assistant_service()).get_assistant_config()
+    config_info = await OptimizedAssistantService.get_assistant_config()
 
     response = ServiceConfigResponse(
         service="assistant", config=config_info, timestamp=datetime.now().isoformat()
@@ -376,6 +374,8 @@ async def get_assistant_config() -> Dict[str, Any]:
 
 @api_response("AI-CloudOps智能助手服务信息")
 async def assistant_info() -> Dict[str, Any]:
+    service = ServiceFactory.peek("assistant")
+    initialized = bool(service and service.is_initialized())
     info = {
         "service": "AI-CloudOps智能助手",
         "service_type": "enterprise_assistant",
@@ -456,8 +456,8 @@ async def assistant_info() -> Dict[str, Any]:
             "caching_enabled": bool(config.rag.cache_expiry > 0),
             "parallel_processing": True,
         },
-        "status": "available",
-        "initialized": True,
+        "status": "initialized" if initialized else "not_initialized",
+        "initialized": initialized,
     }
 
     response = ServiceInfoResponse(
@@ -470,7 +470,7 @@ async def assistant_info() -> Dict[str, Any]:
         status=info["status"],
     )
     data = response.dict()
-    data["initialized"] = True
+    data["initialized"] = initialized
     return data
 
 @router.websocket("/stream", name="AI-CloudOps智能助手服务流式交互")

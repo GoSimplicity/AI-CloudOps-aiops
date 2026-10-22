@@ -1745,8 +1745,8 @@ async def get_enterprise_assistant(
                         "password": config.redis.password,
                         "decode_responses": True,
                     }
-                    cache_manager = RedisCacheManager(
-                        redis_config=cache_config, cache_prefix="rag:", default_ttl=3600
+                    cache_manager = await asyncio.to_thread(
+                        RedisCacheManager, redis_config=cache_config, cache_prefix="rag:", default_ttl=3600
                     )
 
                     # 向量存储配置
@@ -1761,8 +1761,8 @@ async def get_enterprise_assistant(
                         "decode_responses": False,
                     }
 
-                    vector_store = EnhancedRedisVectorStore(
-                        redis_config=vector_config,
+                    vector_store = await asyncio.to_thread(
+                        EnhancedRedisVectorStore, redis_config=vector_config,
                         collection_name="aiops_knowledge",
                         embedding_model=embedding_model,
                         vector_dim=vector_dim,
@@ -1828,6 +1828,8 @@ async def _create_embedding_model():
                 model=model_name,
                 openai_api_key=config.llm.effective_api_key,
                 openai_api_base=config.llm.effective_base_url,
+                request_timeout=10,
+                max_retries=0,
             )
         elif provider == "ollama":
             from langchain_ollama import OllamaEmbeddings
@@ -1836,26 +1838,21 @@ async def _create_embedding_model():
                 model=model_name, base_url=config.llm.ollama_base_url.replace("/v1", "")
             )
         else:
-            # 使用备用嵌入
-            from app.core.agents.fallback_models import FallbackEmbeddings
-
-            return FallbackEmbeddings()
+            raise ValueError("Unsupported embedding provider")
 
     except Exception as e:
-        logger.error(f"创建嵌入模型失败: {e}")
-        from app.core.agents.fallback_models import FallbackEmbeddings
-
-        return FallbackEmbeddings()
+        raise RuntimeError("Embedding model configuration is unavailable") from e
 
 
 async def _get_embedding_dimension(embedding_model) -> int:
-    """获取嵌入维度"""
+    """Probe asynchronously with a bounded wait; never invent an index dimension."""
     try:
-        test_embedding = embedding_model.embed_query("test")
+        test_embedding = await asyncio.wait_for(embedding_model.aembed_query("test"), timeout=15)
+        if not test_embedding:
+            raise ValueError("Empty embedding")
         return len(test_embedding)
-    except Exception:
-        # 默认维度
-        return 1024
+    except Exception as e:
+        raise RuntimeError("Embedding model is unavailable") from e
 
 
 def reset_assistant():

@@ -21,7 +21,7 @@ uv pip check --python .venv-release/bin/python
 uvx pip-audit -r requirements.txt --no-deps --disable-pip --format json
 ```
 
-80 个离线测试通过。新旧 FastAPI 的路由内部表示不同，路由覆盖测试改用公开 OpenAPI 路径；生产请求契约不变。镜像强制从 wheel 安装，不再依赖 langdetect 的构建隔离环境。
+83 个离线测试通过。新旧 FastAPI 的路由内部表示不同，路由覆盖测试改用公开 OpenAPI 路径；生产请求契约不变。镜像强制从 wheel 安装，不再依赖 langdetect 的构建隔离环境。
 
 ## 请求与工具边界
 
@@ -34,3 +34,5 @@ MCP 文件工具限制在专用根目录，拒绝符号链接越界；上传和�
 历史版本泄露过的集群客户端私钥与 Redis 密码必须撤销轮换，删除 Git 当前文件不能撤销历史泄露。
 
 资料：[FastAPI release notes](https://fastapi.tiangolo.com/release-notes/)、[LangGraph v1 migration](https://docs.langchain.com/oss/python/migrate/langgraph-v1)、[Ollama embeddings](https://docs.langchain.com/oss/python/integrations/embeddings/ollama)、[pip-audit](https://pypi.org/project/pip-audit/)。
+
+助手 `/info` 和 `/config` 不初始化模型或向量库；info 的 initialized 表示真实服务实例初始化状态。首次业务初始化使用异步且15秒有界的 embedding 探测，Redis构造不阻塞事件循环。模型缺失返回503，不使用虚构维度或散列嵌入冒充模型结果。

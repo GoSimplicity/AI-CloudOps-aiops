@@ -22,7 +22,7 @@ import uuid
 from pydantic import BaseModel
 from starlette.websockets import WebSocket
 
-from ..common.exceptions import AssistantError, ValidationError
+from ..common.exceptions import AssistantError, ServiceUnavailableError, ValidationError
 from ..config.settings import config
 from ..core.agents.enterprise_assistant import get_enterprise_assistant
 from ..models import AssistantRequest
@@ -68,44 +68,21 @@ class OptimizedAssistantService(BaseService):
             ).dict())
 
     async def _do_initialize(self) -> None:
-        try:
-            # 通过服务注入，避免 Core 直接依赖
-            from app.services.llm import LLMService
+        if config.llm.provider.lower() == "openai" and (not config.llm.api_key or config.llm.api_key == "sk-xxx"):
+            raise ServiceUnavailableError("assistant")
+        from app.services.llm import LLMService
 
-            llm_service = LLMService()
-            self._assistant = await get_enterprise_assistant(llm_client=llm_service)
-            logger.info("智能助手服务初始化完成")
-        except Exception as e:
-            logger.warning(f"服务初始化失败: {str(e)}，将在首次使用时重试")
-            # 允许服务启动，延迟初始化
-            self._assistant = None
+        self._assistant = await get_enterprise_assistant(llm_client=LLMService())
+        if self._assistant is None:
+            raise ServiceUnavailableError("assistant")
 
     async def _do_health_check(self) -> bool:
+        if self._assistant is None:
+            return False
         try:
-            # 如果assistant为None，尝试获取但不强制失败
-            if not self._assistant:
-                try:
-                    from app.services.llm import LLMService
-
-                    llm_service = LLMService()
-                    self._assistant = await get_enterprise_assistant(
-                        llm_client=llm_service
-                    )
-                except Exception as e:
-                    logger.debug(f"获取助手实例失败: {str(e)}")
-                    # 返回部分健康状态，表示服务框架可用但助手未初始化
-                    return True  # 允许服务保持可用状态
-
-            if self._assistant:
-                health = await self._assistant.health_check()
-                return health.get("status") == "healthy"
-            else:
-                # 助手未初始化，但服务框架正常
-                return True
-
-        except Exception as e:
-            logger.warning(f"健康检查失败: {str(e)}")
-            return True  # 即使健康检查失败，也保持服务可用
+            return (await self._assistant.health_check()).get("status") == "healthy"
+        except Exception:
+            return False
 
     async def get_answer(
         self,
@@ -479,7 +456,8 @@ class OptimizedAssistantService(BaseService):
 
         return fallback_status
 
-    async def get_assistant_config(self) -> Dict[str, Any]:
+    @staticmethod
+    async def get_assistant_config() -> Dict[str, Any]:
         """获取配置信息"""
         return {
             "service_type": "optimized_rag",
@@ -533,18 +511,9 @@ class OptimizedAssistantService(BaseService):
             )
 
     async def _ensure_ready(self) -> None:
-        """确保服务就绪"""
-        if not self._assistant:
-            try:
-                # 运行时注入依赖，避免 Core 直接依赖
-                from app.services.llm import LLMService
-
-                llm_service = LLMService()
-                self._assistant = await get_enterprise_assistant(llm_client=llm_service)
-                logger.info("智能助手在运行时成功初始化")
-            except Exception as e:
-                logger.error(f"无法初始化智能助手: {str(e)}")
-                raise AssistantError(f"服务暂未就绪: {str(e)}")
+        await self.initialize()
+        if self._assistant is None:
+            raise ServiceUnavailableError("assistant")
 
     def _calculate_timeout(self, question: str) -> float:
         """计算超时时间"""
