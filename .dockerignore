@@ -1,0 +1,15 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+**/__pycache__
+**/.pytest_cache
+.ruff_cache
+.idea
+.DS_Store
+logs
+apps
+deploy/kubernetes
+*.pem
+*.key

@@ -69,7 +69,7 @@ redis:
   decode_responses: true
   host: localhost
   max_connections: 10
-  password: v6SxhWHyZC7S
+  password: "" # Set REDIS_PASSWORD in the environment
   port: 6379
   socket_timeout: 5
 tavily:

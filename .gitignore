@@ -146,3 +146,6 @@ dmypy.json
 .pytype/
 data/
 data/vector_db
+
+# Local cluster credentials
+/deploy/kubernetes/config

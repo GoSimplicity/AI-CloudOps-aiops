@@ -1,51 +1,8 @@
-<div align="center">
+# AI-CloudOps AIops 服务
 
-# 🚀 AI-CloudOps 智能云原生运维平台
+基于 FastAPI 的内部运维服务，提供预测、根因分析、巡检、助手和 Kubernetes 修复能力。功能依赖部署环境中的 Prometheus、Kubernetes、Redis 与模型供应商；预测和诊断结果需要结合实际环境验证。
 
-*下一代 AI 驱动的智能运维解决方案*
-
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
-[![Kubernetes](https://img.shields.io/badge/Kubernetes-1.20+-blue.svg)](https://kubernetes.io/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
-
-[🎯 核心特性](#-核心特性) • [🏗️ 架构设计](#%EF%B8%8F-架构设计) • [⚡ 快速开始](#-快速开始) • [📚 文档](#-api-文档) • [🤝 贡献](#-贡献指南)
-
----
-
-**AI-CloudOps** 是业界领先的智能云原生运维平台，融合了 **人工智能**、**机器学习** 和 **自动化运维** 技术，为现代化基础设施提供全方位的智能运维解决方案。
-
-</div>
-
-## ✨ 为什么选择 AI-CloudOps？
-
-<table>
-<tr>
-<td width="50%">
-
-### 🎯 **核心价值**
-- 🔥 **90%+ 故障自动诊断准确率**
-- ⚡ **秒级问题根因定位**
-- 🛡️ **7×24 智能监控预警**
-- 💰 **平均降低 40% 运维成本**
-- 🚀 **零停机智能扩缩容**
-
-</td>
-<td width="50%">
-
-### 💫 **技术优势**
-- 🧠 **大语言模型 + 专家知识库**
-- 🔍 **多数据源融合分析**
-- 🛠️ **自动化修复引擎**
-- 📊 **实时智能预测**
-- 🔗 **云原生深度集成**
-
-</td>
-</tr>
-</table>
-
----
+生产部署与安全要求见 [部署说明](docs/production.md)。生产环境必须提供 `AIOPS_API_KEY`，Go 后端通过 `X-API-Key` 调用。历史版本中的集群凭据与 Redis 密码必须轮换后才能投入生产。
 
 ## 🎯 核心特性
 
@@ -58,7 +15,7 @@
 ### 🤖 **双模式 AI 助手**
 > **RAG + MCP 混合架构，专为运维场景优化**
 
-- 🧠 **RAG 模式**: 基于向量检索的知识问答，涵盖数万条运维最佳实践
+- 🧠 **RAG 模式**: 基于向量检索的知识问答，检索部署者提供的运维知识库
 - 🔧 **MCP 模式**: 直接调用 Kubernetes API，实时操作集群资源  
 - 💬 **智能对话**: 支持上下文理解，多轮对话解决复杂问题
 - 🎯 **意图识别**: 自动路由到最适合的处理模式
@@ -72,7 +29,7 @@
 - 📊 **置信度评估**: 提供预测可信度和风险评估
 
 ### 🛠️ **K8s 自动修复**
-> **零人工干预的故障自愈**
+> **按风险与权限约束执行修复**
 
 - 🔍 **智能诊断**: 深度分析 Pod、Deployment、Service 状态
 - 🚀 **自动修复**: 智能重启、扩缩容、配置调整
@@ -85,7 +42,7 @@
 - 🔍 **数据融合**: 整合 Prometheus 指标、K8s 事件、Pod 日志
 - 🧮 **异常检测**: 基于统计学和机器学习的异常识别
 - 🔗 **关联分析**: 多维度相关性分析和因果推理
-- ⚡ **快速定位**: 平均 30 秒内完成根因分析
+- ⚡ **快速定位**: 整合采集结果生成根因分析
 
 ### 💡 **全栈健康监控**
 > **端到端的系统状态感知**

@@ -11,7 +11,7 @@ Description: MCP客户端
 
 import json
 import logging
-from typing import Any, Dict, List, Union, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import aiohttp
 from openai import AsyncOpenAI
@@ -31,6 +31,7 @@ class MCPSessionClient:
 
         mcp_config = config.mcp
         self.server_url = (server_url or mcp_config.server_url).rstrip("/")
+        self.headers = {"X-API-Key": config.security.api_key}
         self.timeout = mcp_config.timeout
         self.max_retries = mcp_config.max_retries
         self.health_check_interval = mcp_config.health_check_interval
@@ -44,7 +45,7 @@ class MCPSessionClient:
             parameters = {}
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(headers=self.headers, timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
                 request_data = {"tool": tool_name, "parameters": parameters}
 
                 async with session.post(
@@ -75,7 +76,7 @@ class MCPSessionClient:
     async def health_check(self) -> bool:
         """健康检查"""
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(headers=self.headers, timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
                 async with session.get(f"{self.server_url}/health") as response:
                     return response.status == 200
         except Exception:
@@ -86,7 +87,7 @@ class MCPSessionClient:
     ) -> Dict[str, Any]:
         """通用GET请求处理"""
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(headers=self.headers, timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
                 async with session.get(f"{self.server_url}{endpoint}") as response:
                     if response.status == 200:
                         return await response.json()

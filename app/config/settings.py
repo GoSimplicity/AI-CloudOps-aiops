@@ -64,7 +64,11 @@ def get_env_or_config(
             config_value.get(part, {}) if isinstance(config_value, dict) else {}
         )
 
-    value = os.getenv(env_key) or config_value or default
+    # An explicit false, zero or empty secret is a value, not a missing setting.
+    env_value = os.getenv(env_key)
+    value = env_value if env_value is not None else config_value
+    if value == {} or value is None:
+        value = default
 
     if transform and value is not None:
         if transform is bool and isinstance(value, str):
@@ -671,6 +675,8 @@ class TestingConfig:
 @dataclass
 class SecurityConfig:
     """安全配置"""
+
+    api_key: str = field(default_factory=lambda: os.getenv("AIOPS_API_KEY", ""))
 
     jwt_secret: str = field(
         default_factory=lambda: get_env_or_config(

@@ -35,6 +35,9 @@ RUN mkdir -p data/models data/sample logs config
 # 复制应用代码
 COPY . .
 
+RUN useradd --create-home --uid 10001 aiops && chown -R aiops:aiops /app
+USER aiops
+
 # 暴露端口
 EXPOSE 8080
 

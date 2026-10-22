@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   cloudops-platform:
     build:
@@ -7,20 +5,21 @@ services:
       dockerfile: Dockerfile
     container_name: cloudops-platform
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     env_file:
       - .env
     environment:
       # MCP服务地址
+      - ENV=production
+      - AIOPS_API_KEY=${AIOPS_API_KEY:?Set AIOPS_API_KEY}
       - MCP_SERVER_URL=http://cloudops-mcp:9000
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./config:/app/config
-      - ./deploy/kubernetes:/app/deploy/kubernetes
+      - ./deploy/kubernetes:/app/deploy/kubernetes:ro
     depends_on:
       - prometheus
-      - ollama
       - redis
       - cloudops-mcp
     restart: unless-stopped
@@ -33,11 +32,13 @@ services:
       dockerfile: Dockerfile.mcp
     container_name: cloudops-mcp
     ports:
-      - "9000:9000"
+      - "127.0.0.1:9000:9000"
     env_file:
       - .env
     environment:
       # MCP服务配置
+      - ENV=production
+      - AIOPS_API_KEY=${AIOPS_API_KEY:?Set AIOPS_API_KEY}
       - MCP_SERVER_URL=http://0.0.0.0:9000
       - HOST=0.0.0.0
       - PORT=9000
@@ -49,9 +50,8 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./config:/app/config
-      - ./deploy/kubernetes:/app/deploy/kubernetes
+      - ./deploy/kubernetes:/app/deploy/kubernetes:ro
       # 如果需要访问宿主机的kubeconfig
-      - ${HOME}/.kube:/root/.kube:ro
     depends_on:
       - redis
     restart: unless-stopped
@@ -64,7 +64,7 @@ services:
     image: prom/prometheus:v2.45.0
     container_name: prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./deploy/prometheus/rules:/etc/prometheus/rules:ro
@@ -75,7 +75,6 @@ services:
       - "--web.console.libraries=/etc/prometheus/console_libraries"
       - "--web.console.templates=/etc/prometheus/consoles"
       - "--web.enable-lifecycle"
-      - "--web.enable-admin-api"
       - "--storage.tsdb.retention.time=30d"
     restart: unless-stopped
     networks:
@@ -112,10 +111,10 @@ services:
     image: redis:6.2.5
     container_name: redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --requirepass v6SxhWHyZC7S
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD}"]
     restart: unless-stopped
     networks:
       - aiops-network

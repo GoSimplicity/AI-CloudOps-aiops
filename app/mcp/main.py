@@ -21,10 +21,12 @@ from typing import Any, AsyncGenerator, Dict, Optional
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import uvicorn
+
+from app.api.middleware.auth import setup_auth
+from app.api.middleware.cors import setup_cors
 
 try:
     from ..config.settings import config
@@ -116,14 +118,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 配置CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+setup_auth(app)
+setup_cors(app)
+
+
+@app.get("/health", include_in_schema=False)
+async def health():
+    return {"status": "ok"}
+
 
 # 统一注册错误处理器（与主应用一致）
 try:

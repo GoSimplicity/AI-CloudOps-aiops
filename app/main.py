@@ -330,6 +330,10 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    @app.get("/health", include_in_schema=False)
+    async def health():
+        return {"status": "ok"}
+
     # 设置日志系统
     setup_logging(app)
 
@@ -344,7 +348,7 @@ def create_app() -> FastAPI:
     except Exception as e:
         logger = logging.getLogger("aiops")
         logger.error(f"路由注册失败: {str(e)}")
-        logger.warning("将继续启动，但部分路由功能可能不可用")
+        raise
 
     # 自定义OpenAPI元数据（分类标签）
     app.openapi_tags = [
@@ -394,7 +398,7 @@ def register_middleware_with_counter(app: FastAPI):
     except Exception as e:
         logger = logging.getLogger("aiops")
         logger.error(f"中间件注册失败: {str(e)}")
-        logger.warning("将继续启动，但部分中间件功能可能不可用")
+        raise
 
 
 # 创建应用实例

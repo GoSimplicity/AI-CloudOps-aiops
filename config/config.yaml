@@ -183,7 +183,7 @@ redis:
   host: localhost # Redis主机地址
   port: 6379 # Redis端口
   db: 0 # Redis数据库编号
-  password: "v6SxhWHyZC7S" # Redis密码
+  password: "" # Set REDIS_PASSWORD in the environment
   connection_timeout: 5 # 连接超时时间（秒）
   socket_timeout: 5 # Socket超时时间（秒）
   max_connections: 10 # 最大连接数
