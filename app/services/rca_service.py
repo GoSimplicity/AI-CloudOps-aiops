@@ -483,7 +483,8 @@ class RCAService(BaseService, HealthCheckMixin):
       all_healthy = (
         prometheus_connected and kubernetes_connected and redis_connected
       )
-      status = "healthy" if all_healthy else "degraded"
+      any_collector = prometheus_connected or kubernetes_connected
+      status = "healthy" if all_healthy else ("degraded" if any_collector else "unhealthy")
 
       return {
         "status": status,

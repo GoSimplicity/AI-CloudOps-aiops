@@ -32,8 +32,8 @@ from app.common.exceptions import (
     ValidationError as DomainValidationError,
 )
 from app.models import (
-    AutoFixWorkflowConfirmRequest,
     AutoFixRequest,
+    AutoFixWorkflowConfirmRequest,
     BaseResponse,
     DiagnoseRequest,
     ServiceConfigResponse,
@@ -69,7 +69,9 @@ async def autofix_ready() -> Dict[str, Any]:
     try:
         await (await get_autofix_service()).initialize()
         is_healthy = await (await get_autofix_service()).health_check()
-        status = "healthy" if is_healthy else "degraded"
+        if not is_healthy:
+            raise ServiceUnavailableError("autofix")
+        status = "healthy"
         return {
             "ready": True,
             "service": "autofix",

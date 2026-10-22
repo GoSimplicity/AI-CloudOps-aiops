@@ -216,7 +216,9 @@ async def rca_ready() -> Dict[str, Any]:
         await (await get_rca_service()).initialize()
         health_status = await (await get_rca_service()).get_health_status()
         status = health_status.get("status", "unhealthy")
-        is_ready = status in {"healthy", "degraded"}
+        is_ready = status == "healthy"
+        if not is_ready:
+            raise ServiceUnavailableError("rca")
         is_healthy = status == "healthy"
         message = "服务就绪" if is_healthy else "服务已降级，可继续使用受限功能"
 

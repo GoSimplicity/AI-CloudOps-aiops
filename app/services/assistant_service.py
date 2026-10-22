@@ -897,7 +897,12 @@ class OptimizedAssistantService(BaseService):
 
     def _resolve_filename_conflict(self, directory: str, filename: str) -> str:
         """解决文件名冲突，如果文件已存在则添加UUID"""
-        if not os.path.exists(os.path.join(directory, filename)):
+        if not filename or filename in {".", ".."} or os.path.basename(filename) != filename or "\\" in filename or "\x00" in filename:
+            raise ValidationError("file_name", "文件名不能包含路径或控制字符")
+        candidate = os.path.join(directory, filename)
+        if os.path.islink(candidate):
+            raise ValidationError("file_name", "不允许写入符号链接")
+        if not os.path.exists(candidate):
             return filename
 
         # 分离文件名和扩展名
