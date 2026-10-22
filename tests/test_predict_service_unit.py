@@ -22,7 +22,12 @@ from app.services.prediction_service import PredictionService
 @pytest.fixture
 def prediction_service():
     """创建预测服务实例"""
-    return PredictionService()
+    service = PredictionService()
+    service._get_prometheus_data = AsyncMock(return_value=[
+        {"timestamp": "2026-10-22T10:00:00", "value": 100.0},
+        {"timestamp": "2026-10-22T11:00:00", "value": 105.0},
+    ])
+    return service
 
 
 @pytest.fixture
