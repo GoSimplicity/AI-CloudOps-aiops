@@ -709,12 +709,25 @@ class RAGAssistant:
             }
 
     async def health_check(self) -> Dict[str, Any]:
-        """健康检查"""
+        """Report dependency availability instead of object existence."""
+        vector_healthy = False
+        llm_healthy = False
+        if self.vector_store:
+            try:
+                result = await asyncio.to_thread(self.vector_store.health_check)
+                vector_healthy = result.get("status") == "healthy" and result.get("index_available", False)
+            except Exception:
+                pass
+        if self.llm_service:
+            try:
+                llm_healthy = await self.llm_service.is_healthy()
+            except Exception:
+                pass
         return {
-            "status": "healthy",
+            "status": "healthy" if vector_healthy and llm_healthy else "unhealthy",
             "components": {
-                "vector_store": bool(self.vector_store),
-                "llm_service": bool(self.llm_service),
+                "vector_store": vector_healthy,
+                "llm_service": llm_healthy,
                 "cache": bool(self.cache_manager),
             },
             "stats": self._stats,

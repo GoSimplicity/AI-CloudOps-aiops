@@ -307,6 +307,13 @@ class MCPAssistant:
     async def is_available(self) -> bool:
         """检查MCP服务是否可用"""
         try:
-            return await self.client.health_check()
+            from app.config.settings import config
+
+            if config.llm.provider.lower() == "openai" and (not config.llm.api_key or config.llm.api_key == "sk-xxx"):
+                return False
+            if not await self.client.health_check():
+                return False
+            await self.llm_client.with_options(timeout=5, max_retries=0).models.list()
+            return True
         except Exception:
             return False

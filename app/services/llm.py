@@ -753,66 +753,17 @@ class LLMService:
             return False
 
     async def _check_openai_health(self) -> bool:
-        """
-        检查OpenAI健康状态
-
-        通过发送简单的测试请求来验证OpenAI API的连接性和可用性。
-        该方法会创建或使用现有的客户端连接，发送最小化的测试请求来确认服务状态。
-
-        Returns:
-            bool: True表示健康，False表示不可用
-
-        检查流程：
-        1. 获取或创建OpenAI客户端实例
-        2. 发送简单的聊天完成请求
-        3. 验证响应的有效性和完整性
-        4. 记录检查结果和错误信息
-
-        健康检查策略：
-        - 使用最小的令牌数(5个)减少成本
-        - 发送简单的中文测试文本
-        - 检查响应结构的完整性
-        - 捕获和记录所有可能的异常
-
-        应用场景：
-        - 服务启动时的连接验证
-        - 定期的服务可用性监控
-        - 故障转移前的状态确认
-        - 系统健康检查API
-        """
+        """Check the provider metadata endpoint without generating billable tokens."""
+        if not config.llm.api_key or config.llm.api_key == "sk-xxx":
+            return False
         try:
-            # 获取适当的客户端实例 - 根据当前提供商选择主要或备用客户端
-            client = (
-                getattr(self, "backup_client", None)
-                if self.provider.lower() == "ollama"
-                else self.client
-            )
+            client = getattr(self, "backup_client", None) if self.provider.lower() == "ollama" else self.client
             if not client:
-                # 如果没有现有客户端，创建新的临时客户端进行测试
-                client = OpenAI(
-                    api_key=config.llm.api_key, base_url=config.llm.base_url
-                )
-
-            # 使用 asyncio.to_thread 在线程池中执行同步调用
-            def _sync_health_check():
-                return client.chat.completions.create(
-                    model=config.llm.model,
-                    messages=[{"role": "user", "content": "测试"}],
-                    max_tokens=ServiceConstants.LLM_HEALTH_CHECK_TOKENS,  # 最小令牌数，仅用于连接验证
-                )
-
-            response = await asyncio.to_thread(_sync_health_check)
-
-            # 验证响应的完整性和有效性
-            if response and hasattr(response, "choices") and len(response.choices) > 0:
-                logger.debug("OpenAI健康检查通过")
-                return True
-            else:
-                logger.warning("OpenAI服务响应无效")
                 return False
-
-        except Exception as e:
-            logger.warning(f"OpenAI健康检查失败: {str(e)}")
+            probe = client.with_options(timeout=5, max_retries=0)
+            await asyncio.to_thread(probe.models.list)
+            return True
+        except Exception:
             return False
 
     async def _check_ollama_health(self) -> bool:

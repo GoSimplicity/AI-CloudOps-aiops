@@ -21,13 +21,13 @@ uv pip check --python .venv-release/bin/python
 uvx pip-audit -r requirements.txt --no-deps --disable-pip --format json
 ```
 
-78 个离线测试通过。新旧 FastAPI 的路由内部表示不同，路由覆盖测试改用公开 OpenAPI 路径；生产请求契约不变。镜像强制从 wheel 安装，不再依赖 langdetect 的构建隔离环境。
+80 个离线测试通过。新旧 FastAPI 的路由内部表示不同，路由覆盖测试改用公开 OpenAPI 路径；生产请求契约不变。镜像强制从 wheel 安装，不再依赖 langdetect 的构建隔离环境。
 
 ## 请求与工具边界
 
 HTTP 与 WebSocket 使用同一内部服务密钥。Go 网关注入服务密钥、移除终端用户 Authorization/Cookie；Python 不把服务密钥作为终端用户身份。浏览器不得得到内部密钥。前端 AIops API 模块的字面路径与注册路由静态对照没有发现缺失；这不等于真实模型业务验收。
 
-自动修复或 RCA 依赖缺失时 `/ready` 返回 503；预测就绪检查同时验证模型组件与 Prometheus。`/health` 仅表示进程可服务。没有 Kubernetes 凭据时不得视作自动修复就绪。
+自动修复或 RCA 依赖缺失时 `/ready` 返回 503；预测就绪检查同时验证模型组件与 Prometheus。`/health` 仅表示进程可服务。没有 Kubernetes 凭据时不得视作自动修复就绪。RAG 检查实际向量索引和模型依赖，MCP 助手检查工具服务及模型元数据接口；OpenAI 探针使用 models.list，不再发送计费的生成请求。仅支持生成而不提供模型列表的兼容供应商会被保守标记为不可用，需要部署前确认接口支持。
 
 MCP 文件工具限制在专用根目录，拒绝符号链接越界；上传和新增知识文档只接受无目录成分的文件名，拒绝绝对路径、`..`、反斜杠和符号链接写入。计算器不再执行 Python eval，限制 AST 类型、长度及结果规模。静态检索 MCP 和自动修复代码未发现 subprocess shell、os.system 或动态 exec 调用；Kubernetes 写操作仍需要部署环境的最小权限 RBAC。
 
