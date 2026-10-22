@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     curl \
+    libmagic1 \
     procps \
     git \
     && rm -rf /var/lib/apt/lists/*

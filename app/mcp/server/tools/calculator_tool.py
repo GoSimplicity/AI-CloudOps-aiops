@@ -12,6 +12,8 @@ Description: 数学计算工具
 import math
 from typing import Any, Dict
 
+from app.utils.safe_math import evaluate
+
 from ..mcp_server import BaseTool
 
 
@@ -80,23 +82,9 @@ class CalculatorTool(BaseTool):
                 "nan": math.nan,
             }
 
-            # 不允许的字符
-            forbidden_chars = [
-                "__",
-                "import",
-                "exec",
-                "eval",
-                "open",
-                "file",
-                "input",
-                "raw_input",
-            ]
-            for char in forbidden_chars:
-                if char in expression:
-                    raise ValueError(f"不安全的表达式: {char}")
-
-            # 计算表达式
-            result = eval(expression, {"__builtins__": {}}, safe_dict)
+            if type(precision) is not int or not 0 <= precision <= 10:
+                raise ValueError("precision must be between 0 and 10")
+            result = evaluate(expression, safe_dict)
 
             # 格式化结果
             if isinstance(result, float):

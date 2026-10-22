@@ -1,0 +1,30 @@
+name: Verify
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    env:
+      ENV: test
+      PYTHON_DOTENV_DISABLED: '1'
+      K8S_CONFIG_PATH: /nonexistent
+      KUBECONFIG: /nonexistent
+      LLM_API_KEY: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pip check
+      - run: python -m pytest tests/unit tests/test_predict_service_unit.py -q
+      - run: cp env.example .env
+      - run: docker compose config --quiet
+        env:
+          REDIS_PASSWORD: offline-validation-only
+          AIOPS_API_KEY: offline-validation-key-with-32-characters
+      - run: docker build -t aiops:verify .

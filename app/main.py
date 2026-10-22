@@ -66,18 +66,13 @@ async def lifespan(app: FastAPI):
     # 初始化启动服务
     await startup_service.initialize()
 
-    # 注册需要管理的服务实例（保持原有机制）
-    await _register_managed_services()
-
-    # 通过ServiceFactory预热关键服务（懒初始化已经异步触发，这里仅确保健康）
-    try:
-        factory_health = await ServiceFactory.health()
-        logger.info(f"ServiceFactory 管理的服务健康状态: {factory_health}")
-    except Exception as e:
-        logger.warning(f"获取ServiceFactory健康状态失败: {e}")
-
-    # 启动预热机制
-    warmup_results = await startup_service.warmup_services()
+    # Business dependencies initialize on first use. Optional prewarming must not
+    # turn liveness into a request to an unavailable model provider or cluster.
+    app_state.is_shutting_down = False
+    warmup_results = {"success": True}
+    if os.getenv("AIOPS_PREWARM", "false").lower() == "true":
+        await _register_managed_services()
+        warmup_results = await startup_service.warmup_services()
 
     # 记录启动信息
     startup_time = startup_service.get_uptime()

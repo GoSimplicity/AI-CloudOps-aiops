@@ -12,6 +12,8 @@ Description: 文件操作工具
 import os
 from typing import Any, Dict
 
+from app.utils.file_boundary import resolve_tool_path
+
 from ..mcp_server import BaseTool
 
 
@@ -44,7 +46,7 @@ class FileReadTool(BaseTool):
     async def execute(self, parameters: Dict[str, Any]) -> Any:
         """执行工具"""
         try:
-            file_path = parameters["file_path"]
+            file_path = resolve_tool_path(parameters["file_path"])
             encoding = parameters.get("encoding", "utf-8")
             max_lines = parameters.get("max_lines", 0)
 
@@ -53,6 +55,9 @@ class FileReadTool(BaseTool):
 
             if not os.path.isfile(file_path):
                 raise ValueError(f"路径不是文件: {file_path}")
+
+            if os.path.getsize(file_path) > 1024 * 1024:
+                raise ValueError("File exceeds the 1 MiB tool limit")
 
             with open(file_path, "r", encoding=encoding) as f:
                 if max_lines > 0:
@@ -105,7 +110,7 @@ class FileListTool(BaseTool):
     async def execute(self, parameters: Dict[str, Any]) -> Any:
         """执行工具"""
         try:
-            directory_path = parameters.get("directory_path", ".")
+            directory_path = resolve_tool_path(parameters.get("directory_path", "."))
             show_hidden = parameters.get("show_hidden", False)
 
             if not os.path.exists(directory_path):
@@ -162,7 +167,7 @@ class FileStatsTool(BaseTool):
     async def execute(self, parameters: Dict[str, Any]) -> Any:
         """执行工具"""
         try:
-            path = parameters["path"]
+            path = resolve_tool_path(parameters["path"])
 
             if not os.path.exists(path):
                 raise FileNotFoundError(f"路径不存在: {path}")

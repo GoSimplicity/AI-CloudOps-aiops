@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
 import pytest
 
@@ -47,3 +47,22 @@ def test_public_health_does_not_exempt_operations(monkeypatch):
 def test_production_requires_strong_key(monkeypatch, key):
     with pytest.raises(ValueError, match="AIOPS_API_KEY"):
         make_client(monkeypatch, key, "production")
+
+
+def test_websocket_requires_credentials(monkeypatch):
+    from starlette.websockets import WebSocketDisconnect
+
+    client = make_client(monkeypatch)
+
+    @client.app.websocket("/ws")
+    async def websocket(ws: WebSocket):
+        await ws.accept()
+        await ws.send_text("authenticated")
+        await ws.close()
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect("/ws"):
+            pass
+    assert exc.value.code == 1008
+    with client.websocket_connect("/ws", headers={"X-API-Key": "test-key"}) as ws:
+        assert ws.receive_text() == "authenticated"

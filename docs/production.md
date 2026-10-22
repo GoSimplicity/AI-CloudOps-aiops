@@ -24,3 +24,7 @@ curl --fail -H "X-API-Key: $AIOPS_API_KEY" http://127.0.0.1:8080/api/v1/predict/
 离线门禁为 `python -m pytest tests/unit -q`、`python -m pip check` 和 Compose 配置校验。历史 `tests/` 顶层脚本包含真实服务调用，不作为离线门禁。上线验收还需在隔离预生产集群验证 Redis、Prometheus、LLM、嵌入模型和 MCP 的真实连通性与业务流程；没有这些环境的验证结果不能宣称生产验收完成。
 
 依据：[FastAPI 鉴权与定时安全比较](https://fastapi.tiangolo.com/advanced/security/http-basic-auth/)、[Docker 构建最佳实践](https://docs.docker.com/build/building/best-practices/)。
+
+服务默认按需初始化业务依赖，启动与存活检查不会调用模型。仅在依赖配置完成且需要启动预热时设置 `AIOPS_PREWARM=true`。Prometheus 地址使用 `PROMETHEUS_HOST=prometheus:9090`，不带协议。RAG 使用普通 Redis 存储文档、缓存与元数据，使用本地 FAISS 做向量检索；无需 Redis Stack。WebSocket 与 HTTP 使用同样的服务密钥，禁止将内部密钥下发浏览器。
+
+MCP 文件工具仅能访问 `MCP_FILE_ROOT`（默认 `data/knowledge_base`），相对路径以此为基准，拒绝越界路径及符号链接越界，单文件读取上限 1 MiB。不要将此目录配置为应用根目录或凭据目录。计算器使用受限算术 AST，拒绝 Python 属性访问、代码执行和超大指数。

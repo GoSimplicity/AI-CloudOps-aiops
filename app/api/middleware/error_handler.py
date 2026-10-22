@@ -22,6 +22,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.common.constants import HttpStatusCodes, ServiceConstants
 from app.common.exceptions import AIOpsException
+from app.config.settings import config
 from app.models import BaseResponse
 
 logger = logging.getLogger("aiops.error_handler")
@@ -48,7 +49,7 @@ async def custom_http_exception_handler(
         # 构建错误响应
         error_response = BaseResponse(
             code=exc.status_code,
-            message=str(exc.detail),
+            message=str(exc.detail) if exc.status_code < 500 or config.debug else ServiceConstants.INTERNAL_SERVER_ERROR_MESSAGE,
             data=_build_error_data(request, exc.status_code, exc.detail),
         )
 
@@ -121,7 +122,8 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         error_data = _build_error_data(
             request, HttpStatusCodes.INTERNAL_SERVER_ERROR, str(exc)
         )
-        error_data["type"] = type(exc).__name__
+        if config.debug:
+            error_data["type"] = type(exc).__name__
 
         error_response = BaseResponse(
             code=HttpStatusCodes.INTERNAL_SERVER_ERROR,
@@ -157,12 +159,12 @@ async def aiops_exception_handler(
         # 构建包含 error_code 与 details 的标准错误数据
         error_data = _build_error_data(request, status_code, exc.details or exc.message)
         error_data["error_code"] = getattr(exc, "error_code", "AIOPS_ERROR")
-        if getattr(exc, "details", None):
+        if getattr(exc, "details", None) and (status_code < 500 or config.debug):
             error_data["details"] = exc.details
 
         error_response = BaseResponse(
             code=status_code,
-            message=exc.message,
+            message=exc.message if status_code < 500 or config.debug else ServiceConstants.INTERNAL_SERVER_ERROR_MESSAGE,
             data=error_data,
         )
         return JSONResponse(status_code=status_code, content=error_response.dict())
@@ -256,7 +258,7 @@ def _build_error_data(
     error_id = f"err_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
     return {
         "error_id": error_id,
-        "detail": detail,
+        "detail": detail if status_code < 500 or config.debug else "Internal server error",
         "timestamp": datetime.now().isoformat(),
         "path": str(request.url.path),
         "method": request.method,
@@ -274,7 +276,7 @@ def _create_fallback_response(
         "message": message,
         "data": {
             "timestamp": datetime.now().isoformat(),
-            "error": error,
+            "error": error if config.debug else "Internal server error",
         },
     }
     return JSONResponse(

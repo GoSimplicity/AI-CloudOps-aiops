@@ -26,6 +26,7 @@ try:
     logger.info("已注册预测路由")
 except Exception as e:
     logger.warning(f"注册预测路由失败: {str(e)}")
+    raise
 
 try:
     from .rca import router as rca_router
@@ -34,6 +35,7 @@ try:
     logger.info("已注册根因分析路由")
 except Exception as e:
     logger.warning(f"注册根因分析路由失败: {str(e)}")
+    raise
 
 try:
     from .autofix import router as autofix_router
@@ -42,6 +44,7 @@ try:
     logger.info("已注册自动修复路由")
 except Exception as e:
     logger.warning(f"注册自动修复路由失败: {str(e)}")
+    raise
 
 try:
     from .assistant import router as assistant_router
@@ -50,6 +53,7 @@ try:
     logger.info("已注册智能助手路由")
 except Exception as e:
     logger.warning(f"注册智能助手路由失败: {str(e)}")
+    raise
 
 try:
     from .cache import router as cache_router
@@ -58,6 +62,7 @@ try:
     logger.info("已注册缓存管理路由")
 except Exception as e:
     logger.warning(f"注册缓存管理路由失败: {str(e)}")
+    raise
 
 try:
     from .inspection import router as inspection_router
@@ -66,6 +71,7 @@ try:
     logger.info("已注册巡检路由")
 except Exception as e:
     logger.warning(f"注册巡检路由失败: {str(e)}")
+    raise
 
 
 def register_routes(app):
