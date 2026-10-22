@@ -1041,11 +1041,9 @@ class PredictionService(BaseService, HealthCheckMixin):
                 )
                 return prometheus_data
         except Exception as e:
-            self.logger.warning(f"从Prometheus获取数据失败: {str(e)}，回落到模拟数据")
+            raise PredictionError("Historical metrics are unavailable; prediction was not performed") from e
 
-        # 回落到模拟数据
-        self.logger.info(f"使用模拟历史数据进行{prediction_type.value}预测")
-        return self._generate_mock_historical_data(prediction_type, hours)
+        raise PredictionError("No historical metrics were returned; prediction was not performed")
 
     async def _get_prometheus_data(
         self, prediction_type: PredictionType, custom_query: Optional[str], hours: int
@@ -1127,38 +1125,6 @@ class PredictionService(BaseService, HealthCheckMixin):
                 value = 0
 
             data.append({"timestamp": timestamp.isoformat(), "value": float(value)})
-
-        return data
-
-    def _generate_mock_historical_data(
-        self, prediction_type: PredictionType, hours: int
-    ) -> List[Dict[str, Any]]:
-        """生成模拟历史数据"""
-        import numpy as np
-
-        now = datetime.now()
-        data = []
-
-        for i in range(hours):
-            timestamp = now - timedelta(hours=hours - i)
-
-            # 根据预测类型生成不同的模拟数据
-            if prediction_type == PredictionType.QPS:
-                base_value = 100
-                hour_factor = 0.5 + 0.5 * np.sin(2 * np.pi * timestamp.hour / 24)
-                value = base_value * hour_factor + np.random.normal(0, 10)
-            elif prediction_type == PredictionType.CPU:
-                base_value = 50
-                hour_factor = 0.7 + 0.3 * np.sin(2 * np.pi * timestamp.hour / 24)
-                value = base_value * hour_factor + np.random.normal(0, 5)
-            elif prediction_type == PredictionType.MEMORY:
-                base_value = 60
-                value = base_value + np.random.normal(0, 3)
-            else:  # DISK
-                base_value = 40 + i * 0.1  # 缓慢增长
-                value = base_value + np.random.normal(0, 1)
-
-            data.append({"timestamp": timestamp.isoformat(), "value": max(0, value)})
 
         return data
 

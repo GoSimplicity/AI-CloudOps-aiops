@@ -206,10 +206,6 @@ class UnifiedPredictor:
             base_growth = current_value * (1 + growth_rate * (i + 1))
             predicted_value = base_growth * time_factor
 
-            # 添加随机波动
-            noise = np.random.normal(0, current_value * 0.05)
-            predicted_value += noise
-
             # 调整值范围
             predicted_value = self._adjust_prediction_range(
                 predicted_value, prediction_type
