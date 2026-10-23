@@ -37,7 +37,7 @@ class MCPSessionClient:
         self.timeout = mcp_config.timeout
         self.max_retries = mcp_config.max_retries
         self.health_check_interval = mcp_config.health_check_interval
-        logger.info(f"MCP会话客户端初始化，服务端地址: {self.server_url}")
+        logger.info("MCP会话客户端初始化")
 
     async def execute_tool(
         self, tool_name: str, parameters: Dict[str, Any] = None
@@ -65,10 +65,10 @@ class MCPSessionClient:
                         raise RuntimeError(f"工具调用失败，状态码: {response.status}")
 
         except aiohttp.ClientError as e:
-            logger.error(f"MCP客户端网络错误: {str(e)}")
+            logger.error("MCP客户端网络错误，异常类型: %s", type(e).__name__)
             raise RuntimeError(f"MCP服务连接失败: {str(e)}")
         except Exception as e:
-            logger.error(f"MCP客户端执行异常: {str(e)}")
+            logger.error("MCP客户端执行异常，异常类型: %s", type(e).__name__)
             raise
 
     async def get_available_tools(self) -> Dict[str, Any]:
@@ -98,10 +98,10 @@ class MCPSessionClient:
                             f"{operation_name}失败，状态码: {response.status}"
                         )
         except aiohttp.ClientError as e:
-            logger.error(f"MCP客户端网络错误: {str(e)}")
+            logger.error("MCP客户端网络错误，异常类型: %s", type(e).__name__)
             raise RuntimeError(f"MCP服务连接失败: {str(e)}")
         except Exception as e:
-            logger.error(f"MCP客户端{operation_name}异常: {str(e)}")
+            logger.error("MCP客户端%s异常，异常类型: %s", operation_name, type(e).__name__)
             raise
 
 

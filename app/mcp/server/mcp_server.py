@@ -64,7 +64,7 @@ class MCPServer:
             raise ValueError(f"未知的工具: {tool_name}")
 
         tool = self.tools[tool_name]
-        logger.info(f"开始执行工具: {tool_name}, 参数: {parameters}")
+        logger.info("开始执行工具: %s, 参数字段数: %s", tool_name, len(parameters))
 
         task = asyncio.current_task()
         self._execution_tasks.add(task)
@@ -73,7 +73,7 @@ class MCPServer:
             logger.info(f"工具执行成功: {tool_name}")
             return result
         except Exception as e:
-            logger.error(f"工具执行失败: {tool_name}, 错误: {str(e)}")
+            logger.error("工具执行失败: %s, 异常类型: %s", tool_name, type(e).__name__)
             raise
         finally:
             self._execution_tasks.discard(task)

@@ -54,7 +54,7 @@ class MCPService(BaseService):
                 try:
                     self._mcp_assistant = MCPAssistant()
                 except Exception as e:
-                    logger.debug(f"获取MCP助手实例失败: {str(e)}")
+                    logger.debug("获取MCP助手实例失败，异常类型: %s", type(e).__name__)
                     self._health_cache = {"healthy": False, "last_check": now}
                     return False
 
@@ -68,7 +68,7 @@ class MCPService(BaseService):
                 return False
 
         except Exception as e:
-            logger.warning(f"MCP健康检查失败: {str(e)}")
+            logger.warning("MCP健康检查失败，异常类型: %s", type(e).__name__)
             self._health_cache = {"healthy": False, "last_check": datetime.now()}
             return False
 
@@ -142,7 +142,7 @@ class MCPService(BaseService):
                         ],
                     }
                 except Exception as e:
-                    logger.warning(f"获取工具信息失败: {e}")
+                    logger.warning("获取工具信息失败，异常类型: %s", type(e).__name__)
                     tools_info = {"error": str(e)}
 
             return {
@@ -215,7 +215,7 @@ class MCPService(BaseService):
                 self._mcp_assistant = MCPAssistant()
                 logger.info("MCP助手在运行时成功初始化")
             except Exception as e:
-                logger.error(f"无法初始化MCP助手: {str(e)}")
+                logger.error("无法初始化MCP助手，异常类型: %s", type(e).__name__)
                 raise AssistantError(f"MCP服务暂未就绪: {str(e)}")
 
     async def cleanup(self) -> None:
@@ -237,7 +237,7 @@ class MCPService(BaseService):
                         else:
                             self._mcp_assistant.close()
                 except Exception as e:
-                    self.logger.warning(f"清理MCP助手实例失败: {e}")
+                    self.logger.warning("清理MCP助手实例失败，异常类型: %s", type(e).__name__)
                 self._mcp_assistant = None
 
             # 重置健康缓存
@@ -249,7 +249,7 @@ class MCPService(BaseService):
             self.logger.info("MCP服务资源清理完成")
 
         except Exception as e:
-            self.logger.error(f"MCP服务资源清理失败: {str(e)}")
+            self.logger.error("MCP服务资源清理失败，异常类型: %s", type(e).__name__)
             raise
 
 

@@ -121,7 +121,7 @@ try:
     setup_error_handlers(app)
     logger.info("MCP 应用已注册统一错误处理器")
 except Exception as e:
-    logger.warning(f"MCP 错误处理器注册失败: {e}")
+    logger.warning("MCP 错误处理器注册失败，异常类型: %s", type(e).__name__)
 
 
 @app.get("/sse")
@@ -183,8 +183,8 @@ async def sse_endpoint(request: Request) -> StreamingResponse:
             logger.info(f"SSE连接 {connection_id} 已取消")
             raise
         except Exception as e:
-            logger.error(f"SSE连接 {connection_id} 错误: {str(e)}")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'connection_id': connection_id})}\n\n"
+            logger.error("SSE连接 %s 错误，异常类型: %s", connection_id, type(e).__name__)
+            yield f"data: {json.dumps({'type': 'error', 'message': 'MCP stream failed', 'connection_id': connection_id})}\n\n"
         finally:
             # 清理连接
             active_sse_connections.discard(connection_id)
@@ -209,8 +209,6 @@ async def execute_tool(request: ToolRequest) -> ToolResponse:
     start_time = time.time()
 
     try:
-        logger.info(f"执行工具调用: {request.tool}, 参数: {request.parameters}")
-
         # 验证工具是否存在
         if request.tool not in mcp_server.tools:
             return ToolResponse(
@@ -220,6 +218,8 @@ async def execute_tool(request: ToolRequest) -> ToolResponse:
                 error=f"工具 '{request.tool}' 不存在",
                 status="error",
             )
+
+        logger.info("执行工具调用: %s, 参数字段数: %s", request.tool, len(request.parameters))
 
         # 执行工具
         result = await mcp_server.execute_tool(
@@ -245,13 +245,13 @@ async def execute_tool(request: ToolRequest) -> ToolResponse:
         )
     except Exception as err:
         execution_time = time.time() - start_time
-        logger.error(f"工具调用失败: {str(err)}, 耗时: {execution_time:.2f}秒")
+        logger.error("工具调用失败: %s, 异常类型: %s, 耗时: %.2f秒", request.tool, type(err).__name__, execution_time)
 
         return ToolResponse(
             request_id=request.request_id,
             tool=request.tool,
             result=None,
-            error=str(err),
+            error=f"Tool execution failed ({type(err).__name__})",
             status="error",
         )
 
@@ -309,7 +309,7 @@ def parse_server_url(url: str) -> tuple[str, int]:
 
         return host, port
     except Exception as e:
-        logger.warning(f"解析URL失败: {e}，使用默认配置")
+        logger.warning("解析URL失败，使用默认配置，异常类型: %s", type(e).__name__)
         default_port = (
             config.mcp.server_url.split(":")[-1]
             if config.mcp.server_url
@@ -367,7 +367,7 @@ def main():
         )
 
     except Exception as e:
-        logger.error(f"启动服务失败: {e}")
+        logger.error("启动服务失败，异常类型: %s", type(e).__name__)
         sys.exit(1)
 
 
