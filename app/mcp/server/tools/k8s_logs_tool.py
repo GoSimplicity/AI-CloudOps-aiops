@@ -109,9 +109,9 @@ class K8sLogsTool(K8sBaseTool):
             "required": ["operation", "pod_name"],
         }
 
-    def _create_api_clients(self) -> Dict[str, client.ApiClient]:
+    def _create_api_clients(self, api_client: client.ApiClient) -> Dict[str, Any]:
         """创建Kubernetes API客户端"""
-        return {"v1": client.CoreV1Api()}
+        return {"v1": client.CoreV1Api(api_client)}
 
     async def _execute_internal(self, parameters: Dict[str, Any]) -> Any:
         """执行工具内部逻辑"""

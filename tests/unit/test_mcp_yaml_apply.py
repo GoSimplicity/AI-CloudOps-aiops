@@ -210,11 +210,20 @@ def test_discovery_and_transport_disable_unbounded_requests_and_implicit_retries
     value = object.__new__(BoundedDynamicClient)
     value.request("get", "/version")
     assert captured == [{"_request_timeout": (5, 15)}]
-    api = K8sResourceTool._apply_api_client()
+    from kubernetes import client as k8s_client
+
+    configuration = k8s_client.Configuration()
+    configuration.host = "https://bound-source.invalid"
+    bound = k8s_client.ApiClient(configuration=configuration)
+    api = K8sResourceTool._apply_api_client(bound)
     try:
         assert api.configuration.retries == 0
+        # SEC-33 L2 P1-1：复制绑定来源的独立 Configuration，不读全局默认，也不改动绑定客户端
+        assert api.configuration.host == "https://bound-source.invalid"
+        assert api.configuration is not bound.configuration and bound.configuration.retries is None
     finally:
         api.close()
+        bound.close()
 
 
 async def test_timeout_does_not_claim_a_running_sdk_thread_was_stopped(tool, monkeypatch):
@@ -270,16 +279,17 @@ def test_cached_resource_client_never_ignores_a_different_explicit_target(tool, 
     second.touch()
     calls = []
 
-    def initialize(self, config_path):
+    def new_api_client(self, config_path):
         calls.append(config_path)
-        self._api_clients = {"offline": object()}
-        return self._api_clients
+        return Mock(name="api-client")
 
-    monkeypatch.setattr(K8sBaseTool, "_initialize_clients", initialize)
+    # SEC-33 L2 P1-1：绑定逻辑下沉到 K8sBaseTool，只替换最底层的 kubeconfig 加载，真实走初始化与缓存
+    monkeypatch.setattr(K8sBaseTool, "_new_api_client", new_api_client)
+    monkeypatch.setattr(K8sResourceTool, "_create_api_clients", lambda self, api_client: {"offline": api_client})
     tool._initialize_clients(str(first))
     tool._initialize_clients(str(first))
     with pytest.raises(ValueError, match="切换集群"):
         tool._initialize_clients(str(second))
     with pytest.raises(ValueError, match="切换集群"):
         tool._initialize_clients(None)
-    assert calls == [str(first), str(first)]
+    assert calls == [str(first)]

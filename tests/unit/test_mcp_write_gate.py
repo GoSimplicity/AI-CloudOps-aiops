@@ -753,14 +753,16 @@ def test_resource_tool_empty_config_path_initializes_default_clients(monkeypatch
     from app.mcp.server.tools import k8s_resource_tool
     from app.mcp.server.tools.k8s_base_tool import K8sBaseTool
 
-    base_init = Mock(return_value={"v1": Mock()})
-    monkeypatch.setattr(K8sBaseTool, "_initialize_clients", base_init)
-    tool = k8s_resource_tool.K8sResourceTool.__new__(k8s_resource_tool.K8sResourceTool)
-    tool._api_clients = None
-    tool._client_source = None
-    tool._client_source_lock = __import__("threading").Lock()
-    tool._initialize_clients(value)
-    base_init.assert_called_once_with(None)
+    new_api_client = Mock(return_value=Mock(name="api-client"))
+    # SEC-33 L2 P1-1：绑定逻辑在 K8sBaseTool，只替换最底层的 kubeconfig 加载
+    monkeypatch.setattr(K8sBaseTool, "_new_api_client", new_api_client)
+    monkeypatch.setattr(k8s_resource_tool.K8sResourceTool, "_create_api_clients", lambda self, api_client: {"v1": api_client})
+    tool = k8s_resource_tool.K8sResourceTool()
+    try:
+        tool._initialize_clients(value)
+    finally:
+        tool._executor.shutdown(wait=True)
+    new_api_client.assert_called_once_with(None)
     assert tool._client_source == "default"
 
 
