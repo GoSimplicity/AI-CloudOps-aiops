@@ -115,23 +115,33 @@ class AutoFixRemediationEngine:
             }
 
         executed_actions = []
-        for action in actions:
+        not_attempted_actions = []
+        for index, action in enumerate(actions):
             execution_record = await self._execute_action(action, deployment, namespace, dry_run=dry_run)
             executed_actions.append(execution_record)
+            if execution_record.get("status") == "failed":
+                not_attempted_actions = deepcopy(actions[index + 1:])
+                break
 
         post_check = None
         if not dry_run and executed_actions:
             post_check = await self._post_check(deployment, namespace)
 
         failed = [record for record in executed_actions if record.get("status") == "failed"]
+        # API接受补丁只代表动作已提交，必须确认工作负载实际就绪才算修复完成
+        rollout_failed = not dry_run and bool(executed_actions) and (
+            not isinstance(post_check, dict) or post_check.get("ready") is not True
+        )
         return {
-            "status": "failed" if failed else "completed",
+            "status": "failed" if failed or rollout_failed else "completed",
             "deployment": deployment,
             "namespace": namespace,
             "fault_type": plan.get("fault_type", "unknown"),
             "executed_actions": executed_actions,
             "blocked_actions": blocked_actions,
             "post_check": post_check,
+            "not_attempted_actions": not_attempted_actions,
+            "error": "修复动作或工作负载就绪检查未确认成功，请核对实际状态，勿盲目重试" if failed or rollout_failed else None,
             "dry_run": dry_run,
             "timestamp": datetime.now().isoformat(),
         }
@@ -413,7 +423,7 @@ class AutoFixRemediationEngine:
             record["result"] = {"ok": bool(result)}
         except Exception as exc:
             record["status"] = "failed"
-            record["error"] = str(exc)
+            record["error"] = f"Kubernetes动作未确认成功（{type(exc).__name__}），请核对实际状态"
         finally:
             record["finished_at"] = datetime.now().isoformat()
         return record
@@ -463,12 +473,12 @@ class AutoFixRemediationEngine:
             try:
                 return await self.k8s_client.wait_for_deployment_rollout(deployment, namespace, timeout_seconds=self.rollout_timeout_seconds)
             except Exception as exc:
-                return {"ready": False, "error": str(exc)}
+                return {"ready": False, "error": f"就绪检查失败（{type(exc).__name__}）"}
         if hasattr(self.k8s_client, "get_deployment_status"):
             try:
                 return await self.k8s_client.get_deployment_status(deployment, namespace)
             except Exception as exc:
-                return {"ready": False, "error": str(exc)}
+                return {"ready": False, "error": f"状态检查失败（{type(exc).__name__}）"}
         return None
 
     def _summarize_plan(self, fault_type: str, actions: List[Dict[str, Any]]) -> Dict[str, Any]:
