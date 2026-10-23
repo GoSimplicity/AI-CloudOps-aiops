@@ -156,7 +156,7 @@ class AutoFixService(BaseService):
         async with self._operation():
             return await self._execute_owned_workflow(request)
 
-    async def _execute_owned_workflow(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_owned_workflow(self, request: Dict[str, Any], *, plan_only: bool = False) -> Dict[str, Any]:
         require_principal()
         if not isinstance(request, dict) or not isinstance(request.get("problem_description"), str) or not request["problem_description"].strip():
             raise ValidationError("problem_description", "问题描述不能为空")
@@ -169,7 +169,10 @@ class AutoFixService(BaseService):
         try:
             # 工作流内部可能执行低风险动作，异常后不能假定没有副作用
             reservation.effects_started = True
-            result = await self._run_multi_agent_workflow(request)
+            result = await self._run_multi_agent_workflow(request, plan_only=plan_only)
+            if plan_only and (result.get("executed_actions") or (result.get("execution") or {}).get("executed_actions")):
+                # 防御：plan_only 调用绝不允许出现执行记录；一旦出现按结果不确定处理（下方 except 记为 uncertain 并返回 409）
+                raise AutoFixError("只出计划的调用出现了执行记录")
             if result.get("status") == "failed" or (result.get("execution") or {}).get("status") == "failed":
                 raise WorkflowApprovalError(409, "工作流执行失败，可能已产生副作用，禁止盲目重试，请人工核对")
             self._approvals.publish(reservation, result)
@@ -182,8 +185,11 @@ class AutoFixService(BaseService):
             self._approvals.fail(reservation, reason)
             raise WorkflowApprovalError(409, reason) from error
 
-    async def _run_multi_agent_workflow(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """执行基于LangGraph的多智能体自动修复工作流。"""
+    async def _run_multi_agent_workflow(self, request: Dict[str, Any], *, plan_only: bool = False) -> Dict[str, Any]:
+        """执行基于LangGraph的多智能体自动修复工作流。
+
+        ``plan_only=True`` 只作用于本次调用（随工作流状态传递），不修改共享的 ``self._ops_workflow``。
+        """
         self._ensure_initialized()
 
         problem_description = (request or {}).get("problem_description")
@@ -213,7 +219,7 @@ class AutoFixService(BaseService):
             "event": request.get("event", problem_description),
             "diagnosis": request.get("diagnosis", {}),
         }
-        result = await self._ops_workflow.run(workflow_input)
+        result = await self._ops_workflow.run(workflow_input, plan_only=plan_only)
         result["workflow_engine"] = "langgraph"
         result["workflow_nodes"] = [
             "Coordinator",
@@ -475,6 +481,8 @@ class AutoFixService(BaseService):
 
         SEC-26：旧实现绕过风险评估直接 patch（含硬编码回退镜像、force 激进规则），已删除。
         ``dry_run`` 仅为签名兼容保留——本入口本身不执行任何写操作。
+        SEC-26 第二层审查 P2-1：固定以 plan_only=True 调用工作流，即使 autofix.auto_execute_enabled
+        为 true 也不会免确认执行；只作用于本次调用，不改共享工作流实例，与并发的 /autofix/run 互不影响。
         """
         async with self._operation():
             ensure_repair_enabled()
@@ -488,7 +496,8 @@ class AutoFixService(BaseService):
                     "deployment": deployment,
                     "namespace": namespace,
                     "event": problem,
-                }
+                },
+                plan_only=True,
             )
             executed = result.get("executed_actions") or []
             result.update(
