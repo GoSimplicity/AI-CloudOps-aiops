@@ -60,7 +60,7 @@ class TimeTool(BaseTool):
             else:
                 # 返回ISO-8601格式
                 return {
-                    "time": now.isoformat() + "Z",
+                    "time": now.isoformat().replace("+00:00", "Z"),
                     "format": "ISO-8601",
                     "timezone": "UTC",
                 }
