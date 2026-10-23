@@ -44,7 +44,7 @@ ACTION_FAULT_TYPES: Dict[str, str] = {
     "adjust_resource_requests": "resource_insufficient",
 }
 FAULT_EVIDENCE_SIGNALS: Dict[str, frozenset] = {
-    # SEC-44 修正：CrashLoop 只认 waiting=CrashLoopBackOff 或 restart_count>=3（不再接受「未 Ready 且重启>=1」）
+    # SEC-44 修正：CrashLoop 只认 waiting=CrashLoopBackOff，或 restart_count>=3 且容器当前未 Ready（P2-1）
     "crash_loop_backoff": frozenset({"crash_loop_backoff", "high_restart_count"}),
     "image_pull_failure": frozenset({"image_pull_backoff"}),
     "resource_insufficient": frozenset({"oom_killed", "unschedulable"}),
@@ -57,6 +57,9 @@ def _is_user_principal(principal: Any) -> bool:
 
 EVIDENCE_TIMEOUT_SECONDS = 15.0
 _IMAGE_PULL_REASONS = {"ImagePullBackOff", "ErrImagePull"}
+# SEC-44 修正 P2-2：Deployment / ReplicaSet 当前 revision 注解（Deployment 控制器维护）
+REVISION_ANNOTATION = "deployment.kubernetes.io/revision"
+POD_TEMPLATE_HASH_LABEL = "pod-template-hash"
 
 
 def auto_execution_refusal(action: Dict[str, Any]) -> Optional[str]:
@@ -183,6 +186,13 @@ class AutoFixRemediationEngine:
         SEC-44：``trigger="auto"``（默认，最严）表示免确认自动执行，每个动作还必须通过 auto_execution_refusal
         （低风险白名单 + 实时证据匹配）且实例 auto_execute 开启；``trigger="confirm"`` 只由 /workflow/confirm 在人工
         确认后使用。两种触发都经过 _execute_action 内的写操作门禁（G2）与意图/结果审计（G4）。
+
+        SEC-44 修正 P3-1：``trigger="auto"`` 在写操作之前按计划目标重新读取一次实时证据（Planner 阶段读取的证据与
+        执行之间隔着 LLM 调用），对不上即返回 ``status="blocked"``、``refusal="live_evidence"``，由工作流退回人工确认。
+
+        P3-4 约束：目前计划只由服务端 build_plan 生成并保存在进程内审批状态里，计划中的 ``live_evidence`` 可信。
+        将来如果允许外部传入计划（API 直接提交 plan、跨进程/持久化恢复计划等），``live_evidence`` 不得采信，
+        必须在服务端重新推导（复用 _collect_live_evidence），本方法的执行前复核只能作为最后一道防线。
         """
         if trigger not in {"auto", "confirm"}:
             raise ValueError("trigger 只能是 auto 或 confirm")
@@ -216,6 +226,9 @@ class AutoFixRemediationEngine:
                     reasons = [auto_execution_refusal(action) for action in actions]
                     if any(reasons):
                         refused = f"自动执行条件未满足（{next(r for r in reasons if r)}），动作需经 /workflow/confirm 人工确认"
+                    else:
+                        refusal_kind = "live_evidence"
+                        refused = await self._recheck_live_evidence(deployment, namespace, actions)
             if refused:
                 return {
                     "status": "blocked",
@@ -304,6 +317,21 @@ class AutoFixRemediationEngine:
             "timestamp": datetime.now().isoformat(),
         }
 
+    async def _recheck_live_evidence(self, deployment: str, namespace: str, actions: List[Dict[str, Any]]) -> Optional[str]:
+        """SEC-44 修正 P3-1：写操作前重新读取 Deployment 与 Pod，逐个动作核对证据；任何不匹配 / 读取失败都返回拒绝原因"""
+        target = {"deployment": deployment, "namespace": namespace}
+        live_deployment = await self._get_deployment(deployment, namespace)
+        checked: Dict[Any, Dict[str, Any]] = {}
+        for action in actions:
+            fault_type = ACTION_FAULT_TYPES.get(str(action.get("action_type") or ""))
+            if fault_type not in checked:
+                checked[fault_type] = await self._collect_live_evidence(str(fault_type or "unknown"), target, live_deployment)
+            evidence = checked[fault_type]
+            if evidence.get("matched") is not True:
+                logger.warning("执行前实时证据复核未通过，自动执行转人工确认: reason=%s", evidence.get("reason"))
+                return f"执行前实时证据复核未通过（{evidence.get('reason') or 'live evidence mismatched'}），动作需经 /workflow/confirm 人工确认"
+        return None
+
     async def plan_and_execute(self, diagnosis_result: Dict[str, Any], dry_run: bool = False) -> Dict[str, Any]:
         """一站式生成计划并执行允许范围内的动作（属于免确认执行，按 trigger="auto" 校验）。"""
         plan = await self.build_plan(diagnosis_result)
@@ -365,6 +393,10 @@ class AutoFixRemediationEngine:
         if deployment is None:
             evidence["reason"] = "target deployment not found in live cluster state"
             return evidence
+        if self._has_match_expressions(deployment):
+            # SEC-44 修正 P2-2：只按 matchLabels 读取会放大选择范围，含 matchExpressions 一律 fail-closed
+            evidence["reason"] = "live deployment selector has matchExpressions (unsupported, fail-closed)"
+            return evidence
         selector = self._label_selector(deployment)
         if not selector:
             evidence["reason"] = "live deployment selector unavailable"
@@ -392,6 +424,18 @@ class AutoFixRemediationEngine:
         if not isinstance(pods, list) or not pods:
             evidence["reason"] = "no live pods for target deployment"
             return evidence
+        try:
+            pods = await asyncio.wait_for(
+                self._pods_of_current_replica_set(pods, target, deployment),
+                timeout=EVIDENCE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("ReplicaSet 归属核对超时，自动执行转人工确认")
+            evidence["reason"] = "live replicaset ownership check timed out"
+            return evidence
+        if not pods:
+            evidence["reason"] = "no live pods owned by target deployment's current replicaset"
+            return evidence
         signals = self._pod_signals(pods)
         evidence["checked"] = True
         evidence["pods_checked"] = len(pods)
@@ -402,8 +446,65 @@ class AutoFixRemediationEngine:
         return evidence
 
     @staticmethod
+    def _has_match_expressions(deployment: Dict[str, Any]) -> bool:
+        selector = ((deployment.get("spec") or {}).get("selector") or {})
+        return bool(selector.get("match_expressions") or selector.get("matchExpressions"))
+
+    @staticmethod
+    def _controller_owner(metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        owners = metadata.get("owner_references") or metadata.get("ownerReferences") or []
+        controllers = [o for o in owners if isinstance(o, dict) and o.get("controller") is True]
+        return controllers[0] if len(controllers) == 1 else None
+
+    async def _pods_of_current_replica_set(
+        self, pods: List[Any], target: Dict[str, str], deployment: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """SEC-44 修正 P2-2：只保留由目标 Deployment 当前 ReplicaSet 控制的 Pod。
+
+        1. Pod 的 controller ownerReference 必须是 ReplicaSet，且名字等于 ``<deployment>-<pod-template-hash>``；
+        2. 再读取该 ReplicaSet：其 controller owner 必须是目标 Deployment，且 revision 注解与 Deployment 当前 revision 一致
+           （排除名字仿冒的裸 RS、其它控制器的 RS 和滚动中的旧 RS）。读取失败 / 缺字段一律不采纳（fail-closed）。
+        """
+        name = target["deployment"]
+        current_revision = (((deployment.get("metadata") or {}).get("annotations")) or {}).get(REVISION_ANNOTATION)
+        if not current_revision or not hasattr(self.k8s_client, "get_replica_set"):
+            return []
+        by_rs: Dict[str, List[Dict[str, Any]]] = {}
+        for pod in pods:
+            if not isinstance(pod, dict):
+                continue
+            metadata = pod.get("metadata") or {}
+            pod_hash = (metadata.get("labels") or {}).get(POD_TEMPLATE_HASH_LABEL)
+            owner = self._controller_owner(metadata)
+            if not pod_hash or owner is None or owner.get("kind") != "ReplicaSet":
+                continue
+            rs_name = f"{name}-{pod_hash}"
+            if owner.get("name") != rs_name:
+                continue
+            by_rs.setdefault(rs_name, []).append(pod)
+        owned: List[Dict[str, Any]] = []
+        for rs_name, rs_pods in by_rs.items():
+            try:
+                rs = await self.k8s_client.get_replica_set(rs_name, target["namespace"])
+            except Exception as exc:
+                summary = api_error_summary(exc)
+                logger.warning("读取 ReplicaSet 失败，不采纳其 Pod 作为证据: 错误类型=%s, status=%s", summary["type"], summary["status"])
+                continue
+            metadata = (rs.get("metadata") or {}) if isinstance(rs, dict) else {}
+            rs_owner = self._controller_owner(metadata)
+            revision = (metadata.get("annotations") or {}).get(REVISION_ANNOTATION)
+            if rs_owner is None or rs_owner.get("kind") != "Deployment" or rs_owner.get("name") != name:
+                continue
+            if revision != current_revision:
+                continue
+            owned.extend(rs_pods)
+        return owned
+
+    @staticmethod
     def _label_selector(deployment: Dict[str, Any]) -> str:
         selector = ((deployment.get("spec") or {}).get("selector") or {})
+        if selector.get("match_expressions") or selector.get("matchExpressions"):
+            return ""
         labels = selector.get("match_labels") or selector.get("matchLabels") or {}
         if not isinstance(labels, dict) or not labels:
             return ""
@@ -433,7 +534,8 @@ class AutoFixRemediationEngine:
                     signals.add("crash_loop_backoff")
                 if waiting_reason in _IMAGE_PULL_REASONS:
                     signals.add("image_pull_backoff")
-                if restarts >= HIGH_RESTART_COUNT:
+                if restarts >= HIGH_RESTART_COUNT and cs.get("ready") is not True:
+                    # SEC-44 修正 P2-1：已恢复 Ready 的容器即使历史重启次数高也不算 CrashLoop 证据
                     signals.add("high_restart_count")
                 if terminated.get("reason") == "OOMKilled":
                     signals.add("oom_killed")

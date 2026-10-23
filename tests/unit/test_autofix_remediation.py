@@ -27,6 +27,9 @@ class FakeK8sClient:
         self.pod_reads.append((namespace, label_selector))
         return self.pods
 
+    async def get_replica_set(self, name: str, namespace: str) -> Dict[str, Any] | None:
+        return current_replica_set() if name == "api-5f7c" else None
+
     async def can_i(self, verb: str, resource: str, namespace: str) -> bool:
         return self.allowed
 
@@ -49,12 +52,32 @@ class FakeK8sClient:
 
 def waiting_pod(reason: str) -> Dict[str, Any]:
     """实时 Pod 状态（假值）：容器处于 waiting，原因为 reason"""
-    return {"status": {"container_statuses": [{"name": "api", "restart_count": 0, "state": {"waiting": {"reason": reason}}}]}}
+    return {"metadata": owned_pod_metadata(), "status": {"container_statuses": [{"name": "api", "restart_count": 0, "state": {"waiting": {"reason": reason}}}]}}
+
+
+def owned_pod_metadata(name: str = "api") -> Dict[str, Any]:
+    """SEC-44 修正 P2-2：Pod 由目标 Deployment 当前 ReplicaSet（<name>-5f7c）控制（假值）"""
+    return {
+        "name": f"{name}-5f7c-x1",
+        "labels": {"app": name, "pod-template-hash": "5f7c"},
+        "owner_references": [{"kind": "ReplicaSet", "name": f"{name}-5f7c", "controller": True}],
+    }
+
+
+def current_replica_set(name: str = "api") -> Dict[str, Any]:
+    """目标 Deployment 当前 revision 的 ReplicaSet（假值）"""
+    return {
+        "metadata": {
+            "name": f"{name}-5f7c",
+            "annotations": {"deployment.kubernetes.io/revision": "1"},
+            "owner_references": [{"kind": "Deployment", "name": name, "controller": True}],
+        }
+    }
 
 
 def deployment(name: str = "api", replicas: int = 1) -> Dict[str, Any]:
     return {
-        "metadata": {"name": name, "namespace": "default"},
+        "metadata": {"name": name, "namespace": "default", "annotations": {"deployment.kubernetes.io/revision": "1"}},
         "spec": {
             "replicas": replicas,
             "selector": {"match_labels": {"app": name}},

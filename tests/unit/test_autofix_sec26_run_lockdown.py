@@ -23,7 +23,7 @@ def confirming_user():
 
 def fake_deployment(namespace: str = "default", replicas: int = 1) -> Dict[str, Any]:
     return {
-        "metadata": {"name": "api", "namespace": namespace},
+        "metadata": {"name": "api", "namespace": namespace, "annotations": {"deployment.kubernetes.io/revision": "1"}},
         "spec": {
             "replicas": replicas,
             "selector": {"match_labels": {"app": "api"}},
@@ -34,7 +34,27 @@ def fake_deployment(namespace: str = "default", replicas: int = 1) -> Dict[str, 
 
 def live_pods(reason: str = "CrashLoopBackOff") -> list:
     """SEC-44：实时 Pod 状态（假值），容器 waiting 原因为 reason；用于满足自动执行的实时证据"""
-    return [{"status": {"container_statuses": [{"name": "api", "restart_count": 5, "state": {"waiting": {"reason": reason}}}]}}]
+    return [{"metadata": owned_pod_metadata(), "status": {"container_statuses": [{"name": "api", "restart_count": 5, "state": {"waiting": {"reason": reason}}}]}}]
+
+
+def owned_pod_metadata(name: str = "api") -> Dict[str, Any]:
+    """SEC-44 修正 P2-2：Pod 由目标 Deployment 当前 ReplicaSet（<name>-5f7c）控制（假值）"""
+    return {
+        "name": f"{name}-5f7c-x1",
+        "labels": {"app": name, "pod-template-hash": "5f7c"},
+        "owner_references": [{"kind": "ReplicaSet", "name": f"{name}-5f7c", "controller": True}],
+    }
+
+
+def current_replica_set(name: str = "api") -> Dict[str, Any]:
+    """目标 Deployment 当前 revision 的 ReplicaSet（假值）"""
+    return {
+        "metadata": {
+            "name": f"{name}-5f7c",
+            "annotations": {"deployment.kubernetes.io/revision": "1"},
+            "owner_references": [{"kind": "Deployment", "name": name, "controller": True}],
+        }
+    }
 
 
 def mock_k8s(namespace: str = "default", pods: list | None = None) -> AsyncMock:
@@ -43,6 +63,7 @@ def mock_k8s(namespace: str = "default", pods: list | None = None) -> AsyncMock:
     client.get_deployment.return_value = fake_deployment(namespace)
     if pods is not None:
         client.get_pods.return_value = pods
+    client.get_replica_set.return_value = current_replica_set()
     client.can_i.return_value = True
     client.patch_deployment.return_value = True
     client.scale_deployment.return_value = True
@@ -223,7 +244,7 @@ async def test_legacy_switch_restores_auto_execution_inside_whitelist_only(monke
     assert client.restart_deployment.await_count == 1
 
     # SEC-44：同样的请求，实时 Pod 健康（没有证据）→ 转人工确认，不写集群
-    healthy = mock_k8s(pods=[{"status": {"container_statuses": [{"name": "api", "restart_count": 0, "state": {"running": {}}}]}}])
+    healthy = mock_k8s(pods=[{"metadata": owned_pod_metadata(), "status": {"container_statuses": [{"name": "api", "restart_count": 0, "state": {"running": {}}}]}}])
     service = make_service(healthy)
     pending = await service.execute_multi_agent_workflow(
         {"problem_description": "deployment api CrashLoopBackOff", "deployment": "api", "namespace": "default", "event": EVENTS["crashloop"]}

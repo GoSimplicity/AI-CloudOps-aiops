@@ -293,6 +293,28 @@ class KubernetesService:
                 raise
             return None
 
+    async def get_replica_set(self, name: str, namespace: str = None) -> Optional[Dict[str, Any]]:
+        """只读获取 ReplicaSet 的归属信息（SEC-44 修正 P2-2，仅自动执行证据核对使用）。
+
+        只返回 metadata 中的 name / namespace / annotations / owner_references；读取失败原样上抛，
+        由调用方按 fail-closed 处理。需要 RBAC：apps/replicasets get。
+        """
+        if not await asyncio.to_thread(self._ensure_initialized):
+            raise RuntimeError("Kubernetes未初始化，无法获取ReplicaSet信息")
+        namespace = namespace or config.k8s.namespace
+        replica_set = await self._sdk_call(
+            self.apps_v1.read_namespaced_replica_set, name=name, namespace=namespace
+        )
+        metadata = (replica_set.to_dict() or {}).get("metadata") or {}
+        return {
+            "metadata": {
+                "name": metadata.get("name"),
+                "namespace": metadata.get("namespace"),
+                "annotations": dict(metadata.get("annotations") or {}),
+                "owner_references": list(metadata.get("owner_references") or []),
+            }
+        }
+
     async def ensure_namespace(self, namespace: str) -> bool:
         """确保命名空间存在，不存在则创建"""
         if not await asyncio.to_thread(self._ensure_initialized):

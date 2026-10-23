@@ -36,6 +36,8 @@ OOM = "OOMKilled insufficient memory"
 IMAGE_PULL = "ImagePullBackOff failed to pull image"
 WRITE_PREFIXES = ("patch_", "create_", "replace_", "delete_")
 SECRET_MARKER = "sec44-fake-exception-body-7c1e"
+POD_HASH = "5f7c"
+REVISION_ANNOTATION = "deployment.kubernetes.io/revision"
 AUDIT_KEYS = {"event", "schema_version", "audit_id", "phase", "time", "principal", "target", "action", "auto_executed", "result", "error_type", "reason"}
 
 
@@ -44,7 +46,7 @@ AUDIT_KEYS = {"event", "schema_version", "audit_id", "phase", "time", "principal
 
 def live_deployment(replicas: int = 1) -> Dict[str, Any]:
     return {
-        "metadata": {"name": "api", "namespace": NS, "generation": 1},
+        "metadata": {"name": "api", "namespace": NS, "generation": 1, "annotations": {REVISION_ANNOTATION: "3"}},
         "spec": {
             "replicas": replicas,
             "selector": {"match_labels": {"app": "api"}},
@@ -63,7 +65,22 @@ def pod(waiting: str | None = None, restarts: int = 0, ready: bool = True, termi
     }
     if terminated:
         status["container_statuses"][0]["last_state"] = {"terminated": {"reason": terminated}}
-    return {"metadata": {"name": "api-0", "namespace": NS, "labels": {"app": "api"}}, "status": status}
+    return {"metadata": pod_metadata(), "status": status}
+
+
+def pod_metadata(rs_name: str = "api-" + POD_HASH, pod_hash: str = POD_HASH, controller: bool = True, kind: str = "ReplicaSet") -> Dict[str, Any]:
+    """SEC-44 修正 P2-2：Pod 由目标 Deployment 当前 ReplicaSet（api-<pod-template-hash>）控制"""
+    return {
+        "name": f"{rs_name}-x1",
+        "namespace": NS,
+        "labels": {"app": "api", "pod-template-hash": pod_hash},
+        "owner_references": [{"api_version": "apps/v1", "kind": kind, "name": rs_name, "controller": controller}],
+    }
+
+
+def replica_set(name: str = "api-" + POD_HASH, owner: str | None = "api", revision: str = "3", owner_kind: str = "Deployment") -> Dict[str, Any]:
+    owners = [{"api_version": "apps/v1", "kind": owner_kind, "name": owner, "controller": True}] if owner else []
+    return {"metadata": {"name": name, "namespace": NS, "annotations": {REVISION_ANNOTATION: revision}, "owner_references": owners}}
 
 
 HEALTHY = [pod()]
@@ -95,6 +112,16 @@ class FakeSDK:
             return sdk_objects(self.pods)
 
         self.core_v1.list_namespaced_pod.side_effect = list_pods
+        self.replica_sets: Dict[str, Dict[str, Any]] = {"api-" + POD_HASH: replica_set()}
+        self.rs_reads = 0
+
+        def read_rs(name, namespace, **_kwargs):
+            self.rs_reads += 1
+            if name not in self.replica_sets:
+                raise ApiException(status=404, reason="Not Found")
+            return SimpleNamespace(to_dict=lambda: deepcopy(self.replica_sets[name]))
+
+        self.apps_v1.read_namespaced_replica_set.side_effect = read_rs
 
     def writes(self) -> List[str]:
         calls = []
@@ -371,13 +398,16 @@ def test_image_pull_evidence_is_recorded_but_still_requires_confirmation(monkeyp
     [
         ([pod(restarts=1, ready=False)], "needs_human_confirmation"),
         ([pod(restarts=2, ready=False)], "needs_human_confirmation"),
-        ([pod(restarts=3, ready=True)], "completed"),
+        # P2-1：已恢复 Ready 的 Pod 即使 restart_count>=3 也不算 CrashLoop 证据（TL 实测会被自动重启）
+        ([pod(restarts=3, ready=True)], "needs_human_confirmation"),
+        ([pod(restarts=50, ready=True)], "needs_human_confirmation"),
+        ([pod(restarts=3, ready=False)], "completed"),
         ([pod(waiting="CrashLoopBackOff", restarts=0, ready=False)], "completed"),
     ],
-    ids=["not-ready-restart-1", "not-ready-restart-2", "restart-3", "waiting-crashloop"],
+    ids=["not-ready-restart-1", "not-ready-restart-2", "ready-restart-3", "ready-restart-50", "not-ready-restart-3", "waiting-crashloop"],
 )
 def test_crashloop_evidence_only_waiting_reason_or_three_restarts(monkeypatch, switches, sink, pods, expected) -> None:
-    """SEC-44 修正：CrashLoop 证据只认 waiting=CrashLoopBackOff 或 restart_count>=3；「未 Ready 且重启>=1」不再算"""
+    """SEC-44 修正：CrashLoop 证据只认 waiting=CrashLoopBackOff，或 restart_count>=3 且容器当前未 Ready"""
     switches(auto_execute=True)
     sdk = FakeSDK(pods=pods)
     client = make_app(monkeypatch, make_service(sdk))
@@ -833,3 +863,196 @@ async def test_service_maps_principal_refusal_to_401() -> None:
         with pytest.raises(AIOpsException) as raised:
             await service.confirm_multi_agent_workflow(plan_id, [ACTION])
     assert raised.value.status_code == 401
+
+
+# ---------------------------------------------------------------- SEC-44 修正（03:33 TL Review P2/P3）
+
+
+@pytest.mark.parametrize(
+    ("restarts", "ready", "expected"),
+    [(2, False, False), (3, False, True), (3, True, False), (1, False, False), (0, False, False)],
+    ids=["2-not-ready", "3-not-ready", "3-ready", "1-not-ready", "0-not-ready"],
+)
+def test_high_restart_signal_threshold_is_three_and_requires_not_ready(restarts, ready, expected) -> None:
+    """P2-1 / M38：阈值锁定为 3（改成 1 / 2 / 4 都会被抓到），且容器当前 Ready=True 时不认"""
+    signals = AutoFixRemediationEngine._pod_signals([pod(restarts=restarts, ready=ready)])
+    assert ("high_restart_count" in signals) is expected
+    assert remediation.HIGH_RESTART_COUNT == 3
+
+
+def test_ready_pod_with_ready_missing_counts_as_not_ready() -> None:
+    """ready 字段缺失按未 Ready 处理（fail-closed 只影响「能否算证据」，缺字段时信号仍需 restart>=3）"""
+    item = pod(restarts=3, ready=False)
+    item["status"]["container_statuses"][0].pop("ready")
+    assert "high_restart_count" in AutoFixRemediationEngine._pod_signals([item])
+
+
+def test_selector_with_match_expressions_fails_closed(monkeypatch, switches, sink) -> None:
+    """P2-2：Deployment selector 含 matchExpressions 时不读 Pod、不自动执行（丢掉表达式会放大选择范围）"""
+    switches(auto_execute=True)
+    deployment = live_deployment()
+    deployment["spec"]["selector"]["match_expressions"] = [{"key": "tier", "operator": "In", "values": ["web"]}]
+    sdk = FakeSDK(pods=CRASHING, deployment=deployment)
+    client = make_app(monkeypatch, make_service(sdk))
+
+    data = run_workflow(client, CRASHLOOP)
+
+    assert data["status"] == "needs_human_confirmation"
+    evidence = pending_action(data, "restart_deployment")["risk_assessment"]["live_evidence"]
+    assert evidence["matched"] is False and "matchExpressions" in evidence["reason"]
+    assert sdk.pod_reads == 0
+    assert sdk.writes() == [] and sink.records == []
+
+
+@pytest.mark.parametrize("key", ["match_expressions", "matchExpressions"])
+def test_label_selector_returns_empty_when_match_expressions_present(key) -> None:
+    selector = {"match_labels": {"app": "api"}, key: [{"key": "tier", "operator": "Exists"}]}
+    assert AutoFixRemediationEngine._label_selector({"spec": {"selector": selector}}) == ""
+    assert AutoFixRemediationEngine._label_selector({"spec": {"selector": {"match_labels": {"app": "api"}, key: []}}}) == "app=api"
+
+
+def foreign_pod(**metadata_kwargs) -> Dict[str, Any]:
+    item = pod(waiting="CrashLoopBackOff", restarts=5, ready=False)
+    item["metadata"] = pod_metadata(**metadata_kwargs)
+    return item
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        # TL 实测：同 label 的另一个 Deployment（RS api-worker-6d4f）里 crashloop 的 Pod
+        foreign_pod(rs_name="api-worker-6d4f", pod_hash="6d4f"),
+        foreign_pod(controller=False),
+        foreign_pod(kind="StatefulSet", rs_name="api-" + POD_HASH),
+        foreign_pod(pod_hash="9999"),
+    ],
+    ids=["other-deployment-rs", "not-controller", "not-replicaset", "hash-mismatch"],
+)
+def test_pods_not_owned_by_target_deployment_are_ignored(monkeypatch, switches, sink, item) -> None:
+    """P2-2：只采纳 controller ownerReference 指向目标 Deployment ReplicaSet（api-<pod-template-hash>）的 Pod"""
+    switches(auto_execute=True)
+    sdk = FakeSDK(pods=[item, pod()])
+    client = make_app(monkeypatch, make_service(sdk))
+
+    data = run_workflow(client, CRASHLOOP)
+
+    assert data["status"] == "needs_human_confirmation", data
+    evidence = pending_action(data, "restart_deployment")["risk_assessment"]["live_evidence"]
+    assert evidence["matched"] is False
+    assert evidence["pods_checked"] == 1
+    assert sdk.writes() == [] and sink.records == []
+
+
+def test_pod_without_owner_references_is_ignored(monkeypatch, switches, sink) -> None:
+    switches(auto_execute=True)
+    item = pod(waiting="CrashLoopBackOff", restarts=5, ready=False)
+    item["metadata"].pop("owner_references")
+    sdk = FakeSDK(pods=[item])
+    client = make_app(monkeypatch, make_service(sdk))
+
+    data = run_workflow(client, CRASHLOOP)
+
+    assert data["status"] == "needs_human_confirmation"
+    assert "no live pods owned" in pending_action(data, "restart_deployment")["risk_assessment"]["live_evidence"]["reason"]
+    assert sdk.writes() == [] and sink.records == []
+
+
+@pytest.mark.parametrize(
+    "rs",
+    [
+        replica_set(owner=None),  # 名字仿成 api-<hash> 的裸 RS
+        replica_set(owner="api-worker"),
+        replica_set(owner_kind="StatefulSet"),
+        replica_set(revision="2"),  # 旧 ReplicaSet（非当前 revision）
+        None,  # 读取失败
+    ],
+    ids=["bare-rs", "other-owner", "owner-not-deployment", "old-revision", "rs-read-failed"],
+)
+def test_replica_set_must_be_current_and_controlled_by_target(monkeypatch, switches, sink, rs) -> None:
+    """P2-2：再读一次 ReplicaSet，核对其 controller owner 是目标 Deployment 且 revision 与 Deployment 当前一致"""
+    switches(auto_execute=True)
+    sdk = FakeSDK(pods=CRASHING)
+    if rs is None:
+        sdk.replica_sets = {}
+    else:
+        sdk.replica_sets = {"api-" + POD_HASH: rs}
+    client = make_app(monkeypatch, make_service(sdk))
+
+    data = run_workflow(client, CRASHLOOP)
+
+    assert data["status"] == "needs_human_confirmation", data
+    assert pending_action(data, "restart_deployment")["risk_assessment"]["live_evidence"]["matched"] is False
+    assert sdk.rs_reads >= 1
+    assert sdk.writes() == [] and sink.records == []
+
+
+def test_deployment_without_revision_annotation_fails_closed(monkeypatch, switches, sink) -> None:
+    switches(auto_execute=True)
+    deployment = live_deployment()
+    deployment["metadata"].pop("annotations")
+    sdk = FakeSDK(pods=CRASHING, deployment=deployment)
+    client = make_app(monkeypatch, make_service(sdk))
+
+    data = run_workflow(client, CRASHLOOP)
+
+    assert data["status"] == "needs_human_confirmation"
+    assert sdk.writes() == [] and sink.records == []
+
+
+def test_owned_current_pods_still_auto_execute(monkeypatch, switches, sink) -> None:
+    """对照：Pod 属于目标 Deployment 当前 RS → 证据成立，自动执行；RS 只读一次（同 RS 多 Pod 去重）"""
+    switches(auto_execute=True)
+    sdk = FakeSDK(pods=CRASHING + [pod(waiting="CrashLoopBackOff", restarts=4, ready=False)])
+    client = make_app(monkeypatch, make_service(sdk))
+
+    data = run_workflow(client, CRASHLOOP)
+
+    assert data["status"] == "completed", data
+    assert sdk.writes() == ["patch_namespaced_deployment"]
+    assert sdk.apps_v1.read_namespaced_replica_set.call_count == 2  # 计划阶段 1 次 + 执行前复核 1 次
+
+
+def test_live_evidence_rechecked_before_auto_write(monkeypatch, switches, sink) -> None:
+    """P3-1 TOCTOU：计划阶段证据成立，执行前重新读取发现 Pod 已恢复 → 退回 pending，0 写入"""
+    switches(auto_execute=True)
+    sdk = FakeSDK(pods=CRASHING)
+    reads = {"n": 0}
+
+    def recover_after_planning():
+        reads["n"] += 1
+        return sdk_objects(CRASHING if reads["n"] == 1 else HEALTHY)
+
+    sdk.pods_effect = recover_after_planning
+    client = make_app(monkeypatch, make_service(sdk))
+
+    data = run_workflow(client, CRASHLOOP)
+
+    assert data["status"] == "needs_human_confirmation", data
+    assert data["execution"]["refusal"] == "live_evidence"
+    assert data["approval"]["state"] == "pending"
+    assert reads["n"] == 2
+    assert sdk.writes() == [] and sink.records == []
+
+
+async def test_engine_auto_execute_rechecks_evidence_but_confirm_does_not(switches, sink, human) -> None:
+    switches(auto_execute=True)
+    sdk = FakeSDK(pods=CRASHING)
+    engine = AutoFixRemediationEngine(make_k8s_service(sdk), allowed_namespaces=[NS], auto_execute=True)
+    plan = await engine.build_plan({"deployment": "api", "namespace": NS, "event": CRASHLOOP})
+    assert [a["action_type"] for a in plan["allowed_actions"]] == ["restart_deployment"]
+    sdk.pods = HEALTHY
+
+    auto = await engine.execute_plan(plan, trigger="auto")
+    assert auto["status"] == "blocked" and auto["refusal"] == "live_evidence"
+    assert sdk.writes() == [] and sink.records == []
+
+    # 人工确认路径不要求实时证据（人已看过计划）
+    confirmed = await engine.execute_plan(plan, trigger="confirm")
+    assert confirmed["status"] == "completed"
+    assert sdk.writes() == ["patch_namespaced_deployment"]
+
+
+def test_execute_plan_docstring_requires_server_side_evidence() -> None:
+    """P3-4：将来若允许外部传入计划，live_evidence 必须在服务端重新推导"""
+    doc = AutoFixRemediationEngine.execute_plan.__doc__ or ""
+    assert "外部传入计划" in doc and "服务端重新推导" in doc
