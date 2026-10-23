@@ -4,6 +4,7 @@
 # your-api-key 后，同一条命令里后面的真 token 整条 0 命中（用例 3/8/9）。现配置：
 #   (c) 知识库示例改用 ${AIOPS_API_KEY}，删除 your-api-key allowlist；
 #   (b) 规则 kb-bearer-token：^data/knowledge_base/ 下任何 "Bearer <值>" 都报，只放行 secret 整体为 $AIOPS_API_KEY / ${AIOPS_API_KEY}。
+#   review3f：放行范围扩为 secret 整体匹配 ^\$\{?[A-Z][A-Z0-9_]*_API_KEY\}?$（如 ${OPENAI_API_KEY}），畸形写法照常报。
 # 判定：每个用例断言命中条数和“每条命中是哪条规则、secret 是哪个值”（与运行时生成的 token 逐一比对），不只看退出码。
 # 输出只打印标签（TOKEN_A / TOKEN_B / JWT / 占位符 / 变量引用 / 其他(N字符)），不打印 token 本身。
 # 用法: .github/tests/test-gitleaks-allowlist-bearer.sh [--rev <git-rev>]   （对 06d93b1 等修复前版本运行应报 FAIL）
@@ -16,6 +17,10 @@ gl_src .gitleaks.toml >"$GL_TMP/gitleaks.toml"
 B='Bear''er'
 P='your-api''-key'
 V='${AIOPS_API_KEY}'
+# review3f 畸形变量引用（应照常报，用作 secret 标签）
+M1='$OPENAI_API_KEY_x'
+M2='${api_key}'
+VX='${X_API_KEY}'
 # 用 python secrets 生成（lib 的 gl_rand 是 tr|head 管道，在 pipefail + 变量赋值下会因 SIGPIPE 退出）
 rnd() { python3 -c 'import secrets,string,sys;print("".join(secrets.choice(sys.argv[2]) for _ in range(int(sys.argv[1]))))' "$1" "${2:-$(printf '%s' 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789')}"; }
 TA="$(rnd 40)"
@@ -39,15 +44,16 @@ scan() {
     # 在扫描根目录内以 "." 扫描，File 为相对路径（与规则 path ^data/knowledge_base/ 一致，同 CI 的 gitleaks git）。
     # 报告不打码（要与 token 比对），写在 $GL_TMP，本进程内解析成标签后立即删除；控制台只输出标签。
     (cd "$d" && env -u GITLEAKS_CONFIG -u GITLEAKS_CONFIG_TOML gitleaks dir --no-banner --exit-code 0 \
-        --config "$GL_TMP/gitleaks.toml" --report-format json --report-path "$rep" . >/dev/null 2>&1) || true
+        --config "${SCAN_CFG:-$GL_TMP/gitleaks.toml}" --report-format json --report-path "$rep" . >/dev/null 2>&1) || true
     if [ ! -s "$rep" ]; then
         echo "FAIL [$name] gitleaks 未生成报告（扫描出错）"; GL_FAILS=$((GL_FAILS+1)); return 0
     fi
-    got="$(GL_TA="$TA" GL_TB="$TB" GL_JWT="$JWT" GL_P="$P" GL_V="$V" python3 - "$rep" <<'PY'
+    got="$(GL_TA="$TA" GL_TB="$TB" GL_JWT="$JWT" GL_P="$P" GL_V="$V" GL_M1="$M1" GL_M2="$M2" GL_VX="$VX" python3 - "$rep" <<'PY'
 import json, os, sys
 r = json.load(open(sys.argv[1])) or []
 lab = {os.environ["GL_TA"]: "TOKEN_A", os.environ["GL_TB"]: "TOKEN_B", os.environ["GL_JWT"]: "JWT",
-       os.environ["GL_P"]: "占位符", os.environ["GL_V"]: "变量引用"}
+       os.environ["GL_P"]: "占位符", os.environ["GL_V"]: "变量引用",
+       os.environ["GL_M1"]: "畸形引用M1", os.environ["GL_M2"]: "畸形引用M2", os.environ["GL_VX"]: "X变量"}
 def who(s):
     if s in lab: return lab[s]
     for k, v in lab.items():
@@ -107,6 +113,21 @@ scan "\${AIOPS_API_KEY} 紧跟真 token 后缀" "$KB" "$K=变量引用+后缀(40
     "curl -H \"Authorization: $B $V$TA\" $U"
 scan "形似变量的其他名字不放行" "$KB" "$K=其他(18字符)" \
     "Authorization: $B \${AIOPS_API_KEY_2}"
+# review3f：allowlist 改为 ^\$\{?[A-Z][A-Z0-9_]*_API_KEY\}?$，${OPENAI_API_KEY} 放行；畸形写法照常报
+scan "\${OPENAI_API_KEY} 不报（curl）" "$KB" "-" "curl -H \"Authorization: $B \${OPENAI_API_KEY}\" https://api.openai.com/v1/models"
+scan "\${OPENAI_API_KEY} 不报（非 curl）" "$KB" "-" "Authorization: $B \${OPENAI_API_KEY}"
+# 注意：gitleaks 8.30.1 默认配置（useDefault）的全局 allowlist 会放行“$ 或 ${} 包住、只含字母和下划线、不含数字”的值
+# （实测大小写混写也放行，如 $Abc_def），$OPENAI_API_KEY_x、${api_key} 因此在整套配置下 0 条——是默认全局 allowlist
+# 放的，不是本规则的 allowlist。所以这两条分两步断言：
+#   整套配置（与 CI 相同）0 条；只用本规则（[[rules]] 段 + 规则内 allowlist，不加载默认配置）则照常报，证明本规则不放行。
+sed -n '/^\[\[rules\]\]/,$p' "$GL_TMP/gitleaks.toml" >"$GL_TMP/kb-only.toml"
+scan "\$OPENAI_API_KEY_x 整套配置 0 条（默认全局 allowlist 放行）" "$KB" "-" "Authorization: $B $M1"
+SCAN_CFG="$GL_TMP/kb-only.toml" scan "\$OPENAI_API_KEY_x 只用本规则照常报（结尾不是 _API_KEY）" "$KB" "$K=畸形引用M1" "Authorization: $B $M1"
+scan "\${api_key} 整套配置 0 条（默认全局 allowlist 放行）" "$KB" "-" "Authorization: $B $M2"
+SCAN_CFG="$GL_TMP/kb-only.toml" scan "\${api_key} 只用本规则照常报（小写）" "$KB" "$K=畸形引用M2" "Authorization: $B $M2"
+scan "\${api_key2} 整套配置照常报（含数字，默认全局 allowlist 不放行）" "$KB" "$K=其他(11字符)" "Authorization: $B \${api_key2}"
+SCAN_CFG="$GL_TMP/kb-only.toml" scan "\${OPENAI_API_KEY} 只用本规则也不报（本规则 allowlist 放行）" "$KB" "-" "Authorization: $B \${OPENAI_API_KEY}"
+scan "\${X_API_KEY}abc 照常报（变量后带后缀）" "$KB" "$K=X变量+后缀(3字符)" "Authorization: $B ${VX}abc"
 scan "your-api-key 单独出现也报（allowlist 已删除）" "$KB" "$C=占位符 $K=占位符" \
     "curl -H \"Authorization: $B $P\" $U"
 # 路径范围：kb-bearer-token 只管知识库目录
