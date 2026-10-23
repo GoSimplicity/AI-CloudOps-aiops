@@ -16,7 +16,7 @@
 
 工作流审批绑定可信调用主体，只能确认自己的原计划动作；随机计划ID不替代授权。并发确认、参数变化、权限/命名空间限制、过期与重复请求均会被拒绝。超时或失败可能已产生副作用，禁止盲目重试，必须先核对实际状态。当前为单进程易失审批，不提供跨副本防重保证，完整配额与状态契约见[生产说明](docs/production.md#自动修复审批归属与重试边界)。
 
-自 SEC-26 起工作流默认只生成计划，所有动作（含 low 风险）都需经 `/api/v1/autofix/workflow/confirm` 显式确认，且仅限 `AUTOFIX_ALLOWED_NAMESPACES` 白名单（默认空，即不执行）；`/autofix/repair`、`/autofix/bootstrap` 默认关闭（403）。配置项与默认值见[自动修复指南](docs/autofix_guide.md#执行边界与前端契约sec-26)。
+自 SEC-26 起工作流默认只生成计划，所有动作（含 low 风险）都需经 `/api/v1/autofix/workflow/confirm` 显式确认，且仅限 `AUTOFIX_ALLOWED_NAMESPACES` 白名单（默认空，即不执行）；`/autofix/repair`、`/autofix/bootstrap` 默认关闭（403）；`/autofix/bootstrap` 开启后 `test` 命名空间也必须在 `AUTOFIX_ALLOWED_NAMESPACES` 内（否则 403 `AUTOFIX_NAMESPACE_NOT_ALLOWED`）。配置项与默认值见[自动修复指南](docs/autofix_guide.md#执行边界与前端契约sec-26)。
 
 ## 🎯 核心特性
 

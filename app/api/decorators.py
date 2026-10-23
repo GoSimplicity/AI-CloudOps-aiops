@@ -19,7 +19,7 @@ from fastapi import HTTPException, Request
 from app.models import BaseResponse
 
 from ..common.constants import HttpStatusCodes
-from ..common.exceptions import AIOpsException
+from ..common.exceptions import AIOpsException, FeatureDisabledError, NamespaceNotAllowedError
 
 try:
     from app.common.logger import get_logger
@@ -46,6 +46,9 @@ def api_response(operation_name: str = "操作") -> Callable:
                 ).dict()
 
             except HTTPException:
+                raise
+            except (FeatureDisabledError, NamespaceNotAllowedError):
+                # 交给 AIOps 异常处理器输出 data.error_code / data.details，便于前端按 error_code 区分
                 raise
             except AIOpsException as e:
                 logger.error(f"{operation_name}失败: {e.message}")
@@ -138,6 +141,7 @@ def _get_http_status_for_aiops_exception(exc: AIOpsException) -> int:
         ExternalServiceError,
         FeatureDisabledError,
         HistoricalDataError,
+        NamespaceNotAllowedError,
         PredictionError,
         RCAError,
         RequestTimeoutError,
@@ -148,7 +152,7 @@ def _get_http_status_for_aiops_exception(exc: AIOpsException) -> int:
         WorkflowApprovalError,
     )
 
-    if isinstance(exc, (SessionAccessError, WorkflowApprovalError, FeatureDisabledError)):
+    if isinstance(exc, (SessionAccessError, WorkflowApprovalError, FeatureDisabledError, NamespaceNotAllowedError)):
         return exc.status_code
     if isinstance(exc, HistoricalDataError):
         return HttpStatusCodes.UNPROCESSABLE_ENTITY

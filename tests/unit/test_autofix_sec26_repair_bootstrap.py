@@ -176,3 +176,157 @@ async def test_autofix_config_endpoint_exposes_switches(monkeypatch) -> None:
         "confirm_endpoint": "/api/v1/autofix/workflow/confirm",
     }
     assert "update_image" not in info["fix_strategies"]
+
+
+# ---------------------------------------------------------------------------
+# SEC-26 追加：bootstrap 开启后 test 命名空间也必须在 allowed_namespaces 内
+# ---------------------------------------------------------------------------
+
+
+def bootstrap_service(monkeypatch):
+    """已“初始化”的服务：k8s_service 为 AsyncMock，initialize/KubernetesService 一旦被调用即失败"""
+    from unittest.mock import MagicMock
+
+    from app.services import kubernetes as kubernetes_module
+
+    monkeypatch.setattr(kubernetes_module, "KubernetesService", MagicMock(side_effect=AssertionError("must not build k8s client")))
+    service = AutoFixService()
+    service._initialized = True
+    k8s_service = AsyncMock()
+    k8s_service.apply_yaml_file.return_value = {"success": True}
+    service._k8s_fixer = MagicMock(k8s_service=k8s_service)
+    return service, k8s_service
+
+
+def assert_bootstrap_untouched(service, k8s_service) -> None:
+    k8s_service.ensure_namespace.assert_not_awaited()
+    k8s_service.apply_yaml_file.assert_not_awaited()
+
+
+@pytest.mark.parametrize("allowed", [[], ["staging"], ["staging", "default"]])
+def test_enabled_bootstrap_requires_test_in_allowed_namespaces(monkeypatch, allowed) -> None:
+    monkeypatch.setattr(config.autofix, "bootstrap_enabled", True)
+    monkeypatch.setattr(config.autofix, "allowed_namespaces", allowed)
+    service, k8s_service = bootstrap_service(monkeypatch)
+    initialize = AsyncMock(side_effect=AssertionError("namespace-denied bootstrap must not initialize kubernetes"))
+    monkeypatch.setattr(service, "initialize", initialize)
+    client = make_app(monkeypatch, service)
+
+    response = client.post("/autofix/bootstrap")
+
+    assert response.status_code == 403, response.text
+    payload = response.json()
+    assert payload["code"] == 403
+    assert payload["data"]["error_code"] == "AUTOFIX_NAMESPACE_NOT_ALLOWED"
+    assert payload["data"]["details"] == {"namespace": "test", "switch": "autofix.allowed_namespaces"}
+    assert "命名空间 test" in payload["message"] and "AUTOFIX_ALLOWED_NAMESPACES" in payload["message"]
+    if not allowed:
+        assert "为空" in payload["message"]
+    initialize.assert_not_awaited()
+    autofix.get_autofix_service.assert_not_awaited()
+    assert_bootstrap_untouched(service, k8s_service)
+
+
+def test_enabled_bootstrap_with_test_whitelisted_applies_manifests(monkeypatch) -> None:
+    monkeypatch.setattr(config.autofix, "bootstrap_enabled", True)
+    monkeypatch.setattr(config.autofix, "allowed_namespaces", ["staging", "test"])
+    service, k8s_service = bootstrap_service(monkeypatch)
+    client = make_app(monkeypatch, service)
+
+    response = client.post("/autofix/bootstrap")
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "completed" and data["namespace"] == "test"
+    k8s_service.ensure_namespace.assert_awaited_once_with("test")
+    assert [call.kwargs["namespace"] for call in k8s_service.apply_yaml_file.await_args_list] == ["test", "test"]
+
+
+def test_bootstrap_refuses_test_when_configured_as_restricted(monkeypatch) -> None:
+    from app.core.autofix.remediation import AutoFixRemediationEngine
+
+    monkeypatch.setattr(config.autofix, "bootstrap_enabled", True)
+    monkeypatch.setattr(config.autofix, "allowed_namespaces", ["test"])
+    monkeypatch.setattr(AutoFixRemediationEngine, "DEFAULT_RESTRICTED_NAMESPACES", {"kube-system", "test"})
+    service, k8s_service = bootstrap_service(monkeypatch)
+    client = make_app(monkeypatch, service)
+
+    response = client.post("/autofix/bootstrap")
+
+    assert response.status_code == 403, response.text
+    payload = response.json()
+    assert payload["data"]["error_code"] == "AUTOFIX_NAMESPACE_NOT_ALLOWED"
+    assert "受限命名空间" in payload["message"]
+    autofix.get_autofix_service.assert_not_awaited()
+    assert_bootstrap_untouched(service, k8s_service)
+    # 与 run/confirm 使用同一判定
+    assert service._build_remediation_engine(None)._namespace_allowed("test") is False
+
+
+@pytest.mark.parametrize("allowed", [[], ["test"]])
+def test_disabled_bootstrap_still_returns_feature_disabled(monkeypatch, allowed) -> None:
+    monkeypatch.setattr(config.autofix, "bootstrap_enabled", False)
+    monkeypatch.setattr(config.autofix, "allowed_namespaces", allowed)
+    service, k8s_service = bootstrap_service(monkeypatch)
+    client = make_app(monkeypatch, service)
+
+    response = client.post("/autofix/bootstrap")
+
+    assert response.status_code == 403
+    payload = response.json()
+    assert payload["data"]["error_code"] == "AUTOFIX_FEATURE_DISABLED"
+    assert payload["data"]["details"] == {"switch": "autofix.bootstrap_enabled"}
+    assert "autofix.bootstrap_enabled" in payload["message"]
+    autofix.get_autofix_service.assert_not_awaited()
+    assert_bootstrap_untouched(service, k8s_service)
+
+
+def test_bootstrap_without_principal_is_401_before_switch_checks(monkeypatch) -> None:
+    monkeypatch.setattr(config.autofix, "bootstrap_enabled", True)
+    monkeypatch.setattr(config.autofix, "allowed_namespaces", [])
+    service, k8s_service = bootstrap_service(monkeypatch)
+    client = make_app(monkeypatch, service)
+
+    response = client.post("/autofix/bootstrap", headers={"X-API-Key": "", "X-CloudOps-User-ID": ""})
+
+    assert response.status_code == 401
+    assert_bootstrap_untouched(service, k8s_service)
+
+
+async def test_service_level_bootstrap_namespace_check_is_defense_in_depth(monkeypatch) -> None:
+    from app.common.exceptions import NamespaceNotAllowedError
+
+    monkeypatch.setattr(config.autofix, "bootstrap_enabled", True)
+    monkeypatch.setattr(config.autofix, "allowed_namespaces", ["default"])
+    service, k8s_service = bootstrap_service(monkeypatch)
+    with pytest.raises(NamespaceNotAllowedError) as denied:
+        await service.bootstrap_test_resources()
+    assert denied.value.status_code == 403
+    assert denied.value.error_code == "AUTOFIX_NAMESPACE_NOT_ALLOWED"
+    assert_bootstrap_untouched(service, k8s_service)
+
+
+def test_repair_generic_failure_hides_detail_but_logs_full_exception(monkeypatch, caplog) -> None:
+    import logging
+
+    monkeypatch.setattr(config.autofix, "repair_enabled", True)
+    monkeypatch.setattr(config.autofix, "allowed_namespaces", ["default"])
+    service = make_service(mock_k8s())
+    secret_like = "internal-boom-detail-xyz"
+    monkeypatch.setattr(service, "fix_kubernetes_deployment", AsyncMock(side_effect=RuntimeError(secret_like)))
+    client = make_app(monkeypatch, service)
+
+    with caplog.at_level(logging.ERROR, logger="aiops.api.autofix"):
+        response = client.post("/autofix/repair", json=REPAIR_BODY)
+
+    assert response.status_code >= 500
+    assert secret_like not in response.text
+    records = [r for r in caplog.records if r.name == "aiops.api.autofix" and "自动修复失败" in r.getMessage()]
+    assert len(records) == 1
+    record = records[0]
+    assert record.exc_info is not None and record.exc_info[0] is RuntimeError
+    assert "RuntimeError" in record.getMessage() and "api" in record.getMessage()
+    # 日志消息本身只含部署名和异常类型；不得带出 API Key / kubeconfig 等配置
+    assert secret_like not in record.getMessage()
+    assert KEY not in caplog.text
+    assert "kubeconfig" not in caplog.text.lower()

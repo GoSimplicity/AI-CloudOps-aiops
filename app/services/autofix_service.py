@@ -18,7 +18,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from ..common.constants import ServiceConstants
-from ..common.exceptions import AutoFixError, FeatureDisabledError, ValidationError, WorkflowApprovalError
+from ..common.exceptions import AutoFixError, FeatureDisabledError, NamespaceNotAllowedError, ValidationError, WorkflowApprovalError
 from ..common.identity import require_principal
 from ..config.settings import config
 from ..core.agents.k8s_fixer import K8sFixerAgent
@@ -34,6 +34,8 @@ logger = logging.getLogger("aiops.services.autofix")
 
 REPAIR_DISABLED_MESSAGE = "自动修复入口 /autofix/repair 已关闭（autofix.repair_enabled / AUTOFIX_REPAIR_ENABLED=false）；请使用 /autofix/workflow 生成计划并经 /autofix/workflow/confirm 确认"
 BOOTSTRAP_DISABLED_MESSAGE = "测试资源引导入口 /autofix/bootstrap 已关闭（autofix.bootstrap_enabled / AUTOFIX_BOOTSTRAP_ENABLED=false）"
+# /autofix/bootstrap 创建故障演示资源的目标命名空间
+BOOTSTRAP_NAMESPACE = "test"
 
 
 def ensure_repair_enabled() -> None:
@@ -44,6 +46,26 @@ def ensure_repair_enabled() -> None:
 def ensure_bootstrap_enabled() -> None:
     if not config.autofix.bootstrap_enabled:
         raise FeatureDisabledError(BOOTSTRAP_DISABLED_MESSAGE, switch="autofix.bootstrap_enabled")
+
+
+def ensure_bootstrap_namespace_allowed() -> None:
+    """bootstrap 开启后仍要求 test 命名空间在 allowed_namespaces 内且非受限命名空间。
+
+    复用 run/confirm 的同一判定（AutoFixRemediationEngine._namespace_allowed + 相同配置注入），
+    只构造策略对象、不传 k8s 客户端，因此拒绝时不会初始化 Kubernetes 或创建任何资源。
+    """
+    namespace = BOOTSTRAP_NAMESPACE
+    policy = AutoFixService._build_remediation_engine(k8s_client=None)
+    if policy._namespace_allowed(namespace):
+        return
+    prefix = f"测试资源引导入口 /autofix/bootstrap 已开启，但目标命名空间 {namespace} "
+    if namespace in policy.restricted_namespaces:
+        reason = "属于受限命名空间，即使写入 autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 也不允许执行"
+    elif not policy.allowed_namespaces:
+        reason = f"不在白名单内：autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 为空（fail-closed），请将 {namespace} 加入 AUTOFIX_ALLOWED_NAMESPACES"
+    else:
+        reason = f"不在 autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 白名单内，请将 {namespace} 加入 AUTOFIX_ALLOWED_NAMESPACES"
+    raise NamespaceNotAllowedError(f"{prefix}{reason}；已拒绝创建测试资源", namespace=namespace)
 
 
 class AutoFixService(BaseService):
@@ -475,14 +497,17 @@ class AutoFixService(BaseService):
             return await self._bootstrap_test_resources()
 
     async def _bootstrap_test_resources(self) -> Dict[str, Any]:
-        """在test命名空间创建用于自愈演示的故障资源（默认关闭）"""
+        """在test命名空间创建用于自愈演示的故障资源（默认关闭；开启后 test 仍须在 allowed_namespaces 内）"""
         require_principal()
         ensure_bootstrap_enabled()
+        # 白名单校验先于初始化检查与任何 Kubernetes 调用
+        ensure_bootstrap_namespace_allowed()
         self._ensure_initialized()
+        namespace = BOOTSTRAP_NAMESPACE
         try:
             k8s = self._k8s_fixer.k8s_service
             # 确保命名空间存在
-            await k8s.ensure_namespace("test")
+            await k8s.ensure_namespace(namespace)
 
             results = []
             manifests = [
@@ -490,12 +515,12 @@ class AutoFixService(BaseService):
                 "deploy/test-additional-problems.yaml",
             ]
             for m in manifests:
-                results.append(await k8s.apply_yaml_file(m, namespace="test"))
+                results.append(await k8s.apply_yaml_file(m, namespace=namespace))
 
             return {
                 "success": all(r.get("success") for r in results),
                 "applied": results,
-                "namespace": "test",
+                "namespace": namespace,
             }
         except Exception as e:
             raise AutoFixError(f"引导测试资源失败: {str(e)}")

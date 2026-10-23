@@ -27,6 +27,7 @@ from app.common.exceptions import (
     AIOpsException,
     AutoFixError,
     FeatureDisabledError,
+    NamespaceNotAllowedError,
     RequestTimeoutError,
     ServiceUnavailableError,
     ValidationError as DomainValidationError,
@@ -41,7 +42,12 @@ from app.models import (
     ServiceConfigResponse,
     ServiceInfoResponse,
 )
-from app.services.autofix_service import AutoFixService, ensure_bootstrap_enabled, ensure_repair_enabled
+from app.services.autofix_service import (
+    AutoFixService,
+    ensure_bootstrap_enabled,
+    ensure_bootstrap_namespace_allowed,
+    ensure_repair_enabled,
+)
 from app.services.factory import ServiceFactory
 from app.services.notification import NotificationService
 
@@ -402,7 +408,8 @@ async def autofix_k8s(
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"自动修复失败 - 部署: {request.deployment}, 错误类型: {type(e).__name__}")
+        # 响应不拼接 str(e)；服务端用 logger.exception 保留完整异常堆栈（只附部署名与异常类型，不记录请求头/配置）
+        logger.exception(f"自动修复失败 - 部署: {request.deployment}, 错误类型: {type(e).__name__}")
         raise AutoFixError("修复操作失败")
 
 
@@ -414,8 +421,13 @@ async def autofix_k8s(
 @api_response("创建测试命名空间及故障资源")
 @log_api_call(log_request=False)
 async def bootstrap_faulty_resources() -> Dict[str, Any]:
-    """创建 test 命名空间并应用预置的故障清单，用于自愈演示（默认关闭，返回403）"""
+    """创建 test 命名空间并应用预置的故障清单，用于自愈演示（默认关闭，返回403）
+
+    SEC-26：开启后 test 仍须在 autofix.allowed_namespaces 内且非受限命名空间，否则 403
+    （AUTOFIX_NAMESPACE_NOT_ALLOWED）；两项检查都先于服务初始化，拒绝时不会接触 Kubernetes。
+    """
     ensure_bootstrap_enabled()
+    ensure_bootstrap_namespace_allowed()
     try:
         await (await get_autofix_service()).initialize()
         result = await (await get_autofix_service()).bootstrap_test_resources()
@@ -425,7 +437,7 @@ async def bootstrap_faulty_resources() -> Dict[str, Any]:
             "applied": result.get("applied", []),
             "timestamp": datetime.now().isoformat(),
         }
-    except FeatureDisabledError:
+    except (FeatureDisabledError, NamespaceNotAllowedError):
         raise
     except Exception as e:
         raise AutoFixError(f"引导故障资源失败: {str(e)}")
