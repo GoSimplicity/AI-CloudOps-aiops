@@ -124,6 +124,22 @@ def open_in_root(path: str, expected: Optional[os.stat_result] = None, *, direct
             os.close(current)
 
 
+def stat_in_root(path: str, expected: os.stat_result) -> os.stat_result:
+    """SEC-33 L3 P3-b：非目录的 stat 不打开文件本身（FIFO/设备/无读权限文件都不触发 open），
+    而是经 open_in_root 打开父目录 fd 后 os.stat(name, dir_fd=..., follow_symlinks=False)，再比对校验时的 dev/ino"""
+    parent, name = os.path.split(path)
+    if not name or name in (".", ".."):
+        raise PathChangedError()
+    parent_fd = open_in_root(parent, directory=True)
+    try:
+        info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    finally:
+        os.close(parent_fd)
+    if stat.S_ISLNK(info.st_mode) or (info.st_dev, info.st_ino) != (expected.st_dev, expected.st_ino):
+        raise PathChangedError()
+    return info
+
+
 def display_path(raw: Any, resolved: Optional[str] = None) -> str:
     """对外展示的路径：MCP_FILE_ROOT 内用相对路径，否则回显用户传入的原值；绝不返回 resolve 后的绝对路径"""
     if resolved is not None:

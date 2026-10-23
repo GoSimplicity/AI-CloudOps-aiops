@@ -73,3 +73,121 @@ def test_missing_o_nofollow_does_not_break_import_or_startup_check(tmp_path):
     done = subprocess.run([sys.executable, "-c", script], cwd=PROJECT_ROOT, env=env, capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr[-2000:]
     assert done.stdout.strip().splitlines()[-1] == "REFUSED True"
+
+
+# ---------------------------------------------------------------- P3-b：非目录 stats 走父目录 fd + follow_symlinks=False
+
+
+def _spy_leaf_opens(monkeypatch, leaf):
+    opened = []
+    real_open = os.open
+
+    def spy(path, flags, *args, **kwargs):
+        if os.fspath(path) == leaf or os.path.basename(os.fspath(path)) == leaf:
+            opened.append(path)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", spy)
+    return opened
+
+
+async def test_stats_of_regular_file_never_opens_the_file(root, monkeypatch):
+    opened = _spy_leaf_opens(monkeypatch, "a.md")
+    result = await FileStatsTool().execute({"path": "a.md"})
+    assert result["type"] == "file" and result["size_bytes"] == len("inside\n")
+    assert opened == []
+
+
+async def test_stats_of_fifo_does_not_open_it(root, monkeypatch):
+    os.mkfifo(root / "pipe")
+    opened = _spy_leaf_opens(monkeypatch, "pipe")
+    result = await FileStatsTool().execute({"path": "pipe"})
+    assert result["type"] == "file" and result["size_bytes"] == 0
+    assert opened == []
+
+
+async def test_stats_of_unreadable_file_works_without_opening(root):
+    target = root / "secret.md"
+    target.write_text("abc")
+    target.chmod(0)
+    try:
+        result = await FileStatsTool().execute({"path": "secret.md"})
+    finally:
+        target.chmod(0o600)
+    assert result["size_bytes"] == 3 and result["permissions"] == "000"
+
+
+async def test_stats_of_unix_socket_works_without_opening(root):
+    import socket
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        server.bind(str(root / "sock"))
+        result = await FileStatsTool().execute({"path": "sock"})
+    finally:
+        server.close()
+    assert result["exists"] is True and result["type"] == "file"
+
+
+async def test_stats_rejects_file_replaced_by_other_inode(root, monkeypatch):
+    from app.mcp.server.tools import file_tool
+
+    staged = root / "staged.md"
+    staged.write_text("x" * 4321)
+    original = file_tool.validated_identity
+
+    def wrapped(path):
+        identity = original(path)
+        os.replace(staged, root / "a.md")
+        return identity
+
+    monkeypatch.setattr(file_tool, "validated_identity", wrapped)
+    with pytest.raises(RuntimeError) as failed:
+        await FileStatsTool().execute({"path": "a.md"})
+    assert "校验后发生变化" in str(failed.value) and "4321" not in str(failed.value)
+
+
+async def test_stats_rejects_file_swapped_to_symlink_via_lstat(root, monkeypatch, tmp_path):
+    from app.mcp.server.tools import file_tool
+
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"z" * 7777)
+    original = file_tool.validated_identity
+
+    def wrapped(path):
+        identity = original(path)
+        os.rename(root / "a.md", root / "a.md.orig")
+        os.symlink(outside, root / "a.md")
+        return identity
+
+    monkeypatch.setattr(file_tool, "validated_identity", wrapped)
+    with pytest.raises(RuntimeError) as failed:
+        await FileStatsTool().execute({"path": "a.md"})
+    assert "校验后发生变化" in str(failed.value) and "7777" not in str(failed.value)
+
+
+async def test_stats_rejects_parent_swapped_to_symlink(root, monkeypatch, tmp_path):
+    from app.mcp.server.tools import file_tool
+
+    (root / "sub" / "b.md").write_text("in")
+    outside = tmp_path / "outdir"
+    outside.mkdir()
+    (outside / "b.md").write_bytes(b"q" * 6543)
+    original = file_tool.validated_identity
+
+    def wrapped(path):
+        identity = original(path)
+        os.rename(root / "sub", root / "sub.orig")
+        os.symlink(outside, root / "sub")
+        return identity
+
+    monkeypatch.setattr(file_tool, "validated_identity", wrapped)
+    with pytest.raises(RuntimeError) as failed:
+        await FileStatsTool().execute({"path": "sub/b.md"})
+    assert "校验后发生变化" in str(failed.value) and "6543" not in str(failed.value)
+
+
+async def test_stats_of_directory_still_aggregates(root):
+    (root / "sub" / "b.md").write_text("12345")
+    result = await FileStatsTool().execute({"path": "sub"})
+    assert result["type"] == "directory" and result["total_files"] == 1 and result["total_size_bytes"] == 5
