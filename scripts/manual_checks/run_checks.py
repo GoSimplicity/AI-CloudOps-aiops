@@ -9,6 +9,12 @@ License: Apache 2.0
 Description: AIOps平台全量测试脚本，运行所有测试模块
 """
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from legacy_guard import require_legacy_opt_in
+require_legacy_opt_in()
+
 from datetime import datetime
 import logging
 from pathlib import Path
@@ -42,12 +48,12 @@ def run_all_tests():
 
     # 定义测试模块顺序（按重要性和依赖关系排序）
     test_modules = [
-        "test_health.py",  # 健康检查（最基础）
-        "test_predict.py",  # 负载预测
-        "test_rca.py",  # 根因分析
-        "test_autofix.py",  # 自动修复
-        "test_assistant.py",  # 智能助手
-        "test_integration.py",  # 系统集成测试
+        "health.py",  # 健康检查（最基础）
+        "predict.py",  # 负载预测
+        "rca.py",  # 根因分析
+        "autofix.py",  # 自动修复
+        "assistant.py",  # 智能助手
+        "integration.py",  # 系统集成测试
     ]
 
     # 收集结果

@@ -9,6 +9,12 @@ License: Apache 2.0
 Description: 预测API端到端测试脚本
 """
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from legacy_guard import require_legacy_opt_in
+require_legacy_opt_in()
+
 from datetime import datetime
 import json
 from typing import Any, Dict, Optional

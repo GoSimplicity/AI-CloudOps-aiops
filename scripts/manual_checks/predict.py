@@ -9,7 +9,13 @@ License: Apache 2.0
 Description: 新预测服务完整测试套件 - 支持多种预测类型
 """
 
-from test_utils import (
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from legacy_guard import require_legacy_opt_in
+require_legacy_opt_in()
+
+from check_utils import (
     DEFAULT_API_BASE_URL,
     TestResult,
     make_request,

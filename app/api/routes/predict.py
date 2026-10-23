@@ -134,7 +134,6 @@ async def predict_qps(
 ) -> Dict[str, Any]:
     """QPS负载预测"""
     logger.info("收到QPS预测请求")
-    await (await get_prediction_service()).initialize()
 
     try:
         # 额外参数校验：禁止未定义字段，返回400（测试期望）

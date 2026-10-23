@@ -19,6 +19,14 @@ from app.models.predict_models import PredictionDataPoint, PredictionType
 from app.services.prediction_service import PredictionService
 
 
+@pytest.fixture(autouse=True)
+def unavailable_cache(monkeypatch):
+    """初始化路径显式模拟不可用缓存，不隐式连接开发机 Redis"""
+    from app.core.cache import redis_cache_manager
+
+    monkeypatch.setattr(redis_cache_manager, "RedisCacheManager", Mock(side_effect=RuntimeError("offline cache unavailable")))
+
+
 @pytest.fixture
 def prediction_service():
     """创建预测服务实例"""

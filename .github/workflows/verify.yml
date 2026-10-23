@@ -26,7 +26,7 @@ jobs:
       - run: pip check
       - run: pip install pip-audit
       - run: pip-audit -r requirements.txt --no-deps --disable-pip
-      - run: python -m pytest tests/unit tests/test_predict_service_unit.py -q
+      - run: python -m pytest -q
       - run: cp env.example .env
       - run: docker compose config --quiet
         env:

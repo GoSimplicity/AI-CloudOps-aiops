@@ -9,6 +9,12 @@ License: Apache 2.0
 Description: 测试RAG和MCP双模式集成
 """
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from legacy_guard import require_legacy_opt_in
+require_legacy_opt_in()
+
 import asyncio
 import os
 import sys
@@ -18,7 +24,7 @@ from typing import Any, Dict
 import aiohttp
 
 # 添加项目根目录到Python路径
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 
 class MCPIntegrationTester:

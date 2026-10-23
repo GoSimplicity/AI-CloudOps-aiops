@@ -518,3 +518,7 @@ git push origin feature/amazing-feature
 **最后更新**: 2025-09-13 | **版本**: v2.0.0
 
 </div>
+
+### 测试
+
+运行 `python -m pytest -q`，默认执行离线单元和隔离 ASGI 集成，不读取本机 `.env`，不连接真实基础设施或模型。真实服务、模型计费验收及历史脚本的明确入口见 [测试说明](docs/testing.md)。

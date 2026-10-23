@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from app.services.prediction_service import PredictionService
+
+
+@pytest.fixture(autouse=True)
+def unavailable_cache(monkeypatch):
+    """本模块验证无缓存预测初始化，不依赖本机 Redis 是否正在运行"""
+    from app.core.cache import redis_cache_manager
+
+    monkeypatch.setattr(redis_cache_manager, "RedisCacheManager", Mock(side_effect=RuntimeError("offline cache unavailable")))
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,7 @@ uv pip compile requirements.in --python-version 3.11 --universal --upgrade -o re
 uv venv .venv-release --python 3.11
 uv pip sync --python .venv-release/bin/python requirements.txt
 uv pip check --python .venv-release/bin/python
-.venv-release/bin/python -m pytest tests/unit tests/test_predict_service_unit.py -q
+.venv-release/bin/python -m pytest -q
 uvx pip-audit -r requirements.txt --no-deps --disable-pip --format json
 ```
 

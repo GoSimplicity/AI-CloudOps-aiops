@@ -1,18 +1,17 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+"""使用真实 ASGI 应用和统一错误封装，不连接模型"""
 
-from httpx import ASGITransport, AsyncClient
 import pytest
 
-from app.main import app
+pytestmark = pytest.mark.integration
 
 
-@pytest.mark.asyncio
-async def test_assistant_query_400_on_missing_question():
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
-        resp = await ac.post("/api/v1/assistant/query", json={})
-        assert resp.status_code == 400
-        body = resp.json()
-        assert body.get("code") == 400
+def test_assistant_query_400_on_missing_question(client):
+    response = client.post("/api/v1/assistant/query", json={})
+    assert response.status_code == 400
+    assert response.json()["code"] == 400
+
+
+def test_authentication_covers_application_routes(client):
+    response = client.get("/api/v1/assistant/info", headers={"X-API-Key": "wrong"})
+    assert response.status_code == 401
+    assert client.get("/health").json() == {"status": "ok"}

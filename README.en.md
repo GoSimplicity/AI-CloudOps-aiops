@@ -152,7 +152,7 @@ Full details (Chinese): [docs/production.md](docs/production.md) and [docs/secur
 ```bash
 pip install -r requirements.txt
 python -m pip check
-python -m pytest tests/unit tests/test_predict_service_unit.py -q
+python -m pytest -q
 ```
 
 `requirements.in` lists direct dependencies. `requirements.txt` is the fully pinned lock for Python 3.11 (`uv pip compile requirements.in --python-version 3.11 --universal -o requirements.txt`). The top-level scripts in `tests/` call real services and are not part of the offline gate. CI (`.github/workflows/verify.yml`) runs `pip check`, `pip-audit`, the unit tests, `docker compose config` and a Docker build.
@@ -195,3 +195,5 @@ This repository is licensed under the [Apache License 2.0](LICENSE).
 
 - **Email:** <bamboocloudops@gmail.com>
 - **Issues:** <https://github.com/GoSimplicity/AI-CloudOps-aiops/issues>
+
+The default `python -m pytest -q` runs offline unit and isolated ASGI integration tests with outbound networking blocked. Live service and separately enabled model checks are documented in [testing.md](docs/testing.md). Historical manual scripts are preserved outside the default test suite.

@@ -104,12 +104,12 @@ python app/main.py
 - `scripts/test_websocket_assistant.py`: 测试WebSocket流式接口
 - `scripts/test_knowledge_load.py`: 测试知识库加载和检索功能
 - `scripts/interactive_assistant.py`: 交互式命令行测试
-- `scripts/test_all.py`: 全面测试所有功能
+- `python -m pytest -q`: 默认离线单元与ASGI集成测试
 
 运行测试:
 ```bash
 # 全面测试
-python scripts/test_all.py
+python -m pytest -q
 
 # 单独测试
 python scripts/test_knowledge_load.py

@@ -21,7 +21,7 @@ curl --fail -H "X-API-Key: $AIOPS_API_KEY" http://127.0.0.1:8080/api/v1/predict/
 
 ## 发布验证
 
-离线门禁为 `python -m pytest tests/unit -q`、`python -m pip check` 和 Compose 配置校验。历史 `tests/` 顶层脚本包含真实服务调用，不作为离线门禁。上线验收还需在隔离预生产集群验证 Redis、Prometheus、LLM、嵌入模型和 MCP 的真实连通性与业务流程；没有这些环境的验证结果不能宣称生产验收完成。
+离线门禁统一为 `python -m pytest -q`、`python -m pip check` 和 Compose 配置校验，默认包含离线单元与ASGI集成。历史手工脚本已移到 `scripts/manual_checks/`，真实服务验收必须显式开启，详见[测试说明](testing.md)。上线验收还需在隔离预生产集群验证 Redis、Prometheus、LLM、嵌入模型和 MCP 的真实连通性与业务流程；没有这些环境的验证结果不能宣称生产验收完成。
 
 依据：[FastAPI 鉴权与定时安全比较](https://fastapi.tiangolo.com/advanced/security/http-basic-auth/)、[Docker 构建最佳实践](https://docs.docker.com/build/building/best-practices/)。
 

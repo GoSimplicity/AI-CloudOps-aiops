@@ -9,10 +9,16 @@ License: Apache 2.0
 Description: 系统集成测试套件 - 验证各模块间的协作和整体系统功能
 """
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from legacy_guard import require_legacy_opt_in
+require_legacy_opt_in()
+
 import time
 
 import pytest
-from test_utils import (
+from check_utils import (
     DEFAULT_API_BASE_URL,
     TestResult,
     make_request,
@@ -411,14 +417,14 @@ class TestSystemIntegration:
         results = cls.test_result.finalize()
 
         # 打印测试摘要
-        from test_utils import print_test_summary
+        from check_utils import print_test_summary
 
         print_test_summary(
             results, results.get("summary", {}).get("duration_seconds", 0)
         )
 
         # 保存测试结果
-        from test_utils import save_test_results
+        from check_utils import save_test_results
 
         save_test_results(results, "logs/integration_test_results.json", logger)
 

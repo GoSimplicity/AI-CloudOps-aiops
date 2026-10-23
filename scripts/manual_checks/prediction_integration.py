@@ -9,6 +9,12 @@ License: Apache 2.0
 Description: 预测系统集成测试脚本
 """
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from legacy_guard import require_legacy_opt_in
+require_legacy_opt_in()
+
 import asyncio
 from datetime import datetime
 import os
@@ -16,7 +22,7 @@ from pathlib import Path
 import sys
 
 # 添加项目根目录到Python路径
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.config.settings import config
 from app.models import ResourceConstraints

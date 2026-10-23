@@ -3,12 +3,18 @@
 
 """简单特征名称测试脚本"""
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from legacy_guard import require_legacy_opt_in
+require_legacy_opt_in()
+
 import asyncio
 from pathlib import Path
 import sys
 import warnings
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # 捕获sklearn警告
 sklearn_warnings = []
