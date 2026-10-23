@@ -57,7 +57,8 @@ def test_switch_env_only_true_enables(monkeypatch, caplog, env_key, attr, raw, e
     records = [r for r in warnings_from(caplog) if env_key in r.getMessage()]
     assert bool(records) is warns
     if warns:
-        assert repr(raw) in records[0].getMessage() and "false" in records[0].getMessage()
+        # SEC-26 P3-c：只输出字段名和值的类型，不输出值本身
+        assert "类型 str" in records[0].getMessage() and "false" in records[0].getMessage()
 
 
 @pytest.mark.parametrize("yaml_value,expected,warns", [(True, True, False), (False, False, False), (1, False, True), (0, False, True), ("yes", False, True)])
@@ -83,7 +84,7 @@ def test_wildcard_namespace_is_warned_and_never_matches(monkeypatch, caplog) -> 
         cfg = AutoFixConfig()
     assert cfg.allowed_namespaces == ["*"]
     messages = [r.getMessage() for r in warnings_from(caplog)]
-    assert any("'*'" in m and "不是通配符" in m for m in messages)
+    assert any("第 1 项" in m and "不是通配符" in m for m in messages)
     engine = AutoFixRemediationEngine(k8s_client=None, allowed_namespaces=cfg.allowed_namespaces)
     assert engine._namespace_allowed("default") is False
     assert engine._namespace_allowed("*") is True  # 仅字面匹配
@@ -95,7 +96,8 @@ def test_uppercase_namespace_is_warned_and_case_sensitive(monkeypatch, caplog) -
         cfg = AutoFixConfig()
     assert cfg.allowed_namespaces == ["Staging", "dev"]  # 不做大小写归一
     messages = [r.getMessage() for r in warnings_from(caplog)]
-    assert len(messages) == 1 and "'Staging'" in messages[0] and "大小写敏感" in messages[0]
+    assert len(messages) == 1 and "第 1 项" in messages[0] and "大小写敏感" in messages[0]
+    assert "Staging" not in messages[0]
     engine = AutoFixRemediationEngine(k8s_client=None, allowed_namespaces=cfg.allowed_namespaces)
     assert engine._namespace_allowed("staging") is False
     assert engine._namespace_allowed("dev") is True
@@ -107,7 +109,8 @@ def test_yaml_list_with_wildcard_and_uppercase_warns_each(monkeypatch, caplog) -
         AutoFixConfig()
     messages = [r.getMessage() for r in warnings_from(caplog)]
     assert len(messages) == 2
-    assert any("'prod-*'" in m for m in messages) and any("'QA'" in m for m in messages)
+    assert any("第 1 项" in m and "不是通配符" in m for m in messages) and any("第 2 项" in m and "大写" in m for m in messages)
+    assert not any("prod-" in m or "QA" in m for m in messages)
 
 
 def test_clean_namespace_list_does_not_warn(monkeypatch, caplog) -> None:

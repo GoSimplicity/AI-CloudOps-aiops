@@ -95,7 +95,8 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 
 - 三个布尔开关解析规则：**先 strip，再 lower，等于 true 才开启**；`false` 为关闭；其余任何值一律按 `false`（关闭）处理，并在启动时打印 WARNING 日志（logger `aiops.config.autofix`），提示该值不是 true/false：
   - **环境变量**：先 strip 再 lower（`true`/`True`/`TRUE`/` true `/`true\n` 均为开启）；`1`、`0`、`yes`、`no`、`on`、空字符串等都按关闭处理并告警。
-  - **YAML**：开关字段使用专门的严格解析（不认 YAML 1.1 的布尔别名），只有不加引号的 `true`/`True`/`TRUE` 为开启、`false`/`False`/`FALSE` 为关闭。不加引号的 `yes`/`Yes`/`on`/`On`/`no`/`off` 等**不再**被当作布尔，按关闭处理并告警；`y`、数字 `1`/`0`、加引号的 `'yes'` 同样按关闭处理并告警。加引号的字符串与环境变量规则一致（先 strip 再 lower），`'true'`/`' TRUE '` 视为开启。
+  - **YAML**：开关字段使用专门的严格解析（不认 YAML 1.1 的布尔别名），只有不加引号的 `true`/`True`/`TRUE` 为开启、`false`/`False`/`FALSE` 为关闭。不加引号的 `yes`/`Yes`/`on`/`On`/`no`/`off` 等**不再**被当作布尔，按关闭处理并告警；`y`、数字 `1`/`0`、加引号的 `'yes'` 同样按关闭处理并告警。加引号的字符串与环境变量规则一致（先 strip 再 lower），`'true'`/`' TRUE '` 视为开启。注意：不加引号但大小写混写的 `tRUE`、`tRue`、`fALSE` 等不是 YAML 原生布尔，会先被读成字符串，再按环境变量规则（strip + 不区分大小写）判定，因此 `tRUE` 视为**开启**、`fALSE` 视为关闭，且不告警；建议统一写成 `true`/`false`。
+  - 告警日志只输出字段名和值的类型（如 `类型 str`、`类型 int`），不输出值本身；白名单告警只输出条目序号（第 N 项）。
   - 严格解析只作用于 `autofix.auto_execute_enabled`、`autofix.repair_enabled`、`autofix.bootstrap_enabled` 这三个字段，以及沿用同一解析函数的 SEC-33 开关 `mcp.write_tools_enabled`、`mcp.secret_read_enabled`；其它配置项（如 `app.debug`、`dev.auto_reload`）仍按原有 YAML 1.1 规则解析，行为不变。
 - `allowed_namespaces` **大小写敏感、按字面精确匹配**，不做大小写归一；Kubernetes 命名空间均为小写，写成 `Staging` 不会匹配 `staging`。
 - **`*` 不是通配符**：`*`、`prod-*` 等只会按字面匹配，实际不会放行任何命名空间；要放行多个命名空间请逐个列出。
@@ -124,7 +125,7 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 
 所有响应均不包含原始异常文本（`str(e)`）；完整堆栈只通过 `logger.exception` 记录在服务端。
 
-`/autofix/diagnose` 同样使用上述统一映射：只有 `VALIDATION_ERROR` 返回 400；`AUTOFIX_ERROR` 等服务域错误返回 502、`SERVICE_UNAVAILABLE` 返回 503、其它未分类领域异常返回 500，均不拼接异常文本。
+`/autofix/diagnose` 同样使用上述统一映射：只有 `VALIDATION_ERROR` 返回 400；`AUTOFIX_ERROR` 等服务域错误（Kubernetes `ApiException`、上游超时）返回 502、上游明确不可用（`SERVICE_UNAVAILABLE`）返回 503、其它未分类领域异常返回 500；**未知异常（非领域异常，如 `RuntimeError`）返回 500 `AUTOFIX_INTERNAL_ERROR`**（Tech Lead 裁决，不是 502），均不拼接异常文本。
 
 #### 前端契约
 

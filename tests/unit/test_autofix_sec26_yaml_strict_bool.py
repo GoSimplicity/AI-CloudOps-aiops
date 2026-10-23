@@ -81,7 +81,7 @@ def test_yaml_1_is_off_and_warned_as_number(yaml_root, caplog) -> None:
     assert settings.AUTOFIX_SWITCH_CONFIG["autofix"]["repair_enabled"] == 1
     with caplog.at_level(logging.WARNING, logger=LOGGER):
         assert AutoFixConfig().repair_enabled is False
-    assert "1" in _switch_warnings(caplog, "autofix.repair_enabled")[0].getMessage()
+    assert "类型 int" in _switch_warnings(caplog, "autofix.repair_enabled")[0].getMessage()
 
 
 def test_env_still_overrides_yaml(yaml_root, monkeypatch) -> None:

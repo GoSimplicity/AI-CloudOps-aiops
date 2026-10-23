@@ -68,11 +68,12 @@ config_path、YAML 等任何参数值**；响应文案也不回显参数值。
 - 开关打开时，两者仍要求命名空间在白名单内、不能是受限命名空间、不允许 `all_namespaces`、不允许非默认 `config_path`。
 - `list_secrets` 每项只返回 `name`、`type`、`keys`；`get_secret` 只返回 `name`、`namespace`、`type`、`keys`。
   **任何情况下都不返回 `data` / `stringData` 的值**，也不返回 labels / annotations（`last-applied-configuration` 注解可能含明文）。
+  不返回 labels / annotations 比原要求（只要求不返回 data）更严，经 Tech Lead 确认保留，原因是 `kubectl apply` 写入的 `last-applied-configuration` 注解里可能包含 Secret 的明文。
 - 工具自身也拒绝 `all_namespaces=true`，不再调用 `list_secret_for_all_namespaces`。
 
 ## config_path
 
-写类工具和 Secret 读取带非默认 `config_path` 一律 `MCP_CONFIG_PATH_DENIED`。只读工具暂时保持原行为。
+写类工具和 Secret 读取带非默认 `config_path` 一律 `MCP_CONFIG_PATH_DENIED`。其中**对 Secret 读取也做 config_path 检查是比原要求更严的设计，经 Tech Lead 确认保留**：切换 kubeconfig 会绕过当前集群的白名单语义，而 Secret 键名本身也属敏感元数据。只读工具暂时保持原行为。
 是否允许按白名单切换 kubeconfig/集群、以及只读工具的 config_path 收敛，**后续在 SEC-39 处理**。
 
 ## MCP_FILE_ROOT 启动检查
@@ -85,7 +86,7 @@ MCP 服务启动（lifespan）时检查 `MCP_FILE_ROOT`（默认 `data/knowledge
 - 生产环境（`app/config/envmode.py::is_production`：production/prod/prd、空值和未知值）→ 抛 `UnsafeFileRootError` 拒绝启动；
   非生产（test/testing、development/dev）→ 只记一条告警。
 
-文件工具（`read_file`、`list_directory`、`get_file_stats`）的报错和结果里的路径只显示相对 `MCP_FILE_ROOT` 的路径；
+文件工具（`read_file`、`list_directory`、`get_file_stats`）的报错和结果里的路径只显示相对 `MCP_FILE_ROOT` 的路径；其中**成功结果也只返回相对路径**是比原要求（只要求报错）更严的设计，经 Tech Lead 确认保留，避免通过成功结果反推服务器目录结构；
 越界或无法解析时回显用户传入的原值；底层异常只保留类型名，**不暴露 resolve 后的绝对路径**。
 
 ## 升级影响

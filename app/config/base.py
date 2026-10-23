@@ -48,8 +48,9 @@ class StrictBoolSafeLoader(yaml.SafeLoader):
     """SafeLoader 变体：去掉 YAML 1.1 的布尔别名，只把 true/True/TRUE、false/False/FALSE 解析为 bool。
 
     yes/no/on/off（及其大小写变体）保留为字符串，交由调用方按字面判定。
-    SEC-26 第二层审查 P2-2：只用于 autofix 开关字段（见 settings.AUTOFIX_SWITCH_CONFIG），
-    全局 CONFIG 仍用 yaml.safe_load，其它配置的解析结果不变。
+    SEC-26 第二层审查 P2-2：只用于经 settings._parse_autofix_bool 解析的布尔开关（见 settings.AUTOFIX_SWITCH_CONFIG）：
+    autofix.auto_execute_enabled / repair_enabled / bootstrap_enabled，以及 SEC-33 的
+    mcp.write_tools_enabled / mcp.secret_read_enabled。全局 CONFIG 仍用 yaml.safe_load，其它配置的解析结果不变。
     """
 
 
