@@ -13,11 +13,13 @@ useDefault = true
 # - 捕获组 1 是 secret：可带一个前导引号，值本身到空白或引号/反引号为止（否则 "${AIOPS_API_KEY}" 的收尾引号会被算进 secret）。
 # - (?i)：bearer 大小写不敏感；不设 entropy，散文里的 "Bearer token" 也会报，知识库里请写成 ${XXX_API_KEY} 形式的变量引用
 #   （调本服务用 ${AIOPS_API_KEY}，调 OpenAI 用 ${OPENAI_API_KEY}）。
-# - 规则内 allowlist（review3f）只放行 secret 整体是“大写字母开头、只含大写字母/数字/下划线、以 _API_KEY 结尾”的变量引用，
-#   即 $NAME_API_KEY 或 ${NAME_API_KEY}；$OPENAI_API_KEY_x、${api_key}、${X_API_KEY}abc 等都照常报。
+# - 规则内 allowlist（review3f，review3g 收紧）只放行 secret 整体是“大写字母开头、只含大写字母/数字/下划线、以 _API_KEY 结尾”的变量引用，
+#   且花括号必须成对：$NAME_API_KEY 或 ${NAME_API_KEY}；${OPENAI_API_KEY、$OPENAI_API_KEY}（不配对）、$OPENAI_API_KEY_x、
+#   ${api_key}、${X_API_KEY}abc 等都照常报。
 #   不放行 your-api-key 等字面占位符，不按行、不按路径放行。
 #   另：默认配置的全局 allowlist 本身会放行只含字母和下划线、不含数字的 $NAME / ${NAME}（实测大小写混写也放行），
 #   所以 $OPENAI_API_KEY_x、${api_key} 在整套配置下也是 0 条；本规则自身不放行它们（见 test-gitleaks-allowlist-bearer.sh）。
+#   因此本规则 allowlist 实际只对带数字的变量名（如 ${S3_API_KEY}）起作用；“弃用 useDefault”已记入 backlog。
 # 注意：CI 从基准提交读取本文件，引入本规则的 PR 本身仍按基准上的配置扫描，合入后才生效。
 [[rules]]
 id = "kb-bearer-token"
@@ -30,4 +32,4 @@ keywords = ["bearer"]
 [[rules.allowlists]]
 description = "environment variable reference to an *_API_KEY variable (e.g. AIOPS_API_KEY, OPENAI_API_KEY)"
 regexTarget = "secret"
-regexes = ['''^\$\{?[A-Z][A-Z0-9_]*_API_KEY\}?$''']
+regexes = ['''^\$(\{[A-Z][A-Z0-9_]*_API_KEY\}|[A-Z][A-Z0-9_]*_API_KEY)$''']

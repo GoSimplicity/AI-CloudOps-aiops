@@ -21,6 +21,9 @@ V='${AIOPS_API_KEY}'
 M1='$OPENAI_API_KEY_x'
 M2='${api_key}'
 VX='${X_API_KEY}'
+U1='${OPENAI_API_KEY'
+U2='$OPENAI_API_KEY}'
+D9='${S3_API_KEY}'
 # 用 python secrets 生成（lib 的 gl_rand 是 tr|head 管道，在 pipefail + 变量赋值下会因 SIGPIPE 退出）
 rnd() { python3 -c 'import secrets,string,sys;print("".join(secrets.choice(sys.argv[2]) for _ in range(int(sys.argv[1]))))' "$1" "${2:-$(printf '%s' 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789')}"; }
 TA="$(rnd 40)"
@@ -48,12 +51,12 @@ scan() {
     if [ ! -s "$rep" ]; then
         echo "FAIL [$name] gitleaks 未生成报告（扫描出错）"; GL_FAILS=$((GL_FAILS+1)); return 0
     fi
-    got="$(GL_TA="$TA" GL_TB="$TB" GL_JWT="$JWT" GL_P="$P" GL_V="$V" GL_M1="$M1" GL_M2="$M2" GL_VX="$VX" python3 - "$rep" <<'PY'
+    got="$(GL_TA="$TA" GL_TB="$TB" GL_JWT="$JWT" GL_P="$P" GL_V="$V" GL_M1="$M1" GL_M2="$M2" GL_VX="$VX" GL_U1="$U1" GL_U2="$U2" python3 - "$rep" <<'PY'
 import json, os, sys
 r = json.load(open(sys.argv[1])) or []
 lab = {os.environ["GL_TA"]: "TOKEN_A", os.environ["GL_TB"]: "TOKEN_B", os.environ["GL_JWT"]: "JWT",
        os.environ["GL_P"]: "占位符", os.environ["GL_V"]: "变量引用",
-       os.environ["GL_M1"]: "畸形引用M1", os.environ["GL_M2"]: "畸形引用M2", os.environ["GL_VX"]: "X变量"}
+       os.environ["GL_M1"]: "畸形引用M1", os.environ["GL_M2"]: "畸形引用M2", os.environ["GL_VX"]: "X变量", os.environ["GL_U1"]: "缺右括号U1", os.environ["GL_U2"]: "缺左括号U2"}
 def who(s):
     if s in lab: return lab[s]
     for k, v in lab.items():
@@ -127,6 +130,14 @@ scan "\${api_key} 整套配置 0 条（默认全局 allowlist 放行）" "$KB" "
 SCAN_CFG="$GL_TMP/kb-only.toml" scan "\${api_key} 只用本规则照常报（小写）" "$KB" "$K=畸形引用M2" "Authorization: $B $M2"
 scan "\${api_key2} 整套配置照常报（含数字，默认全局 allowlist 不放行）" "$KB" "$K=其他(11字符)" "Authorization: $B \${api_key2}"
 SCAN_CFG="$GL_TMP/kb-only.toml" scan "\${OPENAI_API_KEY} 只用本规则也不报（本规则 allowlist 放行）" "$KB" "-" "Authorization: $B \${OPENAI_API_KEY}"
+# review3g：花括号必须成对。只用本规则时两种不配对写法都要报；整套配置下的结果如实断言（默认全局 allowlist 不放行这两种）
+SCAN_CFG="$GL_TMP/kb-only.toml" scan "\${OPENAI_API_KEY 只用本规则照常报（缺右括号）" "$KB" "$K=缺右括号U1" "Authorization: $B $U1"
+SCAN_CFG="$GL_TMP/kb-only.toml" scan "\$OPENAI_API_KEY} 只用本规则照常报（缺左括号）" "$KB" "$K=缺左括号U2" "Authorization: $B $U2"
+scan "\${OPENAI_API_KEY 整套配置照常报（缺右括号）" "$KB" "$K=缺右括号U1" "Authorization: $B $U1"
+scan "\$OPENAI_API_KEY} 整套配置照常报（缺左括号）" "$KB" "$K=缺左括号U2" "Authorization: $B $U2"
+SCAN_CFG="$GL_TMP/kb-only.toml" scan "\$OPENAI_API_KEY 只用本规则不报（不带括号的引用）" "$KB" "-" "Authorization: $B \$OPENAI_API_KEY"
+SCAN_CFG="$GL_TMP/kb-only.toml" scan "\${S3_API_KEY} 只用本规则不报（带数字，本规则 allowlist 真正起作用的情形）" "$KB" "-" "Authorization: $B $D9"
+scan "\${S3_API_KEY} 整套配置不报（带数字，默认全局 allowlist 不放行，靠本规则 allowlist）" "$KB" "-" "Authorization: $B $D9"
 scan "\${X_API_KEY}abc 照常报（变量后带后缀）" "$KB" "$K=X变量+后缀(3字符)" "Authorization: $B ${VX}abc"
 scan "your-api-key 单独出现也报（allowlist 已删除）" "$KB" "$C=占位符 $K=占位符" \
     "curl -H \"Authorization: $B $P\" $U"
