@@ -422,7 +422,7 @@ redis-cli ping
 # 问题：OpenAI API调用失败
 # 解决方案：
 # 1. 验证API密钥
-curl -H "Authorization: Bearer your-api-key" \
+curl -H "Authorization: Bearer ${AIOPS_API_KEY}" \
   https://api.openai.com/v1/models
 
 # 2. 检查网络连接

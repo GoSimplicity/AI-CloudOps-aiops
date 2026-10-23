@@ -5,13 +5,5 @@ title = "AI-CloudOps-aiops gitleaks config"
 [extend]
 useDefault = true
 
-# 误报：知识库部署文档中的 curl 示例使用字面占位符 "your-api-key"，不是凭据。
-# 只放行 secret 恰好等于占位符的情况（^...$ 锚定，SEC-01A 审查 P3）：
-# "your-api-key" 后面紧跟任何字符（如真实 token）都不再被放行。
-[[allowlists]]
-description = "placeholder bearer token in knowledge-base docs"
-targetRules = ["curl-auth-header"]
-condition = "AND"
-paths = ['''^data/knowledge_base/[^/]+\.md$''']
-regexTarget = "secret"
-regexes = ['''^your-api-key$''']
+# 知识库 curl 示例改为引用环境变量 ${AIOPS_API_KEY}（SEC-01A 第三轮 E (c)），默认规则 curl-auth-header 不把变量引用当成密钥，
+# 因此删除了原来针对字面占位符 "your-api-key" 的 allowlist：知识库里再出现 your-api-key 也会照常报出。
