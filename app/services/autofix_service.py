@@ -361,12 +361,25 @@ class AutoFixService(BaseService):
         plan["allowed_actions"] = allowed_actions + approved_actions
         plan["blocked_actions"] = remaining_blocked_actions
 
+        if isinstance(self._remediation_engine, AutoFixRemediationEngine):
+            # SEC-26 第一层审查附加条件 P3-1：置 effects_started 前先做执行引擎同一道命名空间硬校验；
+            # 被拒绝时尚未调用任何执行接口，审批记录应进入 invalidated（而非 uncertain）。
+            # 预检与下面 execute_plan 内的校验之间没有 await，读到的是同一份白名单。
+            refused = self._remediation_engine._namespace_refusal(plan.get("namespace", "default"), plan["allowed_actions"])
+            if refused:
+                raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
+
         record.effects_started = True
         execution = await self._remediation_engine.execute_plan(plan)
         current_executed_actions = execution.get("executed_actions", [])
         executed_ids = [action.get("action_id") for action in current_executed_actions]
         if execution.get("status") == "blocked" and not current_executed_actions:
             # SEC-26 P3-2：执行前重新校验（命名空间白名单/受限命名空间）未通过，未执行任何动作 → 403
+            not_attempted_ids = {action.get("action_id") for action in execution.get("not_attempted_actions") or []}
+            if execution.get("post_check") is None and set(normalized_action_ids) <= not_attempted_ids:
+                # 执行器在任何写操作之前拒绝（无已执行动作、无事后检查、选中动作全部未尝试）：
+                # 可确认尚未产生副作用，回退 effects_started，使审批记录进入 invalidated
+                record.effects_started = False
             raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
         if set(executed_ids) != set(normalized_action_ids) or len(executed_ids) != len(normalized_action_ids) or any(action.get("status") != "succeeded" for action in current_executed_actions):
             # 已进入执行且未全部成功：可能已有副作用，保持 409（冲突/需人工核对），不归为授权拒绝
