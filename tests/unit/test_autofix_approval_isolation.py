@@ -208,8 +208,34 @@ async def test_revalidation_hard_restrictions_stop_execution(service, key):
     service._remediation_engine.build_plan.return_value = result
     with principal_scope("user:1"), pytest.raises(AIOpsException) as raised:
         await service.confirm_multi_agent_workflow(plan_id, [ACTION])
-    assert raised.value.status_code == 409
+    # SEC-26 P3-2：确认时重新校验未通过属于策略拒绝，返回 403
+    assert raised.value.status_code == 403
+    assert raised.value.error_code == "WORKFLOW_APPROVAL_ERROR"
     service._remediation_engine.execute_plan.assert_not_awaited()
+
+
+async def test_execute_time_namespace_revalidation_failure_returns_403(service):
+    """SEC-26 P3-2：execute_plan 的执行前命名空间复核拒绝（status=blocked、未执行任何动作）→ 403"""
+    plan_id = await create_plan(service)
+    service._remediation_engine.execute_plan.return_value = {
+        "status": "blocked", "executed_actions": [], "not_attempted_actions": [{"action_id": ACTION}],
+        "error": "namespace refused",
+    }
+    with principal_scope("user:1"), pytest.raises(AIOpsException) as raised:
+        await service.confirm_multi_agent_workflow(plan_id, [ACTION])
+    assert raised.value.status_code == 403
+    assert raised.value.error_code == "WORKFLOW_APPROVAL_ERROR"
+
+
+async def test_partial_execution_failure_stays_409(service):
+    """已进入执行且有动作失败：可能已有副作用，仍是 409（不归为授权拒绝）"""
+    plan_id = await create_plan(service)
+    service._remediation_engine.execute_plan.return_value = {
+        "status": "failed", "executed_actions": [{"action_id": ACTION, "status": "failed"}],
+    }
+    with principal_scope("user:1"), pytest.raises(AIOpsException) as raised:
+        await service.confirm_multi_agent_workflow(plan_id, [ACTION])
+    assert raised.value.status_code == 409
 
 
 async def test_newly_generated_allowed_actions_are_not_implicitly_executed(service):

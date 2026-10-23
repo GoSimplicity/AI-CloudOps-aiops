@@ -281,7 +281,8 @@ class AutoFixService(BaseService):
                 raise WorkflowApprovalError(409, "原计划动作或目标参数已变化，请重新生成计划")
             risk = current.get("risk_assessment") or {}
             if any(risk.get(key) is not True for key in ("namespace_allowed", "permission_allowed", "resource_exists")):
-                raise WorkflowApprovalError(409, "当前资源、权限或命名空间限制未通过，审批不能覆盖，请重新诊断")
+                # SEC-26 P3-2：确认时重新校验未通过属于授权/策略拒绝，返回 403（审批不能覆盖）
+                raise WorkflowApprovalError(403, "当前资源、权限或命名空间限制未通过，审批不能覆盖，请重新诊断")
 
         review = deepcopy(workflow_result.get("review") or {})
         previous_executed_actions = deepcopy(workflow_result.get("executed_actions") or [])
@@ -361,7 +362,11 @@ class AutoFixService(BaseService):
         execution = await self._remediation_engine.execute_plan(plan)
         current_executed_actions = execution.get("executed_actions", [])
         executed_ids = [action.get("action_id") for action in current_executed_actions]
+        if execution.get("status") == "blocked" and not current_executed_actions:
+            # SEC-26 P3-2：执行前重新校验（命名空间白名单/受限命名空间）未通过，未执行任何动作 → 403
+            raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
         if set(executed_ids) != set(normalized_action_ids) or len(executed_ids) != len(normalized_action_ids) or any(action.get("status") != "succeeded" for action in current_executed_actions):
+            # 已进入执行且未全部成功：可能已有副作用，保持 409（冲突/需人工核对），不归为授权拒绝
             raise WorkflowApprovalError(409, "执行记录未确认所有选中动作成功，可能已产生副作用，不能重试原计划，请人工核对")
         cumulative_executed_actions = previous_executed_actions + current_executed_actions
         execution_payload = deepcopy(execution)
