@@ -84,7 +84,7 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 
 | 配置（YAML / 环境变量） | 默认值 | 说明 |
 | --- | --- | --- |
-| `autofix.auto_execute_enabled` / `AUTOFIX_AUTO_EXECUTE_ENABLED` | `false` | `true` 时恢复旧行为：`/autofix/workflow`（run）中风险评估放行的动作无需确认直接执行（仍受白名单限制，不推荐）；**对 `/autofix/repair` 无效**，repair 恒为只出计划 |
+| `autofix.auto_execute_enabled` / `AUTOFIX_AUTO_EXECUTE_ENABLED` | `false` | `true` 时，`/autofix/workflow`（run）中**低风险白名单动作且有实时证据佐证**的才无需确认直接执行（SEC-44，见下文「自动执行规则」）；**对 `/autofix/repair` 无效**，repair 恒为只出计划 |
 | `autofix.allowed_namespaces` / `AUTOFIX_ALLOWED_NAMESPACES` | `[]`（空） | 允许执行修复动作的命名空间白名单；环境变量为逗号分隔。为空时任何命名空间都不能执行（确认也会被 403 拒绝） |
 | `autofix.repair_enabled` / `AUTOFIX_REPAIR_ENABLED` | `false` | 是否开放旧入口 `POST /api/v1/autofix/repair` |
 | `autofix.bootstrap_enabled` / `AUTOFIX_BOOTSTRAP_ENABLED` | `false` | 是否开放 `POST /api/v1/autofix/bootstrap`（创建 test 命名空间与故障演示资源）；开启后 `test` 仍须在 `allowed_namespaces` 内且不是受限命名空间，否则 403 |
@@ -104,6 +104,19 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 - 确认执行时会按当前配置重新读取白名单（在局部重新构建策略：`allowed_namespaces`、`auto_execute` 与受限命名空间，不修改共享的执行引擎单例）。但配置本身只在启动时加载：**改白名单要重启，重启会清掉待审批项**（审批状态只在进程内存中，重启后旧 plan_id 确认返回 404，需要重新生成计划）。
 
 **审批状态仅保存在进程内存**：计划、待确认动作与防重放状态都在单进程内存中，重启即丢失（确认会返回 404）。部署时必须**单 worker 单副本**，或在多副本前配置**会话粘性（sticky session，按主体/plan 固定到同一实例）**；跨 worker 随机负载均衡会导致确认找不到计划或绕过防重放保证。审批状态持久化/共享存储为后续独立工单，不在 SEC-26 范围内。
+
+#### 自动执行规则（SEC-44）
+
+> 历史说明：SEC-44 合入之前，生产环境不要打开自动执行（`auto_execute_enabled`）。当时只要风险评估放行，仅凭请求文字/diagnosis 就可能免确认写集群。
+
+SEC-44 起，`auto_execute_enabled=true` 时一个动作要免确认执行，必须**同时**满足以下条件，任一条不满足就转人工确认（pending），不写集群：
+
+1. **低风险白名单**：只有 `restart_deployment` 和 `patch_image_pull_policy`（low）在白名单内。`scale_deployment` 和 `adjust_resource_requests`（medium）即使证据匹配也必须确认。
+2. **实时证据**：执行前实时读取 Deployment 和 Pod，信号必须与动作对应的故障类型匹配（CrashLoop 对应 `CrashLoopBackOff`、重启次数 ≥3，或重启后未 Ready；镜像拉取对应 `ImagePullBackOff`/`ErrImagePull`）。读取失败、超时（15 秒）、没有 Pod 或信号不匹配时一律转确认；请求文字或 `diagnosis` 不参与判定。
+3. **写入口门禁**：写集群前按当前配置调用 `ensure_mutation_allowed`。auto 触发要求 `auto_execute_enabled` 仍为开启，且命名空间在白名单内；confirm 触发只要求命名空间在白名单内，不要求 `repair_enabled`。被拒绝时不写集群：run 退回人工确认，confirm 返回 403。
+4. **审计先行**：执行前写 intent 审计，失败则不执行（confirm 返回 503），执行后写 result 审计。审计是一行 JSON，写到 logger `aiops.audit.autofix`，字段包括 principal、target、action、auto_executed、result、time、error_type，不含 patch 内容和异常文本。
+
+完整的映射表、字段说明和升级影响见 `docs/release/SEC-44-autofix-auto-execute.md`。
 
 **写操作统一闸门**：`app/core/agents/k8s_fixer.py` 中所有可能修改集群的入口（`analyze_and_fix_deployment`、`_identify_and_fix_common_issues`、`_execute_fix`、`_execute_additional_action`、`process_agent_state`）以及每个实际写调用（`patch_deployment`、`restart_deployment`、`scale_deployment`）之前都经过 `app/core/autofix/policy.py::ensure_mutation_allowed`：`autofix.repair_enabled` 未开启时抛 `AUTOFIX_FEATURE_DISABLED`（403），命名空间不在白名单或属于受限命名空间时抛 `AUTOFIX_NAMESPACE_NOT_ALLOWED`（403），均不会调用 Kubernetes 客户端。
 

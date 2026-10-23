@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from langgraph.graph import END, StateGraph
 from typing_extensions import TypedDict
 
+from app.core.autofix.remediation import auto_execution_refusal
 from app.core.interfaces.llm_client import LLMClient, NullLLMClient
 
 logger = logging.getLogger("aiops.agents.ops_workflow")
@@ -95,8 +96,26 @@ class OpsMultiAgentWorkflow:
         return self._finalize(result)
 
     def _may_auto_execute(self, state: OpsWorkflowState) -> bool:
-        """本次调用是否允许免确认执行：实例开启 auto_execute 且本次状态显式 plan_only=False（缺失或其它取值均 fail-closed）"""
-        return self.auto_execute is True and state.get("plan_only") is False
+        """本次调用是否允许免确认执行（fail-closed）。
+
+        - 实例开启 auto_execute 且本次状态显式 plan_only=False（SEC-26 A1）；
+        - SEC-44 G1/G6：计划里每个将被执行的动作都在低风险白名单内，且附带与故障类型匹配的实时证据
+          （见 remediation.auto_execution_refusal）；对任何执行引擎（含第三方/测试替身）都适用。
+        """
+        if self.auto_execute is not True or state.get("plan_only") is not False:
+            return False
+        actions = self._actions_to_execute(state.get("plan") or {})
+        return bool(actions) and all(auto_execution_refusal(action) is None for action in actions)
+
+    @staticmethod
+    def _actions_to_execute(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+        actions = list(plan.get("allowed_actions") or [])
+        actions += [
+            action
+            for action in plan.get("candidate_actions", [])
+            if action.get("executable", True) and action.get("risk_assessment", {}).get("allowed")
+        ]
+        return actions
 
     def _build_graph(self):
         workflow = StateGraph(OpsWorkflowState)
@@ -264,6 +283,8 @@ class OpsMultiAgentWorkflow:
         )
         if confirmation_by_policy:
             review_reason = "默认只生成计划，所有可执行动作需经 /workflow/confirm 显式确认后执行"
+            if self.auto_execute is True and state.get("plan_only") is False:
+                review_reason = "自动执行要求动作属于低风险白名单且有与诊断匹配的实时证据，未满足，需经 /workflow/confirm 显式确认后执行"
         if blocked_actions:
             review = {
                 "approved": False,
@@ -567,8 +588,22 @@ class OpsMultiAgentWorkflow:
             state["next_action"] = "human_confirm"
             return state
         self._mark_agent(state, "Executor", "执行允许范围内的工具操作")
-        execution = await self.remediation_engine.execute_plan(state.get("plan") or {})
+        execution = await self.remediation_engine.execute_plan(state.get("plan") or {}, trigger="auto")
         state["execution"] = execution
+        if execution.get("status") == "blocked" and not execution.get("executed_actions"):
+            # SEC-44：执行引擎在写集群之前拒绝（证据/白名单/写操作门禁/意图审计），退回人工确认流程
+            review = dict(state.get("review") or {})
+            review.update(
+                {
+                    "approved": False,
+                    "confirmation_required": True,
+                    "reason": str(execution.get("error") or "自动执行未放行，需经 /workflow/confirm 显式确认后执行"),
+                }
+            )
+            state["review"] = review
+            state["status"] = "needs_human_confirmation"
+            state["next_action"] = "human_confirm"
+            return state
         state["status"] = execution.get("status", "completed")
         state["next_action"] = "finish"
         return state

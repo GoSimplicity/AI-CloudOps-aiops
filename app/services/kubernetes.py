@@ -387,9 +387,13 @@ class KubernetesService:
             return False
 
     async def get_pods(
-        self, namespace: str = None, label_selector: str = None
+        self, namespace: str = None, label_selector: str = None, *, raise_errors: bool = False
     ) -> List[Dict]:
-        """获取Pod列表"""
+        """获取Pod列表
+
+        raise_errors=True 时（SEC-44 G1，仅自动执行证据读取使用），读取失败原样上抛，调用方据此区分
+        “读取失败”与“没有 Pod”；默认 False，其它调用方行为不变（失败返回空列表）。
+        """
         if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法获取Pod列表")
 
@@ -415,9 +419,13 @@ class KubernetesService:
 
         except ApiException as e:
             logger.error(f"获取Pod列表失败: {type(e).__name__}")
+            if raise_errors:
+                raise
             return []
         except Exception as e:
             logger.error(f"获取Pod列表异常: {type(e).__name__}")
+            if raise_errors:
+                raise
             return []
 
     async def get_events(

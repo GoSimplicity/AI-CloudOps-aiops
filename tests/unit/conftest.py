@@ -19,3 +19,15 @@ def reset_mcp_file_root():
     reset_file_root_cache()
     yield
     reset_file_root_cache()
+
+
+@pytest.fixture
+def allow_autofix_writes(monkeypatch):
+    """SEC-44 G2：写执行点按当前配置校验，引擎级写路径单测需显式放行对应命名空间（非 autouse，避免掩盖门禁）"""
+    from app.config.settings import config
+
+    def _allow(*namespaces: str, auto_execute: bool = False) -> None:
+        monkeypatch.setattr(config.autofix, "allowed_namespaces", list(namespaces))
+        monkeypatch.setattr(config.autofix, "auto_execute_enabled", auto_execute)
+
+    return _allow

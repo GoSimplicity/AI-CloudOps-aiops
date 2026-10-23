@@ -59,12 +59,39 @@ async def test_executor_guard_respects_plan_only_even_when_auto_execute_true():
     assert "Executor" not in state["agents_used"]
 
 
+def _eligible_plan(evidence_matched: bool = True) -> dict:
+    """SEC-44：低风险白名单动作 + 实时证据（matched 可控）"""
+    evidence = {"source": "live", "fault_type": "crash_loop_backoff", "checked": True, "matched": evidence_matched}
+    action = {"action_id": "restart-deployment", "action_type": "restart_deployment", "executable": True, "risk_assessment": {"allowed": True, "risk_level": "low", "live_evidence": evidence}}
+    return {"plan_id": "p", "allowed_actions": [action], "candidate_actions": [action]}
+
+
 async def test_executor_runs_engine_when_auto_execute_true_and_not_plan_only():
     # 对照组：守卫被整个删除或永远拒绝时也能被发现
     workflow, engine = _workflow()
-    state = await workflow._executor({"plan_only": False, "plan": {"plan_id": "p"}})
+    state = await workflow._executor({"plan_only": False, "plan": _eligible_plan()})
     assert engine.execute_plan.await_count == 1
+    assert engine.execute_plan.await_args.kwargs == {"trigger": "auto"}
     assert state["status"] == "completed"
+
+
+async def test_executor_guard_requires_live_evidence_for_any_engine():
+    """SEC-44：守卫对任何执行引擎（含替身）都要求白名单 + 实时证据；plan_only=False 本身不够"""
+    workflow, engine = _workflow()
+    for plan in ({"plan_id": "p"}, _eligible_plan(evidence_matched=False)):
+        state = await workflow._executor({"plan_only": False, "plan": plan})
+        assert state["status"] == "needs_human_confirmation"
+    assert engine.execute_plan.await_count == 0
+
+
+async def test_executor_blocked_by_engine_returns_to_human_confirmation():
+    """SEC-44：执行引擎在写集群前拒绝（门禁/审计/证据）时，工作流退回人工确认而不是 blocked 终态"""
+    workflow, engine = _workflow()
+    engine.execute_plan.return_value = {"status": "blocked", "executed_actions": [], "error": "门禁未放行", "refusal": "mutation_gate"}
+    state = await workflow._executor({"plan_only": False, "plan": _eligible_plan(), "review": {"approved": True}})
+    assert state["status"] == "needs_human_confirmation"
+    assert state["next_action"] == "human_confirm"
+    assert state["review"]["approved"] is False and state["review"]["confirmation_required"] is True
 
 
 # ---------------------------------------------------------------- P3-b：YAML 不加引号的大小写混写

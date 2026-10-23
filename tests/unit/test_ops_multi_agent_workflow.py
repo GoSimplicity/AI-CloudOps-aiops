@@ -16,8 +16,9 @@ class FakeRemediationEngine:
     async def build_plan(self, diagnosis):
         return self.plan
 
-    async def execute_plan(self, plan):
+    async def execute_plan(self, plan, **kwargs):
         self.executed = True
+        self.trigger = kwargs.get("trigger")
         return {"status": "completed", "executed_actions": plan["candidate_actions"], "blocked_actions": [], "post_check": {"ready": True}}
 
     def namespace_refusal(self, namespace, actions):
@@ -87,14 +88,18 @@ class FakeLLMClient:
 
 
 @pytest.mark.asyncio
-def safe_plan():
+def safe_plan(live_evidence: bool = True):
+    risk = {"allowed": True, "risk_level": "low", "requires_human_confirmation": False}
+    if live_evidence:
+        # SEC-44：自动执行需要与故障类型匹配的实时证据（替身给出的假值）
+        risk["live_evidence"] = {"source": "live", "fault_type": "image_pull_failure", "checked": True, "matched": True}
     return {
         "fault_type": "image_pull_failure",
         "candidate_actions": [
             {
                 "action_id": "patch-image-pull-policy",
                 "action_type": "patch_image_pull_policy",
-                "risk_assessment": {"allowed": True, "risk_level": "low", "requires_human_confirmation": False},
+                "risk_assessment": risk,
             }
         ],
     }
@@ -128,6 +133,21 @@ async def test_workflow_legacy_auto_execute_switch_runs_executor_for_safe_action
     assert result["next_action"] == "finish"
     assert result["agents_used"] == ["Coordinator", "Analyzer", "Planner", "Reviewer", "Executor"]
     assert engine.executed is True
+    assert engine.trigger == "auto"
+
+
+@pytest.mark.asyncio
+async def test_workflow_auto_execute_without_live_evidence_only_plans() -> None:
+    """SEC-44：auto_execute=True 但计划没有实时证据（只有诊断文字）→ 不进 Executor，转人工确认"""
+    engine = FakeRemediationEngine(safe_plan(live_evidence=False))
+    workflow = OpsMultiAgentWorkflow(remediation_engine=engine, auto_execute=True)
+
+    result = await workflow.run({"problem_description": "deployment api ImagePullBackOff", "deployment": "api", "namespace": "default", "plan_only": False}, plan_only=False)
+
+    assert result["status"] == "needs_human_confirmation"
+    assert "Executor" not in result["agents_used"]
+    assert engine.executed is False
+    assert result["review"]["confirmation_required"] is True
 
 
 @pytest.mark.asyncio

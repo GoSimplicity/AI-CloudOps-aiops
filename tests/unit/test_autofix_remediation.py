@@ -9,9 +9,11 @@ from app.core.autofix.remediation import AutoFixRemediationEngine
 
 
 class FakeK8sClient:
-    def __init__(self, deployment: Dict[str, Any] | None = None, allowed: bool = True) -> None:
+    def __init__(self, deployment: Dict[str, Any] | None = None, allowed: bool = True, pods: List[Dict[str, Any]] | None = None) -> None:
         self.deployment = deployment
         self.allowed = allowed
+        self.pods = pods or []
+        self.pod_reads: List[tuple[str, str]] = []
         self.restarted: List[tuple[str, str]] = []
         self.scaled: List[tuple[str, str, int]] = []
         self.patched: List[tuple[str, str, Dict[str, Any]]] = []
@@ -19,6 +21,10 @@ class FakeK8sClient:
 
     async def get_deployment(self, name: str, namespace: str) -> Dict[str, Any] | None:
         return self.deployment
+
+    async def get_pods(self, namespace: str, label_selector: str, *, raise_errors: bool = False) -> List[Dict[str, Any]]:
+        self.pod_reads.append((namespace, label_selector))
+        return self.pods
 
     async def can_i(self, verb: str, resource: str, namespace: str) -> bool:
         return self.allowed
@@ -40,11 +46,17 @@ class FakeK8sClient:
         return {"ready": True, "replicas": self.deployment["spec"]["replicas"]}
 
 
+def waiting_pod(reason: str) -> Dict[str, Any]:
+    """实时 Pod 状态（假值）：容器处于 waiting，原因为 reason"""
+    return {"status": {"container_statuses": [{"name": "api", "restart_count": 0, "state": {"waiting": {"reason": reason}}}]}}
+
+
 def deployment(name: str = "api", replicas: int = 1) -> Dict[str, Any]:
     return {
         "metadata": {"name": name, "namespace": "default"},
         "spec": {
             "replicas": replicas,
+            "selector": {"match_labels": {"app": name}},
             "template": {
                 "spec": {
                     "containers": [
@@ -62,8 +74,9 @@ def deployment(name: str = "api", replicas: int = 1) -> Dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_crashloop_diagnosis_generates_restart_action_with_risk_assessment() -> None:
-    # 旧行为需显式开启 auto_execute 且配置白名单
-    engine = AutoFixRemediationEngine(k8s_client=FakeK8sClient(deployment()), allowed_namespaces=["default"], auto_execute=True)
+    # 旧行为需显式开启 auto_execute 且配置白名单；SEC-44 起还需要实时 Pod 状态与诊断一致
+    fake_k8s = FakeK8sClient(deployment(), pods=[waiting_pod("CrashLoopBackOff")])
+    engine = AutoFixRemediationEngine(k8s_client=fake_k8s, allowed_namespaces=["default"], auto_execute=True)
 
     plan = await engine.build_plan(
         {
@@ -82,6 +95,32 @@ async def test_crashloop_diagnosis_generates_restart_action_with_risk_assessment
     assert restart["executable"] is True
     assert restart["risk_assessment"]["allowed"] is True
     assert restart["risk_assessment"]["rollback_available"] is True
+    assert restart["risk_assessment"]["live_evidence"]["matched"] is True
+    assert fake_k8s.pod_reads == [("default", "app=api")]
+
+
+@pytest.mark.asyncio
+async def test_crashloop_diagnosis_without_live_evidence_requires_confirmation() -> None:
+    """SEC-44 G1：只有请求里的 diagnosis（实时 Pod 健康）不能放行自动执行"""
+    fake_k8s = FakeK8sClient(deployment(), pods=[{"status": {"container_statuses": [{"name": "api", "restart_count": 0, "state": {"running": {}}}]}}])
+    engine = AutoFixRemediationEngine(k8s_client=fake_k8s, allowed_namespaces=["default"], auto_execute=True)
+
+    plan = await engine.build_plan(
+        {
+            "deployment": "api",
+            "namespace": "default",
+            "diagnosis": {
+                "events": [{"reason": "BackOff", "message": "CrashLoopBackOff restarting failed container"}],
+                "pods": [{"status": {"container_statuses": [{"state": {"waiting": {"reason": "CrashLoopBackOff"}}}]}}],
+            },
+        }
+    )
+
+    restart = plan["candidate_actions"][-1]
+    assert restart["risk_assessment"]["allowed"] is False
+    assert restart["risk_assessment"]["requires_human_confirmation"] is True
+    assert "live evidence missing or mismatched" in restart["risk_assessment"]["reasons"]
+    assert plan["allowed_actions"] == []
 
 
 @pytest.mark.asyncio
@@ -106,8 +145,9 @@ async def test_high_risk_multi_replica_restart_is_blocked_from_execution() -> No
 
 
 @pytest.mark.asyncio
-async def test_image_pull_failure_executes_safe_image_pull_policy_patch_and_records_rollout() -> None:
-    fake_k8s = FakeK8sClient(deployment())
+async def test_image_pull_failure_executes_safe_image_pull_policy_patch_and_records_rollout(allow_autofix_writes) -> None:
+    allow_autofix_writes("default", auto_execute=True)
+    fake_k8s = FakeK8sClient(deployment(), pods=[waiting_pod("ImagePullBackOff")])
     engine = AutoFixRemediationEngine(k8s_client=fake_k8s, allowed_namespaces=["default"], auto_execute=True)
 
     result = await engine.plan_and_execute(

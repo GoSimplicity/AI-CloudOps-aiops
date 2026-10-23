@@ -17,12 +17,18 @@ class FakeRemediationEngine:
                     "action_id": "patch-image-pull-policy",
                     "action_type": "patch_image_pull_policy",
                     "executable": True,
-                    "risk_assessment": {"allowed": True, "risk_level": "low", "requires_human_confirmation": False},
+                    # SEC-44：自动执行需要实时证据（由真实引擎实时读取 Pod 得到，这里是替身给出的假值）
+                    "risk_assessment": {
+                        "allowed": True,
+                        "risk_level": "low",
+                        "requires_human_confirmation": False,
+                        "live_evidence": {"source": "live", "fault_type": "image_pull_failure", "checked": True, "matched": True},
+                    },
                 }
             ],
         }
 
-    async def execute_plan(self, plan):
+    async def execute_plan(self, plan, **_kwargs):
         return {
             "status": "completed",
             "executed_actions": plan["candidate_actions"],
@@ -69,7 +75,7 @@ class FakeBlockedRemediationEngine:
             ],
         }
 
-    async def execute_plan(self, plan):
+    async def execute_plan(self, plan, **_kwargs):
         return {
             "status": "completed",
             "executed_actions": [{**action, "status": "succeeded"} for action in plan["allowed_actions"]],

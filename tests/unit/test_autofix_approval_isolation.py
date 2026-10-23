@@ -75,7 +75,7 @@ async def test_concurrent_confirmation_claims_once_before_any_execution(service)
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def execute(_):
+    async def execute(_, **__):
         entered.set()
         await release.wait()
         return {"status": "completed", "executed_actions": [{"action_id": ACTION, "status": "succeeded"}]}
@@ -113,7 +113,7 @@ async def test_cancelled_execution_consumes_the_claim(service):
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def execute(_):
+    async def execute(_, **__):
         entered.set()
         await release.wait()
         return {"status": "completed", "executed_actions": []}
@@ -257,6 +257,8 @@ async def test_newly_generated_allowed_actions_are_not_implicitly_executed(servi
         await service.confirm_multi_agent_workflow(plan_id, [ACTION])
     execution_plan = service._remediation_engine.execute_plan.call_args.args[0]
     assert [action["action_id"] for action in execution_plan["allowed_actions"]] == [ACTION]
+    # SEC-44：确认后执行显式标记为 confirm 触发（不按自动执行条件校验，仍过写门禁与审计）
+    assert service._remediation_engine.execute_plan.call_args.kwargs == {"trigger": "confirm"}
 
 
 async def test_reported_execution_failure_consumes_approval_even_with_remaining_actions(service):
@@ -278,7 +280,7 @@ async def test_partial_confirmation_only_allows_remaining_original_actions(servi
     original["plan"]["blocked_actions"].append(second)
     service._ops_workflow.run.side_effect = lambda _, **__: deepcopy(original)
     service._remediation_engine.build_plan.side_effect = lambda _, **__: deepcopy(original["plan"])
-    service._remediation_engine.execute_plan.side_effect = lambda plan: {
+    service._remediation_engine.execute_plan.side_effect = lambda plan, **__: {
         "status": "completed", "executed_actions": [{"action_id": action["action_id"], "status": "succeeded"} for action in plan["allowed_actions"]],
     }
     plan_id = await create_plan(service)
@@ -524,7 +526,7 @@ async def test_cleanup_cancels_and_waits_for_confirmation_before_discarding_stat
     entered = asyncio.Event()
     cancelled = asyncio.Event()
 
-    async def execution(_):
+    async def execution(_, **__):
         entered.set()
         try:
             await asyncio.Event().wait()
@@ -648,7 +650,7 @@ async def test_original_allowed_actions_wait_for_explicit_selection_in_a_blocked
     original["plan"]["allowed_actions"].append(allowed)
     service._ops_workflow.run.side_effect = lambda _, **__: deepcopy(original)
     service._remediation_engine.build_plan.side_effect = lambda _, **__: deepcopy(original["plan"])
-    service._remediation_engine.execute_plan.side_effect = lambda plan: {"status": "completed", "executed_actions": [{"action_id": action["action_id"], "status": "succeeded"} for action in plan["allowed_actions"]]}
+    service._remediation_engine.execute_plan.side_effect = lambda plan, **__: {"status": "completed", "executed_actions": [{"action_id": action["action_id"], "status": "succeeded"} for action in plan["allowed_actions"]]}
     with principal_scope("user:1"):
         result = await service.execute_multi_agent_workflow({"problem_description": "offline"})
         plan_id = result["plan"]["plan_id"]

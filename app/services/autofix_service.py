@@ -430,7 +430,8 @@ class AutoFixService(BaseService):
             raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
 
         record.effects_started = True
-        execution = await engine.execute_plan(plan)
+        # SEC-44：确认后执行显式标记 trigger="confirm"（不做自动执行条件校验，仍经写操作门禁与审计）
+        execution = await engine.execute_plan(plan, trigger="confirm")
         current_executed_actions = execution.get("executed_actions", [])
         executed_ids = [action.get("action_id") for action in current_executed_actions]
         if execution.get("status") == "blocked" and not current_executed_actions:
@@ -440,6 +441,11 @@ class AutoFixService(BaseService):
                 # 执行器在任何写操作之前拒绝（无已执行动作、无事后检查、选中动作全部未尝试）：
                 # 可确认尚未产生副作用，回退 effects_started，使审批记录进入 invalidated
                 record.effects_started = False
+            if execution.get("refusal") == "audit":
+                # SEC-44 G4：意图审计写入失败，未执行任何写操作
+                raise WorkflowApprovalError(503, "审计记录写入失败，未执行任何动作，请稍后重新生成计划")
+            if execution.get("refusal") == "mutation_gate":
+                raise WorkflowApprovalError(403, "写操作门禁未放行（开关或命名空间限制），未执行任何动作，请重新诊断")
             raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
         if set(executed_ids) != set(normalized_action_ids) or len(executed_ids) != len(normalized_action_ids) or any(action.get("status") != "succeeded" for action in current_executed_actions):
             # 已进入执行且未全部成功：可能已有副作用，保持 409（冲突/需人工核对），不归为授权拒绝

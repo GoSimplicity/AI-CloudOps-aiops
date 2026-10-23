@@ -18,14 +18,23 @@ def fake_deployment(namespace: str = "default", replicas: int = 1) -> Dict[str, 
         "metadata": {"name": "api", "namespace": namespace},
         "spec": {
             "replicas": replicas,
+            "selector": {"match_labels": {"app": "api"}},
             "template": {"spec": {"containers": [{"name": "api", "image": "repo/api:bad", "resources": {"requests": {"cpu": "100m", "memory": "128Mi"}}}]}},
         },
     }
 
 
-def mock_k8s(namespace: str = "default") -> AsyncMock:
+def live_pods(reason: str = "CrashLoopBackOff") -> list:
+    """SEC-44：实时 Pod 状态（假值），容器 waiting 原因为 reason；用于满足自动执行的实时证据"""
+    return [{"status": {"container_statuses": [{"name": "api", "restart_count": 5, "state": {"waiting": {"reason": reason}}}]}}]
+
+
+def mock_k8s(namespace: str = "default", pods: list | None = None) -> AsyncMock:
+    """pods=None 时 get_pods 返回非列表（AsyncMock 默认值）：没有实时证据，自动执行一律转人工确认"""
     client = AsyncMock()
     client.get_deployment.return_value = fake_deployment(namespace)
+    if pods is not None:
+        client.get_pods.return_value = pods
     client.can_i.return_value = True
     client.patch_deployment.return_value = True
     client.scale_deployment.return_value = True
@@ -197,7 +206,7 @@ async def test_engine_execute_plan_rejects_action_targeting_other_namespace() ->
 async def test_legacy_switch_restores_auto_execution_inside_whitelist_only(monkeypatch) -> None:
     monkeypatch.setattr(config.autofix, "auto_execute_enabled", True)
     monkeypatch.setattr(config.autofix, "allowed_namespaces", ["default"])
-    client = mock_k8s()
+    client = mock_k8s(pods=live_pods())
     service = make_service(client)
     result = await service.execute_multi_agent_workflow(
         {"problem_description": "deployment api CrashLoopBackOff", "deployment": "api", "namespace": "default", "event": EVENTS["crashloop"]}
@@ -205,7 +214,16 @@ async def test_legacy_switch_restores_auto_execution_inside_whitelist_only(monke
     assert result["status"] == "completed"
     assert client.restart_deployment.await_count == 1
 
-    other = mock_k8s("prod")
+    # SEC-44：同样的请求，实时 Pod 健康（没有证据）→ 转人工确认，不写集群
+    healthy = mock_k8s(pods=[{"status": {"container_statuses": [{"name": "api", "restart_count": 0, "state": {"running": {}}}]}}])
+    service = make_service(healthy)
+    pending = await service.execute_multi_agent_workflow(
+        {"problem_description": "deployment api CrashLoopBackOff", "deployment": "api", "namespace": "default", "event": EVENTS["crashloop"]}
+    )
+    assert pending["status"] == "needs_human_confirmation"
+    assert_no_writes(healthy)
+
+    other = mock_k8s("prod", pods=live_pods())
     service = make_service(other)
     blocked = await service.execute_multi_agent_workflow(
         {"problem_description": "prod api CrashLoopBackOff", "deployment": "api", "namespace": "prod", "event": EVENTS["crashloop"]}
