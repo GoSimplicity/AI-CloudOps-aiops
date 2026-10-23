@@ -108,11 +108,21 @@ class K8sBaseTool(BaseTool):
                 "message": f"{self.name}执行时间超过{ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT}秒，底层请求可能仍在执行，请核对实际状态，勿盲目重试。",
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
-        except Exception as e:
+        except K8sToolInputError as e:
             return {
                 "success": False,
                 "error": "执行失败",
                 "message": str(e),
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+        except Exception as e:
+            # SEC-33 L2 P3-4：未知异常只返回通用信息，类型进 ERROR，原始文本只进 DEBUG
+            logger.error("%s 执行失败: 错误类型=%s", self.name, type(e).__name__)
+            logger.debug("%s 执行失败详情", self.name, exc_info=True)
+            return {
+                "success": False,
+                "error": "执行失败",
+                "message": "K8s工具执行失败",
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
