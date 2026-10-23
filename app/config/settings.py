@@ -434,6 +434,7 @@ class NotificationConfig:
     """通知配置"""
 
     feishu_webhook: str = field(
+        repr=False,
         default_factory=lambda: get_env_or_config(
             "FEISHU_WEBHOOK", "notification.feishu_webhook", ""
         )

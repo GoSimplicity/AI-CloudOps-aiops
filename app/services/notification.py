@@ -98,6 +98,7 @@ class NotificationService(BaseService, NotificationClient):
                 headers=headers,
                 data=json.dumps(card_data),
                 timeout=self.DEFAULT_REQUEST_TIMEOUT,
+                allow_redirects=False,
             )
 
             return self._handle_response(response)
@@ -156,7 +157,7 @@ class NotificationService(BaseService, NotificationClient):
             return await self.send_feishu_message(message, "根因分析告警", "red")
 
         except Exception as e:
-            logger.error(f"发送根因分析告警失败: {str(e)}")
+            logger.error("发送根因分析告警失败，异常类型: %s", type(e).__name__)
             return False
 
     async def send_autofix_notification(
@@ -202,7 +203,7 @@ class NotificationService(BaseService, NotificationClient):
             return await self.send_feishu_message(message, "自动修复通知", color)
 
         except Exception as e:
-            logger.error(f"发送自动修复通知失败: {str(e)}")
+            logger.error("发送自动修复通知失败，异常类型: %s", type(e).__name__)
             return False
 
     async def send_prediction_alert(
@@ -249,7 +250,7 @@ class NotificationService(BaseService, NotificationClient):
             return await self.send_feishu_message(message, "负载预测告警", color)
 
         except Exception as e:
-            logger.error(f"发送负载预测告警失败: {str(e)}")
+            logger.error("发送负载预测告警失败，异常类型: %s", type(e).__name__)
             return False
 
     async def send_system_health_alert(
@@ -285,7 +286,7 @@ class NotificationService(BaseService, NotificationClient):
             return await self.send_feishu_message(message, "系统健康告警", "red")
 
         except Exception as e:
-            logger.error(f"发送系统健康告警失败: {str(e)}")
+            logger.error("发送系统健康告警失败，异常类型: %s", type(e).__name__)
             return False
 
     async def send_notification(
@@ -302,25 +303,31 @@ class NotificationService(BaseService, NotificationClient):
             return await self.send_feishu_message(message, title, color)
 
         except Exception as e:
-            logger.error(f"发送通知失败: {str(e)}")
+            logger.error("发送通知失败，异常类型: %s", type(e).__name__)
             return False
 
     def _handle_response(self, response: requests.Response) -> bool:
-        """处理HTTP响应"""
+        """只接受当前协议明确成功，日志不记录上游响应体"""
         try:
-            if response.status_code == HttpStatusCodes.OK:
-                response_data = response.json()
-                if response_data.get("code") == 0:
-                    logger.info("飞书消息发送成功")
-                    return True
-                else:
-                    logger.error(f"飞书消息发送失败: {response_data}")
-                    return False
-            else:
-                logger.error(f"飞书消息发送失败，状态码：{response.status_code}")
+            status = response.status_code
+            if type(status) is not int:
+                logger.warning("飞书投递结果 http_status=invalid business_code=not_checked")
                 return False
-        except Exception as e:
-            logger.error(f"处理响应失败: {str(e)}")
+            if status != HttpStatusCodes.OK:
+                logger.warning("飞书投递结果 http_status=%d business_code=not_checked", status)
+                return False
+
+            payload = response.json()
+            code = payload.get("code") if isinstance(payload, dict) else None
+            if type(code) is not int:
+                logger.warning("飞书投递结果 http_status=%d business_code=invalid", status)
+                return False
+            succeeded = code == 0
+            log = logger.info if succeeded else logger.warning
+            log("飞书投递结果 http_status=%d business_code=%d", status, code)
+            return succeeded
+        except Exception as error:
+            logger.error("处理飞书响应失败，异常类型: %s", type(error).__name__)
             return False
 
     async def get_service_info(self) -> Dict[str, Any]:
