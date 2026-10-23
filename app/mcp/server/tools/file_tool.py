@@ -12,9 +12,23 @@ Description: 文件操作工具
 import os
 from typing import Any, Dict
 
-from app.utils.file_boundary import resolve_tool_path
+from app.utils.file_boundary import display_path, resolve_tool_path
 
 from ..mcp_server import BaseTool
+
+
+class FileToolError(RuntimeError):
+    """文件工具对外错误：只含相对路径或用户传入的原值，不含 resolve 后的绝对路径"""
+
+
+def _failure(prefix: str, raw: Any, resolved: Any, error: Exception) -> FileToolError:
+    shown = display_path(raw, resolved)
+    if isinstance(error, FileToolError):
+        return FileToolError(f"{prefix}: {error}")
+    if isinstance(error, ValueError) and str(error) == "Path is outside MCP_FILE_ROOT":
+        return FileToolError(f"{prefix}: 路径超出 MCP_FILE_ROOT（{shown}）")
+    # OSError/UnicodeError 等的文本可能含绝对路径，只返回异常类型
+    return FileToolError(f"{prefix}: {type(error).__name__}（{shown}）")
 
 
 class FileReadTool(BaseTool):
@@ -45,19 +59,22 @@ class FileReadTool(BaseTool):
 
     async def execute(self, parameters: Dict[str, Any]) -> Any:
         """执行工具"""
+        raw = parameters.get("file_path")
+        file_path = None
         try:
-            file_path = resolve_tool_path(parameters["file_path"])
+            file_path = resolve_tool_path(raw)
+            shown = display_path(raw, file_path)
             encoding = parameters.get("encoding", "utf-8")
             max_lines = parameters.get("max_lines", 0)
 
             if not os.path.exists(file_path):
-                raise FileNotFoundError(f"文件不存在: {file_path}")
+                raise FileToolError(f"文件不存在: {shown}")
 
             if not os.path.isfile(file_path):
-                raise ValueError(f"路径不是文件: {file_path}")
+                raise FileToolError(f"路径不是文件: {shown}")
 
             if os.path.getsize(file_path) > 1024 * 1024:
-                raise ValueError("File exceeds the 1 MiB tool limit")
+                raise FileToolError("File exceeds the 1 MiB tool limit")
 
             with open(file_path, "r", encoding=encoding) as f:
                 if max_lines > 0:
@@ -71,14 +88,14 @@ class FileReadTool(BaseTool):
                     content = f.read()
 
             return {
-                "file_path": file_path,
+                "file_path": shown,
                 "size_bytes": os.path.getsize(file_path),
                 "content": content,
                 "lines_count": len(content.splitlines()),
             }
 
         except Exception as e:
-            raise RuntimeError(f"读取文件失败: {str(e)}")
+            raise _failure("读取文件失败", raw, file_path, e) from None
 
 
 class FileListTool(BaseTool):
@@ -109,15 +126,18 @@ class FileListTool(BaseTool):
 
     async def execute(self, parameters: Dict[str, Any]) -> Any:
         """执行工具"""
+        raw = parameters.get("directory_path", ".")
+        directory_path = None
         try:
-            directory_path = resolve_tool_path(parameters.get("directory_path", "."))
+            directory_path = resolve_tool_path(raw)
+            shown = display_path(raw, directory_path)
             show_hidden = parameters.get("show_hidden", False)
 
             if not os.path.exists(directory_path):
-                raise FileNotFoundError(f"目录不存在: {directory_path}")
+                raise FileToolError(f"目录不存在: {shown}")
 
             if not os.path.isdir(directory_path):
-                raise ValueError(f"路径不是目录: {directory_path}")
+                raise FileToolError(f"路径不是目录: {shown}")
 
             items = []
             for item in os.listdir(directory_path):
@@ -137,13 +157,13 @@ class FileListTool(BaseTool):
                 )
 
             return {
-                "directory_path": os.path.abspath(directory_path),
+                "directory_path": shown,
                 "items": items,
                 "total_count": len(items),
             }
 
         except Exception as e:
-            raise RuntimeError(f"列出目录失败: {str(e)}")
+            raise _failure("列出目录失败", raw, directory_path, e) from None
 
 
 class FileStatsTool(BaseTool):
@@ -166,16 +186,19 @@ class FileStatsTool(BaseTool):
 
     async def execute(self, parameters: Dict[str, Any]) -> Any:
         """执行工具"""
+        raw = parameters.get("path")
+        path = None
         try:
-            path = resolve_tool_path(parameters["path"])
+            path = resolve_tool_path(raw)
+            shown = display_path(raw, path)
 
             if not os.path.exists(path):
-                raise FileNotFoundError(f"路径不存在: {path}")
+                raise FileToolError(f"路径不存在: {shown}")
 
             stat = os.stat(path)
 
             result = {
-                "path": os.path.abspath(path),
+                "path": shown,
                 "exists": True,
                 "type": "directory" if os.path.isdir(path) else "file",
                 "size_bytes": stat.st_size,
@@ -204,4 +227,4 @@ class FileStatsTool(BaseTool):
             return result
 
         except Exception as e:
-            raise RuntimeError(f"获取文件统计信息失败: {str(e)}")
+            raise _failure("获取文件统计信息失败", raw, path, e) from None

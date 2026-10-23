@@ -46,8 +46,14 @@ class WorkflowApprovalError(AIOpsException):
 class FeatureDisabledError(AIOpsException):
     """功能被配置开关关闭（默认关闭的高风险入口）"""
 
-    def __init__(self, message: str, switch: str, status_code: int = 403) -> None:
-        super().__init__(message=message, error_code="AUTOFIX_FEATURE_DISABLED", details={"switch": switch})
+    def __init__(
+        self,
+        message: str,
+        switch: str,
+        status_code: int = 403,
+        error_code: str = "AUTOFIX_FEATURE_DISABLED",
+    ) -> None:
+        super().__init__(message=message, error_code=error_code, details={"switch": switch})
         self.status_code = status_code
 
 

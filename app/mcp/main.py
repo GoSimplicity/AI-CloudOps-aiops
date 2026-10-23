@@ -41,8 +41,10 @@ except ImportError:
         logging.error(f"导入模块失败: {e}")
         sys.exit(1)
 
+from app.common.exceptions import FeatureDisabledError
 from app.config.envmode import ensure_debug_safe
 from app.config.logging import setup_logging
+from app.utils.file_boundary import ensure_file_root_safe
 
 setup_logging()
 logger = logging.getLogger("aiops.mcp.main")
@@ -67,6 +69,7 @@ class ToolResponse(BaseModel):
     tool: str = Field(..., description="工具名称")
     result: Any = Field(None, description="执行结果")
     error: Optional[str] = Field(None, description="错误信息")
+    error_code: Optional[str] = Field(None, description="稳定错误码（如 SEC-33 写工具门禁拒绝）")
     status: str = Field(default="success", description="执行状态")
     timestamp: float = Field(default_factory=time.time, description="时间戳")
 
@@ -78,6 +81,8 @@ async def lifespan(app: FastAPI):
 
     # 与主应用一致：生产环境开启 debug 时拒绝启动（MCP 也注册了同一套错误处理器）
     ensure_debug_safe(config.env, config.debug)
+    # SEC-33：生产环境 MCP_FILE_ROOT 指向 / 或凭据/配置目录时拒绝启动，非生产只告警
+    ensure_file_root_safe(config.env)
     logger.info("正在启动MCP服务端...")
     sse_shutdown = asyncio.Event()
     try:
@@ -241,6 +246,16 @@ async def execute_tool(request: ToolRequest) -> ToolResponse:
             status="error" if failed else "success",
         )
 
+    except FeatureDisabledError as denied:
+        # SEC-33 写工具门禁：固定文案 + 稳定 error_code，未发起任何 K8s 调用
+        return ToolResponse(
+            request_id=request.request_id,
+            tool=request.tool,
+            result=None,
+            error=denied.message,
+            error_code=denied.error_code,
+            status="error",
+        )
     except asyncio.TimeoutError:
         return ToolResponse(
             request_id=request.request_id,

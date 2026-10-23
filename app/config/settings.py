@@ -615,6 +615,18 @@ class MCPConfig:
             "MCP_HEALTH_CHECK_INTERVAL", "mcp.health_check_interval", 30, int
         )
     )
+    # SEC-33：MCP 写工具总开关，默认关闭；解析规则同 autofix 开关（strip+lower，仅 "true" 开启）
+    write_tools_enabled: bool = field(
+        default_factory=lambda: _parse_autofix_bool(
+            "MCP_WRITE_TOOLS_ENABLED", "mcp.write_tools_enabled"
+        )
+    )
+    # SEC-33：list_secrets/get_secret 开关，默认关闭；开启后仍受 autofix.allowed_namespaces 约束且不返回 data
+    secret_read_enabled: bool = field(
+        default_factory=lambda: _parse_autofix_bool(
+            "MCP_SECRET_READ_ENABLED", "mcp.secret_read_enabled"
+        )
+    )
 
 
 @dataclass

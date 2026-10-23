@@ -27,7 +27,7 @@ curl --fail -H "X-API-Key: $AIOPS_API_KEY" http://127.0.0.1:8080/api/v1/predict/
 
 服务默认按需初始化业务依赖，启动与存活检查不会调用模型。仅在依赖配置完成且需要启动预热时设置 `AIOPS_PREWARM=true`。Prometheus 地址使用 `PROMETHEUS_HOST=prometheus:9090`，不带协议。RAG 使用普通 Redis 存储文档、缓存与元数据，使用本地 FAISS 做向量检索；无需 Redis Stack。WebSocket 与 HTTP 使用同样的服务密钥，禁止将内部密钥下发浏览器。
 
-MCP 文件工具仅能访问 `MCP_FILE_ROOT`（默认 `data/knowledge_base`），相对路径以此为基准，拒绝越界路径及符号链接越界，单文件读取上限 1 MiB。不要将此目录配置为应用根目录或凭据目录。计算器使用受限算术 AST，拒绝 Python 属性访问、代码执行和超大指数。
+MCP 文件工具仅能访问 `MCP_FILE_ROOT`（默认 `data/knowledge_base`），相对路径以此为基准，拒绝越界路径及符号链接越界，单文件读取上限 1 MiB。不要将此目录配置为应用根目录或凭据目录。SEC-33 起 MCP 启动时检查该目录：生产环境为 `/` 或包含/位于 /etc、~/.kube、凭据或项目配置目录时拒绝启动，非生产只告警；文件工具报错只显示相对路径。MCP 写工具默认关闭（`MCP_WRITE_TOOLS_ENABLED`）、Secret 读取默认关闭（`MCP_SECRET_READ_ENABLED`），详见 `docs/release/SEC-33-mcp-write-gate.md`。计算器使用受限算术 AST，拒绝 Python 属性访问、代码执行和超大指数。
 
 预测要求真实历史指标。Prometheus 请求失败或返回空集时返回明确错误，不生成模拟历史数据；缺模型时的规则外推仍是启发式估计，其置信度不是经过校准的统计保证，不应直接据此自动扩缩容。生产容量策略需要独立的负载回放与模型评估。
 

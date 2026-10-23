@@ -1,0 +1,102 @@
+# SEC-33：MCP 写工具门禁
+
+## 范围
+
+MCP 服务端所有工具调用（HTTP `POST /tools/execute`、`MCPAssistant` 客户端、进程内 `MCPServer.execute_tool`）都在
+`tool.execute` 之前经过 `app/mcp/server/write_gate.py::enforce_write_gate`。门禁拒绝时**不初始化 Kubernetes
+客户端、不发起任何 Kubernetes 调用**。SSE 只列出工具，不执行。
+
+## 新增开关
+
+| 开关 | 环境变量 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `mcp.write_tools_enabled` | `MCP_WRITE_TOOLS_ENABLED` | `false` | MCP 写类工具总开关。fail-closed：只认 `true`（大小写同 autofix 开关），其它值都按关闭处理 |
+| `mcp.secret_read_enabled` | `MCP_SECRET_READ_ENABLED` | `false` | `list_secrets` / `get_secret` 开关。fail-closed，同上 |
+
+写操作要同时满足：`mcp.write_tools_enabled=true`、`autofix.repair_enabled=true`、目标命名空间在
+`autofix.allowed_namespaces` 白名单内且不是受限命名空间（kube-system 等，复用 `ensure_namespace_allowed`）。
+环境变量优先于 YAML。`config/config.yaml`、`config/config.production.yaml`、`config/config.test.yaml` 都显式写成 `false`。
+
+## 拒绝契约与错误码
+
+被门禁拒绝的调用仍返回 **HTTP 200**，响应体 `status="error"`、`result=null`、`error` 为固定中文文案、`error_code` 为下表之一。
+（进程内调用抛 `FeatureDisabledError`，`status_code=403`，`error_code` 相同。）成功响应的 `error_code` 为 `null`。
+
+| error_code | 触发条件 |
+| --- | --- |
+| `MCP_WRITE_DISABLED` | 写操作且 `mcp.write_tools_enabled` 关闭；或 `autofix.repair_enabled` 关闭（`details.switch` 区分） |
+| `MCP_NAMESPACE_NOT_ALLOWED` | 目标命名空间不在白名单 / 属于受限命名空间 / 无法确定（含 `apply_yaml` 解析失败、Secret 读 `all_namespaces=true`） |
+| `MCP_CLUSTER_SCOPED_DENIED` | 集群级写：`create_namespace`、`delete_namespace` 及 `k8s_namespace_management` 其它非读 operation；`add_labels` 等作用于 namespace/node 等非命名空间资源（即 patch_namespace / patch_node）；`apply_yaml` 含集群级 kind。**任何开关都不能放行** |
+| `MCP_CONFIG_PATH_DENIED` | 写操作或 Secret 读取带非默认 `config_path`（缺省、`null`、空串为默认，其它值一律拒绝） |
+| `MCP_SECRET_READ_DISABLED` | `list_secrets` / `get_secret` 且 `mcp.secret_read_enabled` 关闭 |
+
+检查顺序：只读放行 → Secret 读（开关 → config_path → 白名单）→ 集群级拒绝 → 写（config_path → 写开关 → repair_enabled → 白名单）。
+
+审计/告警日志（logger `aiops.mcp.write_gate`）只记录 `tool`、`error_code`、`switch`，**不记录 operation、命名空间、资源名、
+config_path、YAML 等任何参数值**；响应文案也不回显参数值。
+
+## 分类表
+
+未在下表"只读"中列出的工具或 operation（包括新工具、拼写变体、大小写或空白不同、非字符串）**一律按写处理**。
+
+整工具只读：`get_current_time`、`get_system_info`、`read_file`、`list_directory`、`get_file_stats`、`calculate`、
+`calculate_statistics`、`convert_units`、`k8s_cluster_check`。
+
+| 工具 | 只读 operation | Secret 读（受 `mcp.secret_read_enabled`） | 写 operation |
+| --- | --- | --- | --- |
+| `k8s_pod_management` | `list_pods`、`get_pod_details`、`get_pod_events` | | `delete_pod`、`restart_pod` |
+| `k8s_service_management` | `list_services`、`get_service_details`、`get_endpoints` | | `create_service`、`delete_service` |
+| `k8s_deployment_management` | `list_deployments`、`get_deployment_status`、`get_rollout_history` | | `update_image`、`rollback`、`scale`、`restart_deployment` |
+| `k8s_config_management` | `list_configmaps`、`get_configmap` | `list_secrets`、`get_secret` | `create_configmap`、`create_secret`、`update_configmap`、`update_secret`、`delete_configmap`、`delete_secret` |
+| `k8s_logs_viewer` | `get_pod_logs`、`get_container_logs`、`get_previous_logs`、`tail_logs`、`search_logs` | | |
+| `k8s_resource_monitor` | `get_node_metrics`、`get_pod_metrics`、`get_resource_quotas`、`get_limit_ranges`、`get_top_pods`、`get_top_nodes` | | |
+| `k8s_namespace_management` | `list_namespaces`、`get_namespace`、`get_namespace_resources` | | `create_namespace`、`delete_namespace`（集群级，始终拒绝） |
+| `k8s_scaling_management` | `list_hpa`、`get_hpa_status` | | `scale_deployment`、`scale_replicaset`、`create_hpa`、`delete_hpa` |
+| `k8s_ingress_management` | `list_ingresses`、`get_ingress`、`get_ingress_classes` | | `create_ingress`、`delete_ingress` |
+| `k8s_resource_operations` | `describe_resource`、`get_resource_yaml` | | `add_labels`、`remove_labels`、`add_annotations`、`remove_annotations`、`apply_yaml` |
+
+- `add_labels` / `remove_labels` / `add_annotations` / `remove_annotations`：`resource_type` 只有
+  pod、service、deployment、replicaset、configmap、secret、ingress 按命名空间写处理，其它（namespace、node 等）按集群级拒绝。
+- `apply_yaml`：用工具自己的解析器取出每个文档的 kind/namespace，所有文档都必须在白名单内；文档未写 namespace 时按参数
+  `namespace`（缺省 `default`）；解析失败按 `MCP_NAMESPACE_NOT_ALLOWED` fail-closed；含集群级 kind（Namespace、Node、
+  ClusterRole、ClusterRoleBinding、CRD 等）按 `MCP_CLUSTER_SCOPED_DENIED`。工具执行时仍会用 discovery 二次拒绝非命名空间资源。
+- 其它写 operation 取参数 `namespace`，缺省 `default`（也必须在白名单内）。
+
+## Secret
+
+- `get_secret` 在开关关闭时选择**拒绝**（`MCP_SECRET_READ_DISABLED`），不做打码返回。
+- 开关打开时，两者仍要求命名空间在白名单内、不能是受限命名空间、不允许 `all_namespaces`、不允许非默认 `config_path`。
+- `list_secrets` 每项只返回 `name`、`type`、`keys`；`get_secret` 只返回 `name`、`namespace`、`type`、`keys`。
+  **任何情况下都不返回 `data` / `stringData` 的值**，也不返回 labels / annotations（`last-applied-configuration` 注解可能含明文）。
+- 工具自身也拒绝 `all_namespaces=true`，不再调用 `list_secret_for_all_namespaces`。
+
+## config_path
+
+写类工具和 Secret 读取带非默认 `config_path` 一律 `MCP_CONFIG_PATH_DENIED`。只读工具暂时保持原行为。
+是否允许按白名单切换 kubeconfig/集群、以及只读工具的 config_path 收敛，**后续在 SEC-39 处理**。
+
+## MCP_FILE_ROOT 启动检查
+
+MCP 服务启动（lifespan）时检查 `MCP_FILE_ROOT`（默认 `data/knowledge_base`，按 realpath 解析符号链接）：
+
+- 是 `/`，或与以下位置相同、位于其下、或包含它们：`/etc`、`/root`、`/proc`、`/sys`、`/dev`、`/boot`、`/run/secrets`、
+  `/var/run/secrets`、`/var/lib/kubelet`、`~/.kube`、`~/.ssh`、`~/.aws`、`~/.azure`、`~/.config`、`~/.docker`、`~/.gnupg`、
+  项目 `config/` 目录、项目 `.env`。
+- 生产环境（`app/config/envmode.py::is_production`：production/prod/prd、空值和未知值）→ 抛 `UnsafeFileRootError` 拒绝启动；
+  非生产（test/testing、development/dev）→ 只记一条告警。
+
+文件工具（`read_file`、`list_directory`、`get_file_stats`）的报错和结果里的路径只显示相对 `MCP_FILE_ROOT` 的路径；
+越界或无法解析时回显用户传入的原值；底层异常只保留类型名，**不暴露 resolve 后的绝对路径**。
+
+## 升级影响
+
+- 升级后默认所有 MCP 写操作和 Secret 读取被拒绝。依赖 MCP 写工具的调用方会收到 HTTP 200 + `status="error"` + `error_code`。
+- 普通助手（mode=2 / WebSocket）本来就只走只读 allowlist，不受影响。
+- `list_secrets` / `get_secret` 的返回结构变了（只剩键名），调用方不能再依赖 `data`。
+- 生产环境 `MCP_FILE_ROOT` 配置不安全时 MCP 服务将无法启动。
+
+## 回滚
+
+1. 运行时回滚（不改代码）：设置 `MCP_WRITE_TOOLS_ENABLED=true`（另需 `autofix.repair_enabled=true` 和白名单）恢复写；
+   `MCP_SECRET_READ_ENABLED=true` 恢复 Secret 键名读取。集群级写、config_path、Secret 值返回无法通过开关恢复。
+2. 代码回滚：`git revert` SEC-33 提交（门禁、Secret 输出收敛、MCP_FILE_ROOT 启动检查一起回退）。
