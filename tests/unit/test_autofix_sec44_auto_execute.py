@@ -682,15 +682,17 @@ def test_principal_defaults_to_unknown_without_context() -> None:
     assert "parameters" not in str(record)
 
 
-def test_logger_sink_writes_one_json_line(caplog) -> None:
+def test_logger_sink_writes_one_json_line() -> None:
+    """P2-3：默认 sink 只写纯 JSON 行（无控制台前缀），写入注入的流"""
+    import io
     import json
-    import logging
 
     record = audit_module.build_audit_record("intent", audit_id="x", namespace=NS, name="api", action={"action_id": "a", "action_type": "restart_deployment"}, auto_executed=False)
-    with caplog.at_level(logging.INFO, logger="aiops.audit.autofix"):
-        audit_module.LoggerAuditSink().write(record)
-    lines = [r.getMessage() for r in caplog.records if r.name == "aiops.audit.autofix"]
+    stream = io.StringIO()
+    audit_module.LoggerAuditSink(stream=stream).write(record)
+    lines = stream.getvalue().splitlines()
     assert len(lines) == 1 and json.loads(lines[0]) == record
+    assert stream.getvalue() == lines[0] + "\n"
     with pytest.raises(TypeError):
         audit_module.set_audit_sink(object())
 
@@ -1056,3 +1058,137 @@ def test_execute_plan_docstring_requires_server_side_evidence() -> None:
     """P3-4：将来若允许外部传入计划，live_evidence 必须在服务端重新推导"""
     doc = AutoFixRemediationEngine.execute_plan.__doc__ or ""
     assert "外部传入计划" in doc and "服务端重新推导" in doc
+
+
+# ---------------------------------------------------------------- P2-3 默认审计 sink 不受 LOG_LEVEL 影响、写失败必须上抛
+
+
+@pytest.fixture
+def quiet_logging():
+    """模拟 LOG_LEVEL=WARNING：root 与 aiops 及其子 logger 都调到 WARNING"""
+    import logging
+
+    names = ["", "aiops", "aiops.audit", "aiops.audit.autofix"]
+    saved = {name: logging.getLogger(name).level for name in names}
+    for name in names:
+        logging.getLogger(name).setLevel(logging.WARNING)
+    try:
+        yield
+    finally:
+        for name, level in saved.items():
+            logging.getLogger(name).setLevel(level)
+
+
+def test_default_sink_writes_json_line_to_stdout_under_warning_level(quiet_logging, capsys) -> None:
+    import json
+
+    record = audit_module.build_audit_record("intent", audit_id="y", namespace=NS, name="api", action={"action_id": "a", "action_type": "restart_deployment"}, auto_executed=True)
+    audit_module.get_audit_sink().write(record)
+    out = capsys.readouterr().out.splitlines()
+    assert out == [json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False)]
+    assert " | INFO | " not in out[0]
+
+
+def test_default_sink_ignores_logging_disable_and_logger_level(quiet_logging) -> None:
+    import io
+    import json
+    import logging
+
+    stream = io.StringIO()
+    logging.disable(logging.CRITICAL)
+    try:
+        audit_module.LoggerAuditSink(stream=stream).write({"phase": "intent", "audit_id": "z"})
+    finally:
+        logging.disable(logging.NOTSET)
+    assert json.loads(stream.getvalue()) == {"phase": "intent", "audit_id": "z"}
+
+
+def test_audit_logger_is_isolated_from_console_handlers() -> None:
+    import logging
+
+    logger = logging.getLogger("aiops.audit.autofix")
+    assert logger.propagate is False
+    assert logger.level == logging.INFO
+
+
+class BrokenStream:
+    def __init__(self, fail_on: str = "write") -> None:
+        self.fail_on = fail_on
+
+    def write(self, _data: str) -> int:
+        if self.fail_on == "write":
+            raise OSError(f"disk full {SECRET_MARKER}")
+        return 0
+
+    def flush(self) -> None:
+        if self.fail_on == "flush":
+            raise OSError(f"broken pipe {SECRET_MARKER}")
+
+
+@pytest.mark.parametrize("fail_on", ["write", "flush"])
+def test_default_sink_write_failure_raises(fail_on) -> None:
+    with pytest.raises(OSError):
+        audit_module.LoggerAuditSink(stream=BrokenStream(fail_on)).write({"phase": "intent"})
+
+
+async def test_default_sink_stream_failure_blocks_auto_execution(switches) -> None:
+    """P2-3：默认 sink 的流写失败 → 意图审计失败 → 不执行任何写操作"""
+    switches(auto_execute=True)
+    previous = audit_module.set_audit_sink(audit_module.LoggerAuditSink(stream=BrokenStream()))
+    try:
+        sdk = FakeSDK(pods=CRASHING)
+        engine = AutoFixRemediationEngine(make_k8s_service(sdk), allowed_namespaces=[NS], auto_execute=True)
+        plan = await engine.build_plan({"deployment": "api", "namespace": NS, "event": CRASHLOOP})
+        result = await engine.execute_plan(plan, trigger="auto")
+    finally:
+        audit_module.set_audit_sink(previous)
+    assert result["status"] == "blocked" and result["refusal"] == "audit"
+    assert sdk.writes() == []
+    assert SECRET_MARKER not in str(result)
+
+
+def test_default_sink_stream_failure_on_confirm_is_503(monkeypatch, switches) -> None:
+    """P2-3：确认路径默认 sink 写失败 → 503，0 写入"""
+    switches(auto_execute=False)
+    sdk = FakeSDK(pods=CRASHING)
+    client = make_app(monkeypatch, make_service(sdk))
+    data = run_workflow(client, CRASHLOOP)
+    action = pending_action(data, "restart_deployment")
+    previous = audit_module.set_audit_sink(audit_module.LoggerAuditSink(stream=BrokenStream()))
+    try:
+        response = client.post("/autofix/workflow/confirm", json={"plan_id": data["plan"]["plan_id"], "approved_action_ids": [action["action_id"]]})
+    finally:
+        audit_module.set_audit_sink(previous)
+    assert response.status_code == 503
+    assert sdk.writes() == []
+    assert SECRET_MARKER not in response.text
+
+
+def test_setup_logging_with_warning_level_keeps_audit_output(monkeypatch, capsys) -> None:
+    """P2-3：按 LOG_LEVEL=WARNING 走一遍真实 setup_logging，默认审计 sink 仍写出纯 JSON 行"""
+    import json
+    import logging
+
+    from app.config import logging as logging_config
+    from app.config.settings import config as app_config
+
+    root = logging.getLogger()
+    names = ["aiops", "aiops.services", "aiops.core", "aiops.api", "aiops.routes", "aiops.error_handler"]
+    saved_handlers, saved_root_level = root.handlers[:], root.level
+    saved_levels = {name: (logging.getLogger(name).level, logging.getLogger(name).propagate) for name in names}
+    monkeypatch.setattr(app_config, "log_level", "WARNING")
+    try:
+        logging_config.setup_logging()
+        logging.getLogger("aiops.core.autofix").info("console info should be filtered")
+        audit_module.get_audit_sink().write({"phase": "intent", "audit_id": "w"})
+    finally:
+        for handler in root.handlers[:]:
+            root.removeHandler(handler)
+        for handler in saved_handlers:
+            root.addHandler(handler)
+        root.setLevel(saved_root_level)
+        for name, (level, propagate) in saved_levels.items():
+            logging.getLogger(name).setLevel(level)
+            logging.getLogger(name).propagate = propagate
+    out = capsys.readouterr().out.splitlines()
+    assert out == [json.dumps({"audit_id": "w", "phase": "intent"}, sort_keys=True)]
