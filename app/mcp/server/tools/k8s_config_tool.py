@@ -18,6 +18,7 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from .k8s_base_tool import K8sBaseTool
+from .yaml_apply import safe_error_fields
 
 
 class K8sConfigTool(K8sBaseTool):
@@ -202,8 +203,10 @@ class K8sConfigTool(K8sBaseTool):
             return {
                 "success": False,
                 "error": "获取ConfigMap列表失败",
-                "message": str(e),
+                **safe_error_fields(e),
             }
+
+    # SEC-33 P3：所有失败分支只返回异常类型名 + ApiException status 与固定原因文本，不回显异常文本（ApiException 文本含响应体，可能带出 Secret/ConfigMap 内容）
 
     @staticmethod
     def _secret_keys(secret) -> list:
@@ -255,7 +258,7 @@ class K8sConfigTool(K8sBaseTool):
 
         except Exception as e:
             # 远端异常文本可能带出响应体，只返回类型名
-            return {"success": False, "error": "获取Secret列表失败", "message": type(e).__name__}
+            return {"success": False, "error": "获取Secret列表失败", **safe_error_fields(e)}
 
     async def _get_configmap(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -319,10 +322,10 @@ class K8sConfigTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "获取ConfigMap失败",
-                    "message": str(e),
+                    **safe_error_fields(e),
                 }
         except Exception as e:
-            return {"success": False, "error": "获取ConfigMap失败", "message": str(e)}
+            return {"success": False, "error": "获取ConfigMap失败", **safe_error_fields(e)}
 
     async def _get_secret(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -368,7 +371,7 @@ class K8sConfigTool(K8sBaseTool):
                 }
             return {"success": False, "error": "获取Secret失败", "message": f"Kubernetes API 返回 {e.status}"}
         except Exception as e:
-            return {"success": False, "error": "获取Secret失败", "message": type(e).__name__}
+            return {"success": False, "error": "获取Secret失败", **safe_error_fields(e)}
 
     async def _create_configmap(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -434,10 +437,10 @@ class K8sConfigTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "创建ConfigMap失败",
-                    "message": str(e),
+                    **safe_error_fields(e),
                 }
         except Exception as e:
-            return {"success": False, "error": "创建ConfigMap失败", "message": str(e)}
+            return {"success": False, "error": "创建ConfigMap失败", **safe_error_fields(e)}
 
     async def _create_secret(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -511,9 +514,9 @@ class K8sConfigTool(K8sBaseTool):
                     "message": f"命名空间 {namespace} 中已存在同名Secret",
                 }
             else:
-                return {"success": False, "error": "创建Secret失败", "message": str(e)}
+                return {"success": False, "error": "创建Secret失败", **safe_error_fields(e)}
         except Exception as e:
-            return {"success": False, "error": "创建Secret失败", "message": str(e)}
+            return {"success": False, "error": "创建Secret失败", **safe_error_fields(e)}
 
     async def _update_configmap(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -576,10 +579,10 @@ class K8sConfigTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "更新ConfigMap失败",
-                    "message": str(e),
+                    **safe_error_fields(e),
                 }
         except Exception as e:
-            return {"success": False, "error": "更新ConfigMap失败", "message": str(e)}
+            return {"success": False, "error": "更新ConfigMap失败", **safe_error_fields(e)}
 
     async def _update_secret(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -647,9 +650,9 @@ class K8sConfigTool(K8sBaseTool):
                     "message": f"在命名空间 {namespace} 中找不到Secret {resource_name}",
                 }
             else:
-                return {"success": False, "error": "更新Secret失败", "message": str(e)}
+                return {"success": False, "error": "更新Secret失败", **safe_error_fields(e)}
         except Exception as e:
-            return {"success": False, "error": "更新Secret失败", "message": str(e)}
+            return {"success": False, "error": "更新Secret失败", **safe_error_fields(e)}
 
     async def _delete_configmap(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -696,10 +699,10 @@ class K8sConfigTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "删除ConfigMap失败",
-                    "message": str(e),
+                    **safe_error_fields(e),
                 }
         except Exception as e:
-            return {"success": False, "error": "删除ConfigMap失败", "message": str(e)}
+            return {"success": False, "error": "删除ConfigMap失败", **safe_error_fields(e)}
 
     async def _delete_secret(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -743,6 +746,6 @@ class K8sConfigTool(K8sBaseTool):
                     "message": f"在命名空间 {namespace} 中找不到Secret {resource_name}",
                 }
             else:
-                return {"success": False, "error": "删除Secret失败", "message": str(e)}
+                return {"success": False, "error": "删除Secret失败", **safe_error_fields(e)}
         except Exception as e:
-            return {"success": False, "error": "删除Secret失败", "message": str(e)}
+            return {"success": False, "error": "删除Secret失败", **safe_error_fields(e)}

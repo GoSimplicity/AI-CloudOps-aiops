@@ -502,8 +502,11 @@ def resource_read(op, resource_type=_ABSENT, **extra):
     return params
 
 
+SECRET_ALIASES = ["secrets.v1", "Secret.core", "v1/secrets", "secret\u200b", "ｓｅｃｒｅｔ"]
+
+
 @pytest.mark.parametrize("op", RESOURCE_READ_OPS)
-@pytest.mark.parametrize("resource_type", ["secret", "secrets", "Secret", " SECRETS ", "", None, _ABSENT, "unknown-kind", "secret-ish", 123, ["secret"]])
+@pytest.mark.parametrize("resource_type", ["secret", "secrets", "Secret", " SECRETS ", "", None, _ABSENT, "unknown-kind", "secret-ish", 123, ["secret"], *SECRET_ALIASES])
 async def test_resource_read_of_secret_or_unknown_type_denied_by_default_with_zero_k8s_calls(gates, server_with_mocks, op, resource_type):
     gates(write=True, repair=True, allowed=["staging"])  # 写开关、白名单都不影响 Secret 读
     server, api, init = server_with_mocks
@@ -573,10 +576,10 @@ def test_resource_to_dict_redacts_secret_objects_and_keeps_other_resources():
 
     tool = K8sResourceTool.__new__(K8sResourceTool)
     for secret in (_v1_secret(), _v1_secret("Secret")):
-        assert tool._resource_to_dict(secret) == SECRET_SUMMARY
+        assert tool._resource_to_dict(secret, None) == SECRET_SUMMARY
     # 非 V1Secret 对象：按 kind 或调用方的 resource_type 识别
     dict_secret = Mock(to_dict=Mock(return_value=_v1_secret("Secret").to_dict()), spec=["to_dict"])
-    assert tool._resource_to_dict(dict_secret) == SECRET_SUMMARY
+    assert tool._resource_to_dict(dict_secret, None) == SECRET_SUMMARY
     assert tool._resource_to_dict(dict_secret, " Secrets ") == SECRET_SUMMARY
     config_map = k8s_client.V1ConfigMap(api_version="v1", kind="ConfigMap", metadata=k8s_client.V1ObjectMeta(name="c", namespace="staging", labels={"a": "b"}), data={"k": "v"})
     assert tool._resource_to_dict(config_map, "configmap")["data"] == {"k": "v"}
@@ -596,6 +599,254 @@ async def test_resource_label_and_annotation_writes_on_secret_return_keys_only(g
         assert result["success"] is True, result
         dumped = json.dumps(result, default=str)
         assert MARKER not in dumped and MARKER_B64 not in dumped, params["operation"]
+
+
+# ---------- SEC-33 P3 ----------
+
+
+def test_known_non_secret_whitelist_never_mentions_secret():
+    import unicodedata
+
+    for name in write_gate.NON_SECRET_READ_RESOURCE_TYPES:
+        assert "secret" not in unicodedata.normalize("NFKC", name).casefold(), name
+    for alias in SECRET_ALIASES:
+        assert write_gate.classify("k8s_resource_operations", resource_read("describe_resource", alias)).kind == "secret_read", alias
+
+
+async def test_remove_labels_on_secret_never_returns_remaining_label_values(gates, server_with_mocks):
+    """P3-9：只删一个 label，留下的那个值是标记串，返回里只能有键名"""
+    gates(write=True, repair=True, allowed=["staging"])
+    server, api, _ = server_with_mocks
+
+    def two_labels(*args, **kwargs):
+        secret = _v1_secret()
+        secret.metadata.labels = {"team": MARKER, "drop-me": "plain"}
+        return secret
+
+    api.read_namespaced_secret.side_effect = two_labels
+    api.patch_namespaced_secret.side_effect = lambda name, namespace, body: body
+    result = await server.execute_tool("k8s_resource_operations", {"operation": "remove_labels", "resource_type": "secret", "resource_name": "db", "namespace": "staging", "label_keys": ["drop-me"]})
+    assert result["success"] is True, result
+    assert result["remaining_labels"] == ["team"]
+    assert result["removed_labels"] == ["drop-me"]
+    dumped = json.dumps(result, default=str)
+    assert MARKER not in dumped and "plain" not in dumped
+
+
+def test_resource_to_dict_requires_resource_type_and_detects_kindless_secret_shape():
+    import inspect
+
+    from app.mcp.server.tools.k8s_resource_tool import K8sResourceTool
+
+    tool = K8sResourceTool.__new__(K8sResourceTool)
+    assert inspect.signature(K8sResourceTool._resource_to_dict).parameters["resource_type"].default is inspect.Parameter.empty
+    with pytest.raises(TypeError):
+        tool._resource_to_dict(_v1_secret())  # noqa
+    shaped = {"metadata": {"name": "db", "namespace": "staging", "labels": {"x": MARKER}}, "data": {"password": MARKER_B64}, "type": "Opaque"}
+    for resource in (shaped, Mock(to_dict=Mock(return_value=dict(shaped)), spec=["to_dict"]), Mock(to_dict=Mock(return_value={**shaped, "kind": None}), spec=["to_dict"])):
+        result = tool._resource_to_dict(resource, "configmap")  # 请求类型写错也不能漏
+        assert result == {"name": "db", "namespace": "staging", "type": "Opaque", "keys": ["password"]}
+    plain = Mock(to_dict=Mock(return_value={"metadata": {"name": "c"}, "data": {"k": "v"}}), spec=["to_dict"])
+    assert tool._resource_to_dict(plain, "configmap")["data"] == {"k": "v"}  # 只有 data、没有 type：不是 Secret 形状
+    typed_kind = Mock(to_dict=Mock(return_value={"kind": "ConfigMap", "metadata": {"name": "c"}, "data": {"k": "v"}, "type": "x"}), spec=["to_dict"])
+    assert tool._resource_to_dict(typed_kind, "configmap")["data"] == {"k": "v"}  # 有明确的非 Secret kind：按 kind
+
+
+RESOURCE_FAILURE_OPS = [
+    {"operation": "describe_resource"},
+    {"operation": "get_resource_yaml"},
+    {"operation": "add_labels", "labels": {"a": "b"}},
+    {"operation": "remove_labels", "label_keys": ["a"]},
+    {"operation": "add_annotations", "annotations": {"a": "b"}},
+    {"operation": "remove_annotations", "annotation_keys": ["a"]},
+]
+
+
+@pytest.mark.parametrize("params", RESOURCE_FAILURE_OPS, ids=lambda p: p["operation"])
+@pytest.mark.parametrize(("error", "status"), [("api403", 403), ("api500", 500), ("runtime", None)])
+async def test_resource_tool_failures_return_type_status_and_fixed_reason_only(params, error, status):
+    from kubernetes.client.rest import ApiException
+
+    from app.mcp.server.tools.k8s_resource_tool import K8sResourceTool
+    from app.mcp.server.tools.yaml_apply import API_STATUS_REASONS, UNCERTAIN_API_REASON
+
+    if error == "runtime":
+        failure = RuntimeError("boom-" + MARKER)
+    else:
+        failure = ApiException(status=status, reason="boom-" + MARKER)
+        failure.body = json.dumps({"data": {"password": MARKER_B64}, "message": MARKER})
+    api = Mock(name="v1")
+    api.read_namespaced_pod.side_effect = failure
+    tool = K8sResourceTool()
+    tool._initialize_clients = Mock(return_value=_Clients(api))
+    try:
+        result = await tool._execute_internal({"resource_type": "pod", "resource_name": "p", "namespace": "staging", **params})
+    finally:
+        await tool.cleanup()
+    assert result["success"] is False
+    assert result["message"] == result["error_type"] == type(failure).__name__
+    assert result["api_status"] == status
+    assert result["reason"] == API_STATUS_REASONS.get(status, UNCERTAIN_API_REASON)
+    dumped = json.dumps(result, default=str)
+    assert MARKER not in dumped and MARKER_B64 not in dumped and "boom" not in dumped
+
+
+def test_resource_tool_has_no_str_exception_echo_left():
+    source = (Path(__file__).resolve().parents[2] / "app" / "mcp" / "server" / "tools" / "k8s_resource_tool.py").read_text(encoding="utf-8")
+    assert '"message": str(e)' not in source
+
+
+@pytest.mark.parametrize("kind", ["namespace", "NAMESPACE", "clusterrole", "ClusterROLEBinding", "node", "customresourcedefinition", "storageclass"])
+async def test_apply_yaml_cluster_scoped_kind_is_case_insensitive(gates, server_with_mocks, kind):
+    gates(write=True, repair=True, allowed=["staging", "default"])
+    server, api, init = server_with_mocks
+    content = f"apiVersion: v1\nkind: {kind}\nmetadata:\n  name: a\n  namespace: staging\n"
+    with pytest.raises(FeatureDisabledError) as denied:
+        await server.execute_tool("k8s_resource_operations", {"operation": "apply_yaml", "yaml_content": content})
+    assert denied.value.error_code == write_gate.MCP_CLUSTER_SCOPED_DENIED
+    init.assert_not_called()
+    assert api.mock_calls == []
+
+
+async def test_apply_yaml_lowercase_cluster_kind_still_rejected_by_tool_discovery_when_gate_bypassed():
+    from app.mcp.server.tools.k8s_resource_tool import K8sResourceTool
+
+    tool = K8sResourceTool()
+    target = Mock(namespaced=False, verbs=["get", "patch"])
+    dynamic = Mock()
+    dynamic.resources.get.return_value = target
+    try:
+        result = await tool._apply_yaml({"dynamic": dynamic}, {"yaml_content": "apiVersion: v1\nkind: clusterrole\nmetadata:\n  name: a\n"})
+    finally:
+        await tool.cleanup()
+    assert result["success"] is False
+    target.server_side_apply.assert_not_called()
+
+
+@pytest.mark.parametrize("value", [None, ""])
+async def test_apply_yaml_null_or_empty_config_path_means_default(gates, server_with_mocks, value):
+    from app.mcp.server.tools.yaml_apply import _parse
+
+    gates(write=True, repair=True, allowed=["staging"])
+    params = {"operation": "apply_yaml", "namespace": "staging", "config_path": value, "yaml_content": YAML_TWO.format(second="staging").replace("name: b", "name: c")}
+    assert write_gate.classify("k8s_resource_operations", params).namespaces == ["staging"]
+    write_gate.enforce_write_gate("k8s_resource_operations", params)
+    assert [item["name"] for item in _parse(dict(params))[1]] == ["a", "c"]
+    server, api, init = server_with_mocks
+    await server.execute_tool("k8s_resource_operations", params)
+    assert init.call_args.kwargs == {"config_path": None}
+
+
+@pytest.mark.parametrize("value", [0, False, [], "/definitely/missing/kubeconfig"])
+def test_apply_yaml_other_config_path_values_still_rejected(gates, value):
+    from app.mcp.server.tools.yaml_apply import ApplyValidationError, _parse
+
+    with pytest.raises(ApplyValidationError):
+        _parse({"operation": "apply_yaml", "config_path": value, "yaml_content": YAML_TWO.format(second="staging")})
+    gates(write=True, repair=True, allowed=["staging"])
+    with pytest.raises(FeatureDisabledError):
+        write_gate.enforce_write_gate("k8s_resource_operations", {"operation": "apply_yaml", "config_path": value, "yaml_content": YAML_TWO.format(second="staging")})
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_resource_tool_empty_config_path_initializes_default_clients(monkeypatch, value):
+    from app.mcp.server.tools import k8s_resource_tool
+    from app.mcp.server.tools.k8s_base_tool import K8sBaseTool
+
+    base_init = Mock(return_value={"v1": Mock()})
+    monkeypatch.setattr(K8sBaseTool, "_initialize_clients", base_init)
+    tool = k8s_resource_tool.K8sResourceTool.__new__(k8s_resource_tool.K8sResourceTool)
+    tool._api_clients = None
+    tool._client_source = None
+    tool._client_source_lock = __import__("threading").Lock()
+    tool._initialize_clients(value)
+    base_init.assert_called_once_with(None)
+    assert tool._client_source == "default"
+
+
+ALL_NS_VALUES = [True, "true", 1, None, "false"]
+
+
+@pytest.mark.parametrize("all_namespaces", ALL_NS_VALUES)
+@pytest.mark.parametrize(("tool", "op"), [pair for pair in WRITE_PAIRS if pair[0] not in CLUSTER_TOOLS])
+async def test_write_with_all_namespaces_denied_even_if_default_whitelisted(gates, server_with_mocks, tool, op, all_namespaces):
+    """TL 变异 M9 的补测：白名单含 default（及目标命名空间）时，all_namespaces 也不能让写操作放行"""
+    gates(write=True, repair=True, allowed=["default", "staging"])
+    server, api, init = server_with_mocks
+    params = write_params(tool, op)
+    params.pop("namespace", None)
+    if op == "apply_yaml":
+        params["yaml_content"] = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\n"
+    with pytest.raises(FeatureDisabledError) as denied:
+        await server.execute_tool(tool, {**params, "all_namespaces": all_namespaces})
+    assert denied.value.error_code == write_gate.MCP_NAMESPACE_NOT_ALLOWED
+    init.assert_not_called()
+    assert api.mock_calls == []
+    write_gate.enforce_write_gate(tool, params)  # 对照：去掉 all_namespaces 后同样参数可以放行
+
+
+@pytest.mark.parametrize("all_namespaces", ALL_NS_VALUES)
+@pytest.mark.parametrize(("tool", "op"), SECRET_PAIRS)
+async def test_secret_read_with_all_namespaces_denied_even_if_default_whitelisted(gates, server_with_mocks, tool, op, all_namespaces):
+    gates(secret=True, allowed=["default"])
+    server, api, init = server_with_mocks
+    params = {"operation": op, "resource_name": "db", "resource_type": "secret"}
+    with pytest.raises(FeatureDisabledError) as denied:
+        await server.execute_tool(tool, {**params, "all_namespaces": all_namespaces})
+    assert denied.value.error_code == write_gate.MCP_NAMESPACE_NOT_ALLOWED
+    init.assert_not_called()
+    assert api.mock_calls == []
+    write_gate.enforce_write_gate(tool, params)  # 对照：不带 all_namespaces 时 default 放行
+
+
+def test_explicit_all_namespaces_false_keeps_single_namespace_semantics(gates):
+    gates(write=True, secret=True, repair=True, allowed=["default"])
+    write_gate.enforce_write_gate("k8s_pod_management", {"operation": "delete_pod", "all_namespaces": False})
+    write_gate.enforce_write_gate("k8s_config_management", {"operation": "get_secret", "all_namespaces": False})
+
+
+CONFIG_FAILURES = [
+    ("_create_configmap", "create_namespaced_config_map", {}),
+    ("_create_secret", "create_namespaced_secret", {"data": {"password": "p"}}),
+    ("_update_configmap", "read_namespaced_config_map", {"data": {"k": "v"}}),
+    ("_update_secret", "read_namespaced_secret", {"data": {"k": "v"}}),
+    ("_update_secret", "patch_namespaced_secret", {"data": {"k": "v"}}),
+    ("_delete_configmap", "delete_namespaced_config_map", {}),
+    ("_delete_secret", "delete_namespaced_secret", {}),
+    ("_get_configmap", "read_namespaced_config_map", {}),
+    ("_list_configmaps", "list_namespaced_config_map", {}),
+]
+
+
+@pytest.mark.parametrize(("method", "api_call", "extra"), CONFIG_FAILURES)
+@pytest.mark.parametrize("error", ["api", "runtime"])
+async def test_config_tool_failures_return_only_exception_type_name(method, api_call, extra, error):
+    from kubernetes.client.rest import ApiException
+
+    from app.mcp.server.tools.k8s_config_tool import K8sConfigTool
+
+    failure = ApiException(status=500, reason="boom-" + MARKER) if error == "api" else RuntimeError("boom-" + MARKER)
+    if error == "api":
+        failure.body = json.dumps({"data": {"password": MARKER_B64}, "message": MARKER})
+    v1 = Mock(name="v1")
+    getattr(v1, api_call).side_effect = failure
+    v1.read_namespaced_secret.side_effect = failure if api_call == "read_namespaced_secret" else (lambda **kwargs: _v1_secret())
+    v1.read_namespaced_config_map.side_effect = failure if api_call == "read_namespaced_config_map" else None
+    tool = K8sConfigTool()
+    try:
+        result = await getattr(tool, method)(v1, {"resource_name": "db", "namespace": "staging", **extra})
+    finally:
+        await tool.cleanup()
+    assert result["success"] is False
+    assert result["message"] == type(failure).__name__
+    assert result["api_status"] == (500 if error == "api" else None)
+    dumped = json.dumps(result, default=str)
+    assert MARKER not in dumped and MARKER_B64 not in dumped and "boom" not in dumped
+
+
+def test_config_tool_has_no_str_exception_echo_left():
+    source = (Path(__file__).resolve().parents[2] / "app" / "mcp" / "server" / "tools" / "k8s_config_tool.py").read_text(encoding="utf-8")
+    assert "str(e)" not in source
 
 
 # ---------- HTTP 契约与日志 ----------

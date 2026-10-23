@@ -9,3 +9,13 @@ from app.common.identity import INTERNAL_PRINCIPAL, principal_scope
 def internal_service_identity():
     with principal_scope(INTERNAL_PRINCIPAL):
         yield
+
+
+@pytest.fixture(autouse=True)
+def reset_mcp_file_root():
+    """MCP_FILE_ROOT 的 realpath 在进程内固定（SEC-33 P3），每个测试前后清除，避免测试间互相影响"""
+    from app.utils.file_boundary import reset_file_root_cache
+
+    reset_file_root_cache()
+    yield
+    reset_file_root_cache()

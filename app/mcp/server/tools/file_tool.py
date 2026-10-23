@@ -10,9 +10,11 @@ Description: 文件操作工具
 """
 
 import os
-from typing import Any, Dict
+from pathlib import Path
+import stat as stat_mode
+from typing import Any, Dict, Tuple
 
-from app.utils.file_boundary import display_path, resolve_tool_path
+from app.utils.file_boundary import display_path, file_root, resolve_tool_path
 
 from ..mcp_server import BaseTool
 
@@ -29,6 +31,18 @@ def _failure(prefix: str, raw: Any, resolved: Any, error: Exception) -> FileTool
         return FileToolError(f"{prefix}: 路径超出 MCP_FILE_ROOT（{shown}）")
     # OSError/UnicodeError 等的文本可能含绝对路径，只返回异常类型
     return FileToolError(f"{prefix}: {type(error).__name__}（{shown}）")
+
+
+def _entry_stat(item_path: str) -> Tuple[str, os.stat_result]:
+    """目录项的 (类型, stat)。SEC-33 P3：符号链接只有目标仍在 MCP_FILE_ROOT 内时才跟随；
+    指向 root 外（或悬空）的链接只做 lstat、类型记为 symlink，不泄露目标的 size / mtime"""
+    if os.path.islink(item_path):
+        target = os.path.realpath(item_path)
+        if not Path(target).is_relative_to(file_root()) or not os.path.exists(target):
+            return "symlink", os.lstat(item_path)
+        item_path = target
+    info = os.stat(item_path)
+    return ("directory" if stat_mode.S_ISDIR(info.st_mode) else "file"), info
 
 
 class FileReadTool(BaseTool):
@@ -144,15 +158,14 @@ class FileListTool(BaseTool):
                 if not show_hidden and item.startswith("."):
                     continue
 
-                item_path = os.path.join(directory_path, item)
-                is_dir = os.path.isdir(item_path)
-
+                item_type, info = _entry_stat(os.path.join(directory_path, item))
                 items.append(
                     {
                         "name": item,
-                        "type": "directory" if is_dir else "file",
-                        "size_bytes": os.path.getsize(item_path) if not is_dir else 0,
-                        "modified_time": os.path.getmtime(item_path),
+                        "type": item_type,
+                        # root 外的符号链接 size 记 0（lstat 的 size 是目标路径长度），mtime 为链接自身
+                        "size_bytes": info.st_size if item_type == "file" else 0,
+                        "modified_time": info.st_mtime,
                     }
                 )
 
@@ -214,11 +227,12 @@ class FileStatsTool(BaseTool):
                 for root, _, files in os.walk(path):
                     total_files += len(files)
                     for file in files:
-                        file_path = os.path.join(root, file)
                         try:
-                            total_size += os.path.getsize(file_path)
+                            item_type, info = _entry_stat(os.path.join(root, file))
                         except OSError:
-                            pass
+                            continue
+                        if item_type == "file":  # root 外的符号链接不计入，避免泄露目标大小
+                            total_size += info.st_size
 
                 result.update(
                     {"total_files": total_files, "total_size_bytes": total_size}

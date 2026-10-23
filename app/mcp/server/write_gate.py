@@ -143,6 +143,14 @@ CLUSTER_SCOPED_YAML_KINDS: FrozenSet[str] = frozenset(
 )
 
 
+# kind 比较不区分大小写（kind: namespace / NAMESPACE / clusterrole 都按集群级拒绝）；工具 discovery 阶段仍会二次拒绝
+_CLUSTER_SCOPED_YAML_KINDS_LOWER: FrozenSet[str] = frozenset(kind.lower() for kind in CLUSTER_SCOPED_YAML_KINDS)
+
+
+def _is_cluster_scoped_kind(kind: Any) -> bool:
+    return isinstance(kind, str) and kind.strip().lower() in _CLUSTER_SCOPED_YAML_KINDS_LOWER
+
+
 @dataclass(frozen=True)
 class GateDecision:
     """门禁分类结果：kind ∈ {read, secret_read, write, cluster}；namespaces 为 None 表示无法确定（fail-closed）"""
@@ -200,7 +208,7 @@ def classify(tool_name: str, parameters: Mapping[str, Any]) -> GateDecision:
             return GateDecision("read")
 
     if isinstance(operation, str) and operation in SECRET_READ_OPERATIONS.get(tool_name, frozenset()):
-        if parameters.get("all_namespaces", False) is not False:
+        if _requests_all_namespaces(parameters):
             return GateDecision("secret_read", None)
         return GateDecision("secret_read", _single_namespace(parameters))
 
@@ -216,11 +224,21 @@ def classify(tool_name: str, parameters: Mapping[str, Any]) -> GateDecision:
             identities = _apply_yaml_targets(parameters)
             if identities is None:
                 return GateDecision("write", None)
-            if any(item.get("kind") in CLUSTER_SCOPED_YAML_KINDS for item in identities):
+            if any(_is_cluster_scoped_kind(item.get("kind")) for item in identities):
                 return GateDecision("cluster")
+            if _requests_all_namespaces(parameters):
+                return GateDecision("write", None)
             return GateDecision("write", sorted({item["namespace"] for item in identities}))
 
+    if _requests_all_namespaces(parameters):
+        # 写操作带 all_namespaces（任何非 False 值）无法确定作用范围：即使白名单含 default 也拒绝
+        return GateDecision("write", None)
     return GateDecision("write", _single_namespace(parameters))
+
+
+def _requests_all_namespaces(parameters: Mapping[str, Any]) -> bool:
+    """all_namespaces 缺省或显式 False 以外的任何取值（含 "false"、0、None）都按跨命名空间处理（fail-closed）"""
+    return parameters.get("all_namespaces", False) is not False
 
 
 def _normalize_resource_type(value: Any) -> Optional[str]:

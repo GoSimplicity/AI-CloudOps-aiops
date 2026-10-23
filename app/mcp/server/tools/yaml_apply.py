@@ -20,6 +20,18 @@ _NAME = re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
 _NAMESPACE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 
+# 失败时只按 HTTP status 给固定原因文本；远端 reason/body、str(error) 一律不回传
+API_STATUS_REASONS = {400: "请求格式错误", 403: "Kubernetes RBAC或准入拒绝", 404: "资源或命名空间不存在", 409: "字段所有权冲突，未强制覆盖", 422: "资源结构无效"}
+UNCERTAIN_API_REASON = "Kubernetes请求未得到确定成功响应"
+
+
+def safe_error_fields(error: Exception) -> dict:
+    """失败返回的安全字段：异常类型名 + ApiException 的 status 与固定原因文本（与 apply_yaml 的 errors 项一致）"""
+    status = getattr(error, "status", None)
+    status = status if isinstance(status, int) else None
+    return {"message": type(error).__name__, "error_type": type(error).__name__, "api_status": status, "reason": API_STATUS_REASONS.get(status, UNCERTAIN_API_REASON)}
+
+
 class BoundedDynamicClient(DynamicClient):
     """发现API与实际请求均有网络期限，PATCH不做隐式重试"""
 
@@ -47,7 +59,8 @@ def _parse(parameters):
     if set(parameters) - {"operation", "config_path", "namespace", "yaml_content"}:
         raise ApplyValidationError("apply_yaml包含不支持的参数，不接受强制覆盖字段所有权")
     config_path = parameters.get("config_path")
-    if "config_path" in parameters and (not isinstance(config_path, str) or not os.path.isfile(config_path)):
+    # 与门禁 has_custom_config_path 一致：缺省、None、空串都按默认 kubeconfig 处理
+    if config_path not in (None, "") and (not isinstance(config_path, str) or not os.path.isfile(config_path)):
         raise ApplyValidationError("显式kubeconfig必须是存在的文件，拒绝回退到其他集群")
     content = parameters.get("yaml_content")
     if not isinstance(content, str) or not content.strip() or len(content.encode("utf-8")) > MAX_YAML_BYTES:
@@ -122,7 +135,7 @@ async def apply_yaml(tool, clients: dict[str, Any] | None, parameters: dict[str,
     try:
         result["phase"] = "discovery"
         if clients is None:
-            clients = await run(tool._initialize_clients, config_path=parameters.get("config_path"))
+            clients = await run(tool._initialize_clients, config_path=parameters.get("config_path") or None)
         dynamic = clients.get("dynamic")
         if dynamic is None:
             raise ApplyValidationError("动态API客户端不可用")
@@ -163,7 +176,7 @@ async def apply_yaml(tool, clients: dict[str, Any] | None, parameters: dict[str,
         status = status if isinstance(status, int) else None
         # 远端异常body或str(error)可能含Secret文档，不回传、不写日志
         identity = identities[index]
-        reason = {400: "请求格式错误", 403: "Kubernetes RBAC或准入拒绝", 404: "资源或命名空间不存在", 409: "字段所有权冲突，未强制覆盖", 422: "资源结构无效"}.get(status, "Kubernetes请求未得到确定成功响应")
+        reason = API_STATUS_REASONS.get(status, UNCERTAIN_API_REASON)
         if isinstance(error, ApplyValidationError):
             reason = str(error)
         elif type(error).__name__ in {"ResourceNotFoundError", "ResourceNotUniqueError"}:

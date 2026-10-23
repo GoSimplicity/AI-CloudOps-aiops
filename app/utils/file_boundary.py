@@ -3,6 +3,7 @@
 import logging
 import os
 from pathlib import Path
+import threading
 from typing import Any, List, Optional
 
 DEFAULT_FILE_ROOT = "data/knowledge_base"
@@ -11,8 +12,41 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 logger = logging.getLogger("aiops.mcp.file_boundary")
 
 
+# SEC-33 P3：MCP_FILE_ROOT 的 realpath 在启动时（ensure_file_root_safe）解析一次并固定，
+# 之后每次调用直接复用，避免 root 本身（或其路径上的符号链接）在检查后被替换（TOCTOU）
+_pinned_root: Optional[Path] = None
+_pin_lock = threading.Lock()
+
+
+def _resolve_file_root() -> Path:
+    return Path(os.path.realpath(os.getenv("MCP_FILE_ROOT", DEFAULT_FILE_ROOT)))
+
+
+def pin_file_root() -> Path:
+    """重新解析 MCP_FILE_ROOT 并固定（启动检查时调用）"""
+    global _pinned_root
+    with _pin_lock:
+        _pinned_root = _resolve_file_root()
+        return _pinned_root
+
+
 def file_root() -> Path:
-    return Path(os.getenv("MCP_FILE_ROOT", DEFAULT_FILE_ROOT)).resolve()
+    """返回已固定的 root；未经启动检查直接使用工具时，首次调用解析并固定"""
+    global _pinned_root
+    root = _pinned_root
+    if root is None:
+        with _pin_lock:
+            if _pinned_root is None:
+                _pinned_root = _resolve_file_root()
+            root = _pinned_root
+    return root
+
+
+def reset_file_root_cache() -> None:
+    """仅供测试：清除已固定的 root，下次 file_root() 重新读取 MCP_FILE_ROOT"""
+    global _pinned_root
+    with _pin_lock:
+        _pinned_root = None
 
 
 def resolve_tool_path(value: str) -> str:
@@ -41,10 +75,17 @@ _HOME_SENSITIVE = ("~/.kube", "~/.ssh", "~/.aws", "~/.azure", "~/.config", "~/.d
 _PROJECT_SENSITIVE = ("config", ".env")
 
 
+def _kubeconfig_locations() -> List[tuple]:
+    """$KUBECONFIG 可能是 os.pathsep 分隔的多个文件，每个都算敏感位置；标签只写序号，不回显路径"""
+    entries = [entry for entry in os.environ.get("KUBECONFIG", "").split(os.pathsep) if entry.strip()]
+    return [(f"$KUBECONFIG[{index}]", Path(os.path.realpath(os.path.expanduser(entry)))) for index, entry in enumerate(entries)]
+
+
 def _sensitive_locations() -> List[tuple]:
     items = [(label, Path(os.path.realpath(label))) for label in _SYSTEM_SENSITIVE]
     items += [(label, Path(os.path.realpath(os.path.expanduser(label)))) for label in _HOME_SENSITIVE]
     items += [(f"<项目>/{name}", Path(os.path.realpath(_PROJECT_ROOT / name))) for name in _PROJECT_SENSITIVE]
+    items += _kubeconfig_locations()
     return items
 
 
@@ -68,7 +109,7 @@ def ensure_file_root_safe(env: Any) -> None:
     """生产环境（envmode.is_production）拒绝启动；非生产只告警"""
     from app.config.envmode import is_production
 
-    hits = file_root_violations()
+    hits = file_root_violations(pin_file_root())
     if not hits:
         return
     message = "MCP_FILE_ROOT 不能是 / 或包含/位于系统、凭据、配置目录（命中：" + ", ".join(hits) + f"）；请改为专用数据目录（默认 {DEFAULT_FILE_ROOT}）"

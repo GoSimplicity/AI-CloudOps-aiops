@@ -21,7 +21,7 @@ from kubernetes.client.rest import ApiException
 import yaml
 
 from .k8s_base_tool import K8sBaseTool
-from .yaml_apply import ApplyValidationError, BoundedDynamicClient, apply_yaml
+from .yaml_apply import ApplyValidationError, BoundedDynamicClient, apply_yaml, safe_error_fields
 
 # SEC-33 P1-1：Secret 只返回 name、namespace、type、keys；data、stringData、annotations（含明文
 # last-applied-configuration）与 labels 一律不返回。门禁之外的第二层防护，绕过门禁直接调工具也生效。
@@ -48,8 +48,12 @@ def _is_secret(resource: Any, resource_type: Any = None) -> bool:
     """对象是 V1Secret、kind 为 Secret，或请求的 resource_type 归一化后是 secret/secrets"""
     if isinstance(resource, client.V1Secret):
         return True
-    kind = _field(_as_fields(resource), "kind")
+    fields = _as_fields(resource)
+    kind = _field(fields, "kind")
     if isinstance(kind, str) and kind.strip().lower() == "secret":
+        return True
+    # SEC-33 P3：没有 kind、但同时带 data 与 type 的 dict（Secret 形状）也按 Secret 处理
+    if isinstance(fields, dict) and kind is None and "data" in fields and "type" in fields:
         return True
     return isinstance(resource_type, str) and resource_type.strip().lower() in _SECRET_RESOURCE_TYPES
 
@@ -158,6 +162,8 @@ class K8sResourceTool(K8sBaseTool):
         }
 
     def _initialize_clients(self, config_path=None):
+        if config_path == "":  # 空串与 None 一样表示默认 kubeconfig
+            config_path = None
         if config_path is not None and (not isinstance(config_path, str) or not os.path.isfile(config_path)):
             raise ApplyValidationError("显式kubeconfig必须是存在的文件，拒绝回退到其他集群")
         source = os.path.realpath(config_path) if config_path is not None else "default"
@@ -301,7 +307,7 @@ class K8sResourceTool(K8sBaseTool):
             }
 
         except Exception as e:
-            return {"success": False, "error": "描述资源失败", "message": str(e)}
+            return {"success": False, "error": "描述资源失败", **safe_error_fields(e)}
 
     async def _add_labels(
         self, clients: Dict[str, Any], parameters: Dict[str, Any]
@@ -360,7 +366,7 @@ class K8sResourceTool(K8sBaseTool):
             }
 
         except Exception as e:
-            return {"success": False, "error": "添加标签失败", "message": str(e)}
+            return {"success": False, "error": "添加标签失败", **safe_error_fields(e)}
 
     async def _remove_labels(
         self, clients: Dict[str, Any], parameters: Dict[str, Any]
@@ -422,7 +428,7 @@ class K8sResourceTool(K8sBaseTool):
             }
 
         except Exception as e:
-            return {"success": False, "error": "删除标签失败", "message": str(e)}
+            return {"success": False, "error": "删除标签失败", **safe_error_fields(e)}
 
     async def _add_annotations(
         self, clients: Dict[str, Any], parameters: Dict[str, Any]
@@ -479,7 +485,7 @@ class K8sResourceTool(K8sBaseTool):
             }
 
         except Exception as e:
-            return {"success": False, "error": "添加注解失败", "message": str(e)}
+            return {"success": False, "error": "添加注解失败", **safe_error_fields(e)}
 
     async def _remove_annotations(
         self, clients: Dict[str, Any], parameters: Dict[str, Any]
@@ -538,7 +544,7 @@ class K8sResourceTool(K8sBaseTool):
             }
 
         except Exception as e:
-            return {"success": False, "error": "删除注解失败", "message": str(e)}
+            return {"success": False, "error": "删除注解失败", **safe_error_fields(e)}
 
     async def _apply_yaml(
         self, clients: Dict[str, Any] | None, parameters: Dict[str, Any]
@@ -593,7 +599,7 @@ class K8sResourceTool(K8sBaseTool):
             }
 
         except Exception as e:
-            return {"success": False, "error": "获取资源YAML失败", "message": str(e)}
+            return {"success": False, "error": "获取资源YAML失败", **safe_error_fields(e)}
 
     async def _get_resource_by_type(
         self,
@@ -738,8 +744,9 @@ class K8sResourceTool(K8sBaseTool):
         else:
             return str(obj)
 
-    def _resource_to_dict(self, resource, resource_type: Any = None) -> Dict[str, Any]:
-        """将资源对象转换为字典；Secret 只保留 name、namespace、type、keys（SEC-33 P1-1）"""
+    def _resource_to_dict(self, resource, resource_type: Any) -> Dict[str, Any]:
+        """将资源对象转换为字典；Secret 只保留 name、namespace、type、keys（SEC-33 P1-1）。
+        resource_type 必填（SEC-33 P3），调用方必须传入请求的类型，避免遗漏按类型识别 Secret"""
         if _is_secret(resource, resource_type):
             return _secret_summary(resource)
         if hasattr(resource, "to_dict"):
