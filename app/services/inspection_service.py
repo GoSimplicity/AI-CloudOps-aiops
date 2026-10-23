@@ -52,7 +52,7 @@ class InspectionService(BaseService):
     async def _do_initialize(self) -> None:
         # 依赖初始化（尽量轻量）
         try:
-            self._k8s = KubernetesService()
+            self._k8s = await asyncio.to_thread(KubernetesService)
         except Exception as e:
             logger.warning(f"Kubernetes服务初始化失败: {e}")
             self._k8s = None
@@ -66,7 +66,7 @@ class InspectionService(BaseService):
 
     async def _do_health_check(self) -> bool:
         # 按最小要求：任一数据源可用即认为可执行巡检
-        k = bool(self._k8s and self._k8s.is_healthy())
+        k = bool(self._k8s and await self._k8s.health_check())
         p = bool(self._prom and self._prom.is_initialized())
         return k or p
 

@@ -11,7 +11,6 @@ Description: Kubernetes集群管理服务
 
 import asyncio
 from datetime import datetime, timezone
-import json
 import logging
 import os
 import time
@@ -47,23 +46,23 @@ class KubernetesService:
             # 测试连接
             try:
                 api = client.VersionApi()
-                version = api.get_code()
+                version = api.get_code(_request_timeout=(3, 10))
                 logger.info(f"Kubernetes连接成功: {version.git_version}")
 
                 # 尝试列出命名空间，再次确认连接
-                self.core_v1.list_namespace(limit=1)
+                self.core_v1.list_namespace(limit=1, _request_timeout=(3, 10))
                 logger.info("成功获取命名空间列表，确认连接正常")
 
                 self.initialized = True
                 logger.info("Kubernetes服务初始化完成")
             except Exception as e:
                 self.initialized = False
-                logger.error(f"Kubernetes连接测试失败: {str(e)}")
+                logger.error(f"Kubernetes连接测试失败: {type(e).__name__}")
                 raise
 
         except Exception as e:
             self.initialized = False
-            logger.error(f"Kubernetes初始化失败: {str(e)}")
+            logger.error(f"Kubernetes初始化失败: {type(e).__name__}")
 
     def _load_config(self):
         try:
@@ -84,7 +83,7 @@ class KubernetesService:
                     logger.info("使用默认K8s配置")
 
         except Exception as e:
-            logger.error(f"无法加载K8s配置: {str(e)}")
+            logger.error(f"无法加载K8s配置: {type(e).__name__}")
             raise
 
     def _resolve_kube_config_path(self, configured_path: Optional[str]) -> Optional[str]:
@@ -97,6 +96,12 @@ class KubernetesService:
 
         configured_path = (configured_path or "").strip()
         configured_is_default = self._is_default_project_kube_config(configured_path)
+
+        if configured_path and not configured_is_default:
+            explicit = os.path.expanduser(configured_path)
+            if not os.path.isfile(explicit):
+                raise FileNotFoundError("显式Kubernetes配置文件不存在，拒绝切换其他集群")
+            return explicit
 
         candidate_paths: List[Optional[str]] = []
         kubeconfig_env = os.getenv("KUBECONFIG")
@@ -143,6 +148,11 @@ class KubernetesService:
 
         return None
 
+    async def _sdk_call(self, operation, *args, **kwargs):
+        """同步SDK网络I/O移出事件循环，连接与读取均设置期限"""
+        kwargs.setdefault("_request_timeout", (3, 10))
+        return await asyncio.to_thread(operation, *args, **kwargs)
+
     def _is_default_project_kube_config(self, path: str) -> bool:
         if not path:
             return False
@@ -164,14 +174,14 @@ class KubernetesService:
         if not self.initialized:
             logger.warning("Kubernetes未初始化，无法执行操作")
 
-        return True  # 始终返回True，让调用者继续执行
+        return self.initialized
 
     async def list_nodes(self) -> List[Dict[str, Any]]:
         """列出集群节点"""
-        if not self._ensure_initialized():
-            return 
+        if not await asyncio.to_thread(self._ensure_initialized):
+            return
         try:
-            nodes = self.core_v1.list_node()
+            nodes = await self._sdk_call(self.core_v1.list_node)
             results: List[Dict[str, Any]] = []
             for node in nodes.items:
                 d = node.to_dict()
@@ -181,16 +191,16 @@ class KubernetesService:
                 results.append(d)
             return results
         except Exception as e:
-            logger.error(f"获取节点失败: {e}")
+            logger.error(f"获取节点失败: {type(e).__name__}")
             return []
 
     async def list_services(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
         """列出命名空间Service"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             return []
         try:
             ns = namespace or config.k8s.namespace
-            svcs = self.core_v1.list_namespaced_service(namespace=ns)
+            svcs = await self._sdk_call(self.core_v1.list_namespaced_service, namespace=ns)
             results: List[Dict[str, Any]] = []
             for svc in svcs.items:
                 d = svc.to_dict()
@@ -200,16 +210,16 @@ class KubernetesService:
                 results.append(d)
             return results
         except Exception as e:
-            logger.error(f"获取Service失败: {e}")
+            logger.error(f"获取Service失败: {type(e).__name__}")
             return []
 
     async def list_endpoints(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
         """列出命名空间Endpoints"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             return []
         try:
             ns = namespace or config.k8s.namespace
-            eps = self.core_v1.list_namespaced_endpoints(namespace=ns)
+            eps = await self._sdk_call(self.core_v1.list_namespaced_endpoints, namespace=ns)
             results: List[Dict[str, Any]] = []
             for ep in eps.items:
                 d = ep.to_dict()
@@ -219,16 +229,16 @@ class KubernetesService:
                 results.append(d)
             return results
         except Exception as e:
-            logger.error(f"获取Endpoints失败: {e}")
+            logger.error(f"获取Endpoints失败: {type(e).__name__}")
             return []
 
     async def list_pvcs(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
         """列出命名空间PVC"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             return []
         try:
             ns = namespace or config.k8s.namespace
-            pvcs = self.core_v1.list_namespaced_persistent_volume_claim(namespace=ns)
+            pvcs = await self._sdk_call(self.core_v1.list_namespaced_persistent_volume_claim, namespace=ns)
             results: List[Dict[str, Any]] = []
             for pvc in pvcs.items:
                 d = pvc.to_dict()
@@ -238,17 +248,18 @@ class KubernetesService:
                 results.append(d)
             return results
         except Exception as e:
-            logger.error(f"获取PVC失败: {e}")
+            logger.error(f"获取PVC失败: {type(e).__name__}")
             return []
 
     async def get_deployment(self, name: str, namespace: str = None) -> Optional[Dict]:
         """获取Deployment信息"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法获取Deployment信息")
 
         try:
             namespace = namespace or config.k8s.namespace
-            deployment = self.apps_v1.read_namespaced_deployment(
+            deployment = await self._sdk_call(
+                self.apps_v1.read_namespaced_deployment,
                 name=name, namespace=namespace
             )
 
@@ -263,16 +274,16 @@ class KubernetesService:
             return deployment_dict
 
         except ApiException as e:
-            logger.error(f"获取Deployment失败: {str(e)}")
+            logger.error(f"获取Deployment失败: {type(e).__name__}")
             return None
 
     async def ensure_namespace(self, namespace: str) -> bool:
         """确保命名空间存在，不存在则创建"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法确保命名空间")
 
         try:
-            self.core_v1.read_namespace(name=namespace)
+            await self._sdk_call(self.core_v1.read_namespace, name=namespace)
             logger.info(f"命名空间已存在: {namespace}")
             return True
         except ApiException as e:
@@ -281,22 +292,22 @@ class KubernetesService:
                     body = client.V1Namespace(
                         metadata=client.V1ObjectMeta(name=namespace)
                     )
-                    self.core_v1.create_namespace(body=body)
+                    await self._sdk_call(self.core_v1.create_namespace, body=body)
                     logger.info(f"已创建命名空间: {namespace}")
                     return True
                 except Exception as ce:
-                    logger.error(f"创建命名空间失败: {str(ce)}")
+                    logger.error(f"创建命名空间失败: {type(ce).__name__}")
                     return False
-            logger.error(f"检查命名空间失败: {str(e)}")
+            logger.error(f"检查命名空间失败: {type(e).__name__}")
             return False
         except Exception as e:
-            logger.error(f"确保命名空间异常: {str(e)}")
+            logger.error(f"确保命名空间异常: {type(e).__name__}")
             return False
 
     async def apply_yaml_file(
         self, yaml_path: str, namespace: Optional[str] = None
     ) -> Dict[str, Any]:
-        """应用YAML清单，创建或更新资源。
+        """为引导演示创建缺失资源，已存在资源保持不变。
 
         Args:
             yaml_path: YAML文件路径
@@ -305,13 +316,14 @@ class KubernetesService:
         Returns:
             执行结果字典
         """
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法应用YAML")
 
         try:
-            # 使用kubernetes.utils提供的便捷方法加载并创建/更新资源
+            # 引导仅创建缺失资源，不修改已有对象
             k8s_client = self.apps_v1.api_client if self.apps_v1 else client.ApiClient()
-            k8s_utils.create_from_yaml(
+            await self._sdk_call(
+                k8s_utils.create_from_yaml,
                 k8s_client,
                 yaml_path,
                 namespace=namespace,
@@ -321,30 +333,30 @@ class KubernetesService:
                 f"已应用YAML: {yaml_path} (namespace={namespace or 'as-defined'})"
             )
             return {"success": True, "path": yaml_path}
-        except Exception as e:
-            msg = str(e)
-            if "AlreadyExists" in msg or "already exists" in msg:
-                logger.info(f"YAML资源已存在，视为成功: {yaml_path}")
-                return {"success": True, "path": yaml_path, "note": "already exists"}
-            logger.error(f"应用YAML失败 {yaml_path}: {msg}")
-            return {"success": False, "path": yaml_path, "error": msg}
-        except Exception as e:
-            logger.error(f"获取Deployment异常: {str(e)}")
-            return None
+        except k8s_utils.FailToCreateError as error:
+            failures = error.api_exceptions
+            if failures and all(isinstance(item, ApiException) and item.status == 409 for item in failures):
+                return {"success": True, "path": yaml_path, "note": "already exists; existing resources unchanged"}
+            logger.error("引导资源创建未全部成功，异常类型: %s", type(error).__name__)
+            return {"success": False, "path": yaml_path, "error": type(error).__name__, "partial_change_possible": True}
+        except Exception as error:
+            logger.error("引导资源创建结果未确认，异常类型: %s", type(error).__name__)
+            return {"success": False, "path": yaml_path, "error": type(error).__name__, "partial_change_possible": True}
 
     async def patch_deployment(
         self, name: str, patch: Dict[str, Any], namespace: str = None
     ) -> bool:
         """更新Deployment"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法更新Deployment")
 
         try:
             namespace = namespace or config.k8s.namespace
 
-            logger.info(f"更新Deployment: {name}, patch: {json.dumps(patch, indent=2)}")
+            logger.info("更新Deployment: %s，字段=%s", name, sorted(patch))
 
-            self.apps_v1.patch_namespaced_deployment(
+            await self._sdk_call(
+                self.apps_v1.patch_namespaced_deployment,
                 name=name, namespace=namespace, body=patch
             )
 
@@ -352,22 +364,23 @@ class KubernetesService:
             return True
 
         except ApiException as e:
-            logger.error(f"更新Deployment失败: {str(e)}")
+            logger.error(f"更新Deployment失败: {type(e).__name__}")
             return False
         except Exception as e:
-            logger.error(f"更新Deployment异常: {str(e)}")
+            logger.error(f"更新Deployment异常: {type(e).__name__}")
             return False
 
     async def get_pods(
         self, namespace: str = None, label_selector: str = None
     ) -> List[Dict]:
         """获取Pod列表"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法获取Pod列表")
 
         try:
             namespace = namespace or config.k8s.namespace
-            pods = self.core_v1.list_namespaced_pod(
+            pods = await self._sdk_call(
+                self.core_v1.list_namespaced_pod,
                 namespace=namespace, label_selector=label_selector
             )
 
@@ -385,22 +398,23 @@ class KubernetesService:
             return pod_list
 
         except ApiException as e:
-            logger.error(f"获取Pod列表失败: {str(e)}")
+            logger.error(f"获取Pod列表失败: {type(e).__name__}")
             return []
         except Exception as e:
-            logger.error(f"获取Pod列表异常: {str(e)}")
+            logger.error(f"获取Pod列表异常: {type(e).__name__}")
             return []
 
     async def get_events(
         self, namespace: str = None, field_selector: str = None, limit: int = 100
     ) -> List[Dict]:
         """获取事件列表"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法获取事件列表")
 
         try:
             namespace = namespace or config.k8s.namespace
-            events = self.core_v1.list_namespaced_event(
+            events = await self._sdk_call(
+                self.core_v1.list_namespaced_event,
                 namespace=namespace, field_selector=field_selector, limit=limit
             )
 
@@ -418,15 +432,15 @@ class KubernetesService:
             return event_list
 
         except ApiException as e:
-            logger.error(f"获取事件列表失败: {str(e)}")
+            logger.error(f"获取事件列表失败: {type(e).__name__}")
             return []
         except Exception as e:
-            logger.error(f"获取事件列表异常: {str(e)}")
+            logger.error(f"获取事件列表异常: {type(e).__name__}")
             return []
 
     async def restart_deployment(self, name: str, namespace: str = None) -> bool:
         """重启Deployment"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法重启Deployment")
 
         try:
@@ -454,7 +468,7 @@ class KubernetesService:
             return result
 
         except Exception as e:
-            logger.error(f"重启Deployment失败: {str(e)}")
+            logger.error(f"重启Deployment失败: {type(e).__name__}")
             return False
 
     async def wait_for_deployment_rollout(
@@ -474,15 +488,16 @@ class KubernetesService:
         - elapsed_seconds: 实际等待时间
         - error: 若失败/异常，包含错误信息
         """
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法等待Deployment滚动升级")
 
-        start_ts = time.time()
+        start_ts = time.monotonic()
         namespace = namespace or config.k8s.namespace
 
         try:
             while True:
-                dep = self.apps_v1.read_namespaced_deployment(
+                dep = await self._sdk_call(
+                    self.apps_v1.read_namespaced_deployment,
                     name=name, namespace=namespace
                 )
                 dep_dict = dep.to_dict()
@@ -492,6 +507,7 @@ class KubernetesService:
                 metadata = dep_dict.get("metadata", {})
 
                 replicas = int(spec.get("replicas", 0) or 0)
+                total_replicas = int(status.get("replicas", 0) or 0)
                 updated_replicas = int(status.get("updated_replicas", 0) or 0)
                 ready_replicas = int(status.get("ready_replicas", 0) or 0)
                 available_replicas = int(status.get("available_replicas", 0) or 0)
@@ -501,19 +517,21 @@ class KubernetesService:
 
                 # 判定就绪条件：
                 # 1) controller已观察到最新generation
-                # 2) updated/available/ready副本均达到期望replicas
+                # 2) 新副本全部就绪且旧副本退出，不能用旧Pod的ready掩盖新Pod失败
                 observed_latest = observed_generation >= generation and generation > 0
-                replicas_ok = replicas == 0 or (
-                    updated_replicas >= replicas
+                replicas_ok = (
+                    updated_replicas == replicas
+                    and total_replicas == updated_replicas
                     and available_replicas >= replicas
-                    and ready_replicas >= max(1, min(replicas, available_replicas))
+                    and ready_replicas >= replicas
                 )
 
                 if observed_latest and replicas_ok:
-                    elapsed = time.time() - start_ts
+                    elapsed = time.monotonic() - start_ts
                     return {
                         "ready": True,
                         "replicas": replicas,
+                        "total_replicas": total_replicas,
                         "updated_replicas": updated_replicas,
                         "ready_replicas": ready_replicas,
                         "available_replicas": available_replicas,
@@ -523,11 +541,12 @@ class KubernetesService:
                         "elapsed_seconds": round(elapsed, 3),
                     }
 
-                if time.time() - start_ts >= timeout_seconds:
-                    elapsed = time.time() - start_ts
+                if time.monotonic() - start_ts >= timeout_seconds:
+                    elapsed = time.monotonic() - start_ts
                     return {
                         "ready": False,
                         "replicas": replicas,
+                        "total_replicas": total_replicas,
                         "updated_replicas": updated_replicas,
                         "ready_replicas": ready_replicas,
                         "available_replicas": available_replicas,
@@ -541,27 +560,27 @@ class KubernetesService:
                 await asyncio.sleep(poll_interval_seconds)
 
         except ApiException as e:
-            logger.error(f"等待Deployment滚动升级失败: {str(e)}")
+            logger.error(f"等待Deployment滚动升级失败: {type(e).__name__}")
             return {
                 "ready": False,
-                "error": str(e),
-                "elapsed_seconds": round(time.time() - start_ts, 3),
+                "error": type(e).__name__,
+                "elapsed_seconds": round(time.monotonic() - start_ts, 3),
             }
         except Exception as e:
-            logger.error(f"等待Deployment滚动升级异常: {str(e)}")
+            logger.error(f"等待Deployment滚动升级异常: {type(e).__name__}")
             return {
                 "ready": False,
-                "error": str(e),
-                "elapsed_seconds": round(time.time() - start_ts, 3),
+                "error": type(e).__name__,
+                "elapsed_seconds": round(time.monotonic() - start_ts, 3),
             }
 
     async def list_resource_quotas(self, namespace: str) -> List[Dict[str, Any]]:
         """列出命名空间的ResourceQuota"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法获取ResourceQuota")
 
         try:
-            rq_list = self.core_v1.list_namespaced_resource_quota(namespace=namespace)
+            rq_list = await self._sdk_call(self.core_v1.list_namespaced_resource_quota, namespace=namespace)
             results: List[Dict[str, Any]] = []
             for item in rq_list.items:
                 d = item.to_dict()
@@ -574,17 +593,17 @@ class KubernetesService:
             logger.info(f"获取到 {len(results)} 个ResourceQuota (ns={namespace})")
             return results
         except ApiException as e:
-            logger.error(f"获取ResourceQuota失败: {str(e)}")
+            logger.error(f"获取ResourceQuota失败: {type(e).__name__}")
             return []
         except Exception as e:
-            logger.error(f"获取ResourceQuota异常: {str(e)}")
+            logger.error(f"获取ResourceQuota异常: {type(e).__name__}")
             return []
 
     async def scale_deployment(
         self, name: str, replicas: int, namespace: str = None
     ) -> bool:
         """扩缩容Deployment"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法扩缩容Deployment")
 
         try:
@@ -599,12 +618,12 @@ class KubernetesService:
             return result
 
         except Exception as e:
-            logger.error(f"扩缩容Deployment失败: {str(e)}")
+            logger.error(f"扩缩容Deployment失败: {type(e).__name__}")
             return False
 
     async def can_i(self, verb: str, resource: str, namespace: str = None) -> bool:
         """检查当前Kubernetes身份是否具备指定资源操作权限。"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法检查RBAC权限")
 
         namespace = namespace or config.k8s.namespace
@@ -622,13 +641,13 @@ class KubernetesService:
                     )
                 )
             )
-            result = auth_v1.create_self_subject_access_review(body=review)
+            result = await self._sdk_call(auth_v1.create_self_subject_access_review, body=review)
             return bool(result.status and result.status.allowed)
         except ApiException as e:
-            logger.error(f"RBAC权限检查失败: {str(e)}")
+            logger.error(f"RBAC权限检查失败: {type(e).__name__}")
             return False
         except Exception as e:
-            logger.error(f"RBAC权限检查异常: {str(e)}")
+            logger.error(f"RBAC权限检查异常: {type(e).__name__}")
             return False
 
     def is_healthy(self) -> bool:
@@ -640,26 +659,26 @@ class KubernetesService:
         try:
             # 尝试获取API版本
             api = client.VersionApi()
-            api.get_code()
+            api.get_code(_request_timeout=(3, 10))
 
             # 尝试列出命名空间
-            self.core_v1.list_namespace(limit=1)
+            self.core_v1.list_namespace(limit=1, _request_timeout=(3, 10))
 
             return True
         except Exception as e:
-            logger.error(f"Kubernetes健康检查失败: {str(e)}")
+            logger.error(f"Kubernetes健康检查失败: {type(e).__name__}")
             self.initialized = False
             return False
 
     async def health_check(self) -> bool:
         """异步健康检查方法 - 为RCA模块提供兼容接口"""
-        return self.is_healthy()
+        return await asyncio.to_thread(self.is_healthy)
 
     async def get_deployment_status(
         self, name: str, namespace: str = None
     ) -> Optional[Dict[str, Any]]:
         """获取Deployment状态详情"""
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法获取Deployment状态")
 
         try:
@@ -685,7 +704,7 @@ class KubernetesService:
             }
 
         except Exception as e:
-            logger.error(f"获取Deployment状态失败: {str(e)}")
+            logger.error(f"获取Deployment状态失败: {type(e).__name__}")
             return None
 
     async def get_pod(self, namespace: str, pod_name: str) -> Optional[Dict]:
@@ -699,11 +718,11 @@ class KubernetesService:
         Returns:
             Optional[Dict]: Pod信息字典，如果不存在则返回None
         """
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法获取Pod信息")
 
         try:
-            pod = self.core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+            pod = await self._sdk_call(self.core_v1.read_namespaced_pod, name=pod_name, namespace=namespace)
 
             pod_dict = pod.to_dict()
             # 清理不必要的字段
@@ -719,10 +738,10 @@ class KubernetesService:
             if e.status == 404:
                 logger.warning(f"Pod {pod_name} 不存在于命名空间 {namespace}")
             else:
-                logger.error(f"获取Pod {pod_name} 失败: {str(e)}")
+                logger.error(f"获取Pod {pod_name} 失败: {type(e).__name__}")
             return None
         except Exception as e:
-            logger.error(f"获取Pod {pod_name} 异常: {str(e)}")
+            logger.error(f"获取Pod {pod_name} 异常: {type(e).__name__}")
             return None
 
     async def get_pod_logs(
@@ -748,12 +767,12 @@ class KubernetesService:
         Returns:
             Optional[str]: 日志内容，如果获取失败则返回None
         """
-        if not self._ensure_initialized():
+        if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法获取Pod日志")
 
         try:
             # 先获取Pod状态，检查容器是否就绪
-            pod = self.core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+            pod = await self._sdk_call(self.core_v1.read_namespaced_pod, name=pod_name, namespace=namespace)
 
             # 确定要查询的容器名称
             if not container_name and pod.spec.containers:
@@ -810,7 +829,7 @@ class KubernetesService:
                 kwargs["tail_lines"] = tail_lines
 
             # 获取日志
-            logs = self.core_v1.read_namespaced_pod_log(**kwargs)
+            logs = await self._sdk_call(self.core_v1.read_namespaced_pod_log, **kwargs)
 
             logger.debug(
                 f"成功获取Pod {pod_name} 容器 {container_name or 'default'} 的日志"
@@ -821,8 +840,8 @@ class KubernetesService:
             if e.status == 404:
                 logger.warning(f"Pod {pod_name} 或容器 {container_name} 不存在")
             else:
-                logger.error(f"获取Pod {pod_name} 日志失败: {str(e)}")
+                logger.error(f"获取Pod {pod_name} 日志失败: {type(e).__name__}")
             return None
         except Exception as e:
-            logger.error(f"获取Pod {pod_name} 日志异常: {str(e)}")
+            logger.error(f"获取Pod {pod_name} 日志异常: {type(e).__name__}")
             return None

@@ -77,7 +77,7 @@ class AutoFixService(BaseService):
             from .kubernetes import KubernetesService
             from .llm import LLMService
 
-            k8s_client: K8sClient = KubernetesService()
+            k8s_client: K8sClient = await asyncio.to_thread(KubernetesService)
             llm_client = LLMService()
             self._k8s_fixer = K8sFixerAgent(
                 llm_client=llm_client, k8s_client=k8s_client

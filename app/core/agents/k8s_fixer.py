@@ -9,10 +9,9 @@ License: Apache 2.0
 Description: Kubernetes自动修复代理
 """
 
+import asyncio
 import json
 import logging
-import os
-import time
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -21,6 +20,7 @@ import yaml
 from app.config.settings import config
 from app.core.interfaces.k8s_client import K8sClient, NullK8sClient
 from app.core.interfaces.llm_client import LLMClient, NullLLMClient
+from app.utils.workload_context import model_workload_context
 
 logger = logging.getLogger("aiops.k8s_fixer")
 
@@ -172,6 +172,10 @@ class K8sFixerAgent:
                 "error_description": error_description,
             }
 
+            # 仅模型副本隐藏环境变量和历史完整配置，内部原对象不变
+            model_deployment = model_workload_context(deployment)
+            model_context = {**context, "deployment": ensure_serializable(model_deployment)}
+
             # 处理可能的强制修复情况
             force_fix = False
             if (
@@ -252,7 +256,7 @@ class K8sFixerAgent:
                     # 如果验证失败，记录但继续尝试其他修复方案
                     logger.warning(f"自动修复验证失败: {verification_result}")
                     # 等待一段时间后再次检查，给K8s一些时间应用更改
-                    time.sleep(self.retry_delay + 1)
+                    await asyncio.sleep(self.retry_delay + 1)
 
             try:
                 # 使用分析服务
@@ -270,9 +274,9 @@ class K8sFixerAgent:
                         )
 
                         analysis = await self.llm_service.analyze_k8s_problem(
-                            yaml.dump(deployment, default_flow_style=False),
+                            yaml.dump(model_deployment, default_flow_style=False),
                             error_description,
-                            json.dumps(context, indent=2),
+                            json.dumps(model_context, indent=2),
                         )
 
                         if analysis:
@@ -287,7 +291,7 @@ class K8sFixerAgent:
                             logger.warning(
                                 f"分析返回为空，尝试重试 ({retry_count}/{max_retries})"
                             )
-                            time.sleep(self.retry_delay)
+                            await asyncio.sleep(self.retry_delay)
                     except Exception as e:
                         retry_count += 1
                         logger.error(f"分析出错: {str(e)}")
@@ -322,7 +326,7 @@ class K8sFixerAgent:
                         except Exception as backup_e:
                             logger.error(f"切换到备用模型失败: {str(backup_e)}")
 
-                        time.sleep(self.retry_delay)
+                        await asyncio.sleep(self.retry_delay)
 
                 if not analysis:
                     # 分析失败，尝试直接修复
@@ -342,7 +346,7 @@ class K8sFixerAgent:
                             # 构建最简单的分析请求
                             simple_analysis = (
                                 await self.llm_service.analyze_k8s_problem(
-                                    yaml.dump(deployment, default_flow_style=False),
+                                    yaml.dump(model_deployment, default_flow_style=False),
                                     error_description,
                                 )
                             )
@@ -395,42 +399,8 @@ class K8sFixerAgent:
             return f"修复失败: {str(e)}"
 
     async def _check_and_fix_k8s_connection(self) -> bool:
-        """检查并尝试修复K8s连接"""
-        # 检查K8s连接
-        if self.k8s_service.is_healthy():
-            return True
-
-        logger.warning("Kubernetes连接不健康，尝试修复")
-
-        # 尝试搜索可能的kubeconfig路径
-        possible_paths = [
-            "deploy/kubernetes/config",
-            "../deploy/kubernetes/config",
-            "config",
-            os.path.expanduser("~/.kube/config"),
-        ]
-
-        working_path = None
-        for path in possible_paths:
-            if os.path.exists(path):
-                # 尝试使用此路径
-                try:
-                    os.environ["KUBECONFIG"] = os.path.abspath(path)
-                    config.k8s.config_path = os.path.abspath(path)
-                    logger.info(f"尝试使用配置文件: {path}")
-
-                    # 重新初始化K8s服务
-                    self.k8s_service._try_init()
-
-                    # 检查连接是否成功
-                    if self.k8s_service.is_healthy():
-                        working_path = path
-                        logger.info(f"成功连接到K8s集群，使用配置: {path}")
-                        break
-                except Exception as e:
-                    logger.warning(f"使用配置 {path} 连接K8s失败: {str(e)}")
-
-        return working_path is not None
+        """只检查服务器配置的目标，不扫描或切换其他集群凭据"""
+        return bool(await self.k8s_service.health_check())
 
     async def _identify_and_fix_common_issues(
         self,
@@ -1323,7 +1293,7 @@ class K8sFixerAgent:
             # 1. 检查节点状态
             nodes_status = "无法获取节点状态"
             try:
-                nodes = self.k8s_service.core_v1.list_node()
+                nodes = await asyncio.to_thread(self.k8s_service.core_v1.list_node, _request_timeout=(3, 10))
                 ready_nodes = 0
                 total_nodes = len(nodes.items)
 
@@ -1378,8 +1348,10 @@ class K8sFixerAgent:
             # 3. 获取Deployment状态
             deployments_status = "无法获取部署状态"
             try:
-                deployments = self.k8s_service.apps_v1.list_namespaced_deployment(
-                    namespace
+                deployments = await asyncio.to_thread(
+                    self.k8s_service.apps_v1.list_namespaced_deployment,
+                    _request_timeout=(3, 10),
+                    namespace=namespace
                 )
                 total_deployments = len(deployments.items)
                 healthy_deployments = 0
@@ -1558,7 +1530,7 @@ class K8sFixerAgent:
             )
 
             # 记录提供方状态，便于诊断
-            is_llm_healthy = self.llm_service.is_healthy()
+            is_llm_healthy = await self.llm_service.is_healthy()
             logger.info(f"LLM服务状态: {'健康' if is_llm_healthy else '异常'}")
             logger.info(
                 f"当前LLM提供商: {self.llm_service.provider}, 模型: {self.llm_service.model}"

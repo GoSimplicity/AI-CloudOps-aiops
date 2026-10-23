@@ -91,9 +91,9 @@ class RCAService(BaseService, HealthCheckMixin):
 
       # Kubernetes 客户端，失败或不健康时降级为空实现
       try:
-        k8s_client = KubernetesService()
+        k8s_client = await asyncio.to_thread(KubernetesService)
         # 明确健康性检查，不健康则使用空实现
-        if not k8s_client.is_healthy():
+        if not await k8s_client.health_check():
           self.logger.warning("Kubernetes不健康，启用降级模式")
           k8s_client = NullK8sClient()
       except Exception as e:
