@@ -139,12 +139,8 @@ class BaseService(ABC):
             )
         except Exception as e:
             # SEC-33 L2 P3-1：ERROR 只记操作名、异常类型与状态；原始异常文本可能含凭据/集群地址，只进 DEBUG
-            self.logger.error(
-                f"服务 {self.service_name} 执行 {operation_name} 失败: {error_brief(e)}"
-            )
-            self.logger.debug(
-                f"服务 {self.service_name} 执行 {operation_name} 失败详情", exc_info=True
-            )
+            self.logger.error(f"服务 {self.service_name} 执行 {operation_name} 失败: {error_brief(e)}")
+            self.logger.debug(f"服务 {self.service_name} 执行 {operation_name} 失败详情", exc_info=True)
             raise ServiceUnavailableError(
                 service_name=self.service_name,
                 details={"error": str(e), "operation": operation_name},
