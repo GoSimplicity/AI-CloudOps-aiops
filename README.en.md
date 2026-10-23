@@ -205,3 +205,9 @@ This repository is licensed under the [Apache License 2.0](LICENSE).
 - **Issues:** <https://github.com/GoSimplicity/AI-CloudOps-aiops/issues>
 
 The default `python -m pytest -q` runs offline unit and isolated ASGI integration tests with outbound networking blocked. Live service and separately enabled model checks are documented in [testing.md](docs/testing.md). Historical manual scripts are preserved outside the default test suite.
+
+### Assistant tool policy
+
+Ordinary `/assistant/query` mode 2 and `/assistant/stream` expose only reviewed calculation, statistics, conversion, UTC time, resource metrics/quotas and HPA reads. The locally controlled model schema and each actual dispatch enforce operations, exact fields, strict types and bounds. Local files, custom kubeconfigs, generic resource/Secret YAML, deployment environment details and unknown tools are unavailable. Prompts, extra arguments and internal principals cannot elevate this policy. Use a separately authorized AutoFix workflow for changes; its ownership and hard constraints still apply.
+
+The standalone MCP `/tools/execute` remains a privileged internal service-key interface. Keep it private: release Compose does not publish its port. Cluster reads use the deployed service identity and Kubernetes RBAC, never user-selected credentials.
