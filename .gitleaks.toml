@@ -6,10 +6,12 @@ title = "AI-CloudOps-aiops gitleaks config"
 useDefault = true
 
 # 误报：知识库部署文档中的 curl 示例使用字面占位符 "your-api-key"，不是凭据。
+# 只放行 secret 恰好等于占位符的情况（^...$ 锚定，SEC-01A 审查 P3）：
+# "your-api-key" 后面紧跟任何字符（如真实 token）都不再被放行。
 [[allowlists]]
 description = "placeholder bearer token in knowledge-base docs"
 targetRules = ["curl-auth-header"]
 condition = "AND"
 paths = ['''^data/knowledge_base/[^/]+\.md$''']
-regexTarget = "match"
-regexes = ['''Bearer your-api-key''']
+regexTarget = "secret"
+regexes = ['''^your-api-key$''']
