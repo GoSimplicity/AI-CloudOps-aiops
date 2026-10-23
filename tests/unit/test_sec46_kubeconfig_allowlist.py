@@ -498,3 +498,84 @@ async def test_cleanup_closes_default_and_custom_clients(kube, gates, server):
     await tool.cleanup()
     assert sorted(closed) == sorted([DEFAULT_HOST, ALT_HOST])
     assert tool._api_clients is None and tool._custom_clients == {}
+
+
+# ---------- 变异测试补洞（存活变异 R2 / D3 / E3 / E4 / L3 / T2） ----------
+
+
+async def test_allowlist_given_as_symlink_to_dedicated_dir_still_works(kube, gates, server):
+    """R2：白名单目录按 realpath 解析；配置成指向专用目录的符号链接时，目录内文件照常可用"""
+    link = kube.tmp / "kubeconfigs-link"
+    link.symlink_to(kube.allowed, target_is_directory=True)
+    kube.allow(link)
+    await server.execute_tool(READS[0][0], {**READS[0][1], "config_path": str(link / "alt.yaml")})
+    await server.execute_tool(READS[0][0], {**READS[0][1], "config_path": "other.yaml"})
+    assert _hosts(kube.calls) == [ALT_HOST, OTHER_HOST]
+
+
+@pytest.mark.parametrize("which", ["knowledge", "contains_knowledge"])
+async def test_knowledge_base_outside_data_is_also_forbidden(kube, gates, server, monkeypatch, which):
+    """D3：知识库目录不在 data/ 下（rag.knowledge_base_path 指向别处）时同样不能作为白名单"""
+    knowledge = kube.tmp / "elsewhere" / "kb"
+    knowledge.mkdir(parents=True)
+    monkeypatch.setattr(config.rag, "knowledge_base_path", str(knowledge))
+    safe = write_kubeconfig(knowledge / "safe.yaml")
+    sibling = write_kubeconfig(kube.tmp / "elsewhere" / "sibling.yaml")
+    kube.allow(knowledge if which == "knowledge" else knowledge.parent)
+    await _rejected(server, kube, *READS[0], safe)
+    await _rejected(server, kube, *READS[0], sibling)
+
+
+@pytest.mark.parametrize("key", ["Exec", " exec", "EXEC ", "Auth-Provider", " auth-provider\t"])
+async def test_credential_plugin_keys_are_matched_case_and_space_insensitively(kube, gates, server, key):
+    """E3：键名 strip + 小写后比较（fail-closed，即使加载器只认小写键）"""
+    kube.allow(kube.allowed)
+    path = write_kubeconfig(kube.allowed / "variant.yaml", user={"token": "t", key: {"command": HARMLESS_COMMAND}})
+    await _rejected(server, kube, *READS[0], path)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        yaml.safe_dump({"users": {"u": {"exec": {"command": HARMLESS_COMMAND}}}}),
+        yaml.safe_dump(kubeconfig(ALT_HOST, TOKEN_USER) | {"users": {"name": "u", "user": TOKEN_USER}}),
+        "users:\n- name: u\n  user: [exec]\n",
+        "- a\n",
+    ],
+    ids=["users-mapping-with-exec", "users-mapping", "user-not-mapping", "top-level-list"],
+)
+async def test_malformed_kubeconfig_is_rejected_before_reaching_the_loader(kube, gates, server, monkeypatch, content):
+    """E4：结构异常在解析阶段就拒绝，绝不交给 kubernetes 加载器"""
+    from app.mcp.server.tools import k8s_base_tool
+
+    loaded = []
+
+    def recorder(*args, **kwargs):
+        loaded.append(args)
+        raise AssertionError("loader must not be reached")
+
+    monkeypatch.setattr(k8s_base_tool.config, "load_kube_config_from_dict", recorder)
+    kube.allow(kube.allowed)
+    path = kube.allowed / "malformed.yaml"
+    path.write_text(content, encoding="utf-8")
+    await _rejected(server, kube, *READS[0], str(path))
+    assert loaded == []
+
+
+async def test_hardlinked_safe_kubeconfig_is_rejected(kube, gates, server):
+    """L3：白名单内的硬链接（即使内容是无害的 token kubeconfig）也拒绝，防止借硬链接把白名单外文件带进来"""
+    kube.allow(kube.allowed)
+    outside = write_kubeconfig(kube.tmp / "outside" / "safe.yaml")
+    os.link(outside, kube.allowed / "hardlink.yaml")
+    await _rejected(server, kube, *READS[0], str(kube.allowed / "hardlink.yaml"))
+
+
+@pytest.mark.parametrize("tool,params", WRITES, ids=WRITE_IDS)
+async def test_tool_layer_config_path_rejection_uses_unified_message(kube, gates, server, tool, params):
+    """T2：工具层（绕过门禁）拒绝写/Secret 读的 config_path 时也用统一文案"""
+    gates(write=True, secret=True, repair=True, allowed=["staging"])
+    kube.allow(kube.allowed)
+    result = await server.tools[tool].execute({**params, "config_path": kube.alt})
+    assert result["success"] is False and UNIFIED in str(result.get("message", result)), result
+    secret = await server.tools["k8s_config_management"].execute({"operation": "get_secret", "namespace": "staging", "resource_name": "db", "config_path": kube.alt})
+    assert secret["success"] is False and UNIFIED in secret["message"], secret

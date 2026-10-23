@@ -272,3 +272,24 @@ def test_pin_file_root_holds_directory_fd(root):
     file_boundary.reset_file_root_cache()
     with pytest.raises(OSError):
         os.fstat(fd)
+
+
+async def test_stats_rejects_symlink_to_the_same_inode_moved_outside(root, monkeypatch, tmp_path):
+    """变异 I2：stat_in_root 不跟随符号链接。文件被移出 root、原位置换成指向它的符号链接时（dev/ino 不变），
+    仍按「校验后发生变化」拒绝，而不是跟随链接返回 root 外文件的元数据"""
+    from app.mcp.server.tools import file_tool
+
+    (root / "a.md").write_bytes(b"m" * 2468)
+    moved = tmp_path / "moved-outside.md"
+    original = file_tool.validated_identity
+
+    def wrapped(path):
+        identity = original(path)
+        os.rename(root / "a.md", moved)
+        os.symlink(moved, root / "a.md")
+        return identity
+
+    monkeypatch.setattr(file_tool, "validated_identity", wrapped)
+    with pytest.raises(RuntimeError) as failed:
+        await FileStatsTool().execute({"path": "a.md"})
+    assert "校验后发生变化" in str(failed.value) and "2468" not in str(failed.value)
