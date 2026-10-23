@@ -26,6 +26,8 @@ from langchain_core.embeddings import Embeddings
 import numpy as np
 import redis
 
+from app.common.constants import ServiceConstants
+
 # MD文档处理器导入
 try:
     from app.core.processors.md_document_processor import (
@@ -129,7 +131,10 @@ class EnhancedRedisVectorStore:
             raise
 
         # 查询缓存（减少内存占用）
-        self.query_cache = QueryCache(self.client, ttl=1800, max_cache_size=1000)
+        self.query_cache = QueryCache(
+            self.client, ttl=1800, max_cache_size=1000,
+            prefix=f"{collection_name}:query_cache:{ServiceConstants.KNOWLEDGE_CACHE_VERSION}:",
+        )
 
         # 批处理队列
         self.batch_queue = BatchQueue(max_size=30)
@@ -1994,11 +1999,11 @@ class IndexManager:
 class QueryCache:
     """查询缓存"""
 
-    def __init__(self, redis_client, ttl: int = 3600, max_cache_size: int = 1000):
+    def __init__(self, redis_client, ttl: int = 3600, max_cache_size: int = 1000, *, prefix: str = "query_cache:"):
         self.client = redis_client
         self.ttl = ttl
         self.max_cache_size = max_cache_size
-        self.prefix = "query_cache:"
+        self.prefix = prefix
         self._cache_stats = {
             "hits": 0,
             "misses": 0,

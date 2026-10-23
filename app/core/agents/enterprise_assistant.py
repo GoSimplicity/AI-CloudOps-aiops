@@ -24,6 +24,7 @@ from langchain_core.documents import Document
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
+from app.common.constants import ServiceConstants
 from app.common.exceptions import AssistantError
 
 logger = logging.getLogger("aiops.rag_assistant")
@@ -644,7 +645,8 @@ class RAGAssistant:
 
         try:
             if self.cache_manager:
-                cache_key = hashlib.md5(question.encode()).hexdigest()
+                cache_input = f"{ServiceConstants.KNOWLEDGE_CACHE_VERSION}:{self.vector_store.collection_name}:{question}"
+                cache_key = hashlib.md5(cache_input.encode()).hexdigest()
                 cached = await asyncio.to_thread(self.cache_manager.get, cache_key)
                 if cached:
                     self._stats["cache_hits"] += 1
