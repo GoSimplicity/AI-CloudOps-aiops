@@ -279,7 +279,9 @@ async def test_unclassified_operation_is_treated_as_write(gates, server_with_moc
     params = {"namespace": "staging"} if op is None else {"operation": op, "namespace": "staging"}
     with pytest.raises(FeatureDisabledError) as denied:
         await server.execute_tool("k8s_pod_management", params)
-    assert denied.value.error_code == write_gate.MCP_WRITE_DISABLED
+    # SEC-33 L2 P3-3：非字符串 operation 在分类前按 MCP_INVALID_OPERATION 拒绝；缺省与未知字符串仍按写拒绝
+    expected = write_gate.MCP_INVALID_OPERATION if op is not None and not isinstance(op, str) else write_gate.MCP_WRITE_DISABLED
+    assert denied.value.error_code == expected
     init.assert_not_called()
     assert api.mock_calls == []
 

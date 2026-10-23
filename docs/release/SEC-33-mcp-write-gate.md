@@ -29,8 +29,9 @@ MCP 服务端所有工具调用（HTTP `POST /tools/execute`、`MCPAssistant` �
 | `MCP_CLUSTER_SCOPED_DENIED` | 集群级写：`create_namespace`、`delete_namespace` 及 `k8s_namespace_management` 其它非读 operation；`add_labels` 等作用于 namespace/node 等非命名空间资源（即 patch_namespace / patch_node）；`apply_yaml` 含集群级 kind（kind 比较不区分大小写）。**任何开关都不能放行** |
 | `MCP_CONFIG_PATH_DENIED` | 写操作或 Secret 读取带非默认 `config_path`（缺省、`null`、空串为默认，其它值一律拒绝） |
 | `MCP_SECRET_READ_DISABLED` | `list_secrets` / `get_secret`，或 `resource_type` 为 Secret / 无法识别的 `describe_resource` / `get_resource_yaml`，且 `mcp.secret_read_enabled` 关闭 |
+| `MCP_INVALID_OPERATION` | 参数中带 `operation` 但不是字符串（数组、对象、数字、布尔、`null`），在分类前拒绝，`details.switch` 为 `mcp.operation`；任何开关都不能放行 |
 
-检查顺序：只读放行 → Secret 读（开关 → config_path → 白名单）→ 集群级拒绝 → 写（config_path → 写开关 → repair_enabled → 白名单）。
+检查顺序：只读工具放行 → operation 类型检查 → 只读 operation 放行 → Secret 读（开关 → config_path → 白名单）→ 集群级拒绝 → 写（config_path → 写开关 → repair_enabled → 白名单）。
 
 审计/告警日志（logger `aiops.mcp.write_gate`）只记录 `tool`、`error_code`、`switch`，**不记录 operation、命名空间、资源名、
 config_path、YAML 等任何参数值**；响应文案也不回显参数值。
