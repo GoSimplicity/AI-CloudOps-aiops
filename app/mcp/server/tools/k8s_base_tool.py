@@ -101,6 +101,20 @@ class K8sBaseTool(BaseTool):
         else:
             return f"{minutes}m"
 
+    async def cleanup(self) -> None:
+        """停止待执行任务并关闭归属本工具的客户端"""
+        executor, self._executor = self._executor, None
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+        clients, self._api_clients = self._api_clients, None
+        closed = set()
+        for value in (clients or {}).values():
+            api_client = getattr(value, "api_client", value)
+            if id(api_client) in closed or not callable(getattr(api_client, "close", None)):
+                continue
+            closed.add(id(api_client))
+            await asyncio.to_thread(api_client.close)
+
     def __del__(self):
         """统一的资源清理"""
         if hasattr(self, "_executor") and self._executor:

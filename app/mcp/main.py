@@ -31,12 +31,12 @@ from app.api.middleware.cors import setup_cors
 try:
     from ..config.settings import config
     from .server.mcp_server import MCPServer
-    from .server.tools import tools as mcp_tools
+    from .server.tools import create_tools as mcp_tools
 except ImportError:
     try:
         from app.config.settings import config
         from app.mcp.server.mcp_server import MCPServer
-        from app.mcp.server.tools import tools as mcp_tools
+        from app.mcp.server.tools import create_tools as mcp_tools
     except ImportError as e:
         logging.error(f"导入模块失败: {e}")
         sys.exit(1)
@@ -48,6 +48,7 @@ logger = logging.getLogger("aiops.mcp.main")
 
 mcp_server: Optional[MCPServer] = None
 active_sse_connections: set = set()
+sse_shutdown = asyncio.Event()
 
 
 class ToolRequest(BaseModel):
@@ -72,42 +73,28 @@ class ToolResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    global mcp_server
+    global mcp_server, sse_shutdown
 
-    # 启动时初始化
     logger.info("正在启动MCP服务端...")
-
+    sse_shutdown = asyncio.Event()
     try:
         mcp_server = MCPServer()
-
-        # 注册所有工具
-        registered_count = 0
-        if mcp_tools:
-            for tool in mcp_tools:
-                await mcp_server.register_tool(tool)
-                registered_count += 1
-                logger.info(f"已注册工具: {tool.name}")
-        else:
-            logger.warning("未找到可注册的工具")
-
-        logger.info(f"MCP服务端启动完成，共注册 {registered_count} 个工具")
-
-    except Exception as e:
-        logger.error(f"MCP服务端启动失败: {e}")
-        raise
-
-    yield
-
-    # 关闭时清理
-    try:
-        # 清理活跃的SSE连接
+        tools = mcp_tools()
+        for tool in tools:
+            await mcp_server.register_tool(tool)
+            logger.info(f"已注册工具: {tool.name}")
+        logger.info(f"MCP服务端启动完成，共注册 {len(tools)} 个工具")
+        yield
+    finally:
+        sse_shutdown.set()
         active_sse_connections.clear()
-
-        if mcp_server:
-            await mcp_server.shutdown()
-            logger.info("MCP服务端已关闭")
-    except Exception as e:
-        logger.error(f"关闭MCP服务端时出错: {e}")
+        server, mcp_server = mcp_server, None
+        if server is not None:
+            try:
+                await server.shutdown()
+                logger.info("MCP服务端已关闭")
+            except Exception as e:
+                logger.error("关闭MCP服务端时出错，异常类型: %s", type(e).__name__)
 
 
 # 创建FastAPI应用
@@ -143,6 +130,9 @@ async def sse_endpoint(request: Request) -> StreamingResponse:
     if not mcp_server:
         raise HTTPException(status_code=503, detail="MCP服务器未初始化")
 
+    server = mcp_server
+    shutdown = sse_shutdown
+
     async def event_generator() -> AsyncGenerator[str, None]:
         """事件生成器"""
         connection_id = id(request)
@@ -161,7 +151,7 @@ async def sse_endpoint(request: Request) -> StreamingResponse:
                         "description": tool.description,
                         "parameters": tool.parameters,
                     }
-                    for tool in mcp_server.tools.values()
+                    for tool in server.tools.values()
                 ],
                 "timestamp": time.time(),
             }
@@ -177,7 +167,11 @@ async def sse_endpoint(request: Request) -> StreamingResponse:
                 from app.config.settings import config
 
                 # 根据配置发送心跳
-                await asyncio.sleep(config.mcp.health_check_interval)
+                try:
+                    await asyncio.wait_for(shutdown.wait(), timeout=config.mcp.health_check_interval)
+                    break
+                except asyncio.TimeoutError:
+                    pass
                 heartbeat = {
                     "type": "heartbeat",
                     "timestamp": time.time(),
@@ -187,13 +181,13 @@ async def sse_endpoint(request: Request) -> StreamingResponse:
 
         except asyncio.CancelledError:
             logger.info(f"SSE连接 {connection_id} 已取消")
+            raise
         except Exception as e:
             logger.error(f"SSE连接 {connection_id} 错误: {str(e)}")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'connection_id': connection_id})}\n\n"
         finally:
             # 清理连接
             active_sse_connections.discard(connection_id)
-            yield f"data: {json.dumps({'type': 'disconnected', 'message': 'MCP连接已断开', 'connection_id': connection_id})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -242,6 +236,13 @@ async def execute_tool(request: ToolRequest) -> ToolResponse:
             status="success",
         )
 
+    except asyncio.TimeoutError:
+        return ToolResponse(
+            request_id=request.request_id,
+            tool=request.tool,
+            error=f"Tool execution timed out after {config.mcp.timeout} seconds",
+            status="error",
+        )
     except Exception as err:
         execution_time = time.time() - start_time
         logger.error(f"工具调用失败: {str(err)}, 耗时: {execution_time:.2f}秒")

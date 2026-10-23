@@ -9,6 +9,7 @@ License: Apache 2.0
 Description: 系统信息查询工具
 """
 
+import asyncio
 import platform
 from typing import Any, Dict
 
@@ -54,7 +55,7 @@ class SystemInfoTool(BaseTool):
             }
 
             if info_type in ["all", "cpu"]:
-                cpu_percent = psutil.cpu_percent(interval=1)
+                cpu_percent = await asyncio.to_thread(psutil.cpu_percent, interval=1)
                 cpu_count = psutil.cpu_count()
 
                 try:

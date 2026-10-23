@@ -56,24 +56,30 @@ __all__ = [
 ]
 
 # 工具注册列表，用于MCP服务器自动加载
-tools = [
-    TimeTool(),
-    SystemInfoTool(),
-    FileReadTool(),
-    FileListTool(),
-    FileStatsTool(),
-    CalculatorTool(),
-    StatisticsTool(),
-    UnitConverterTool(),
-    K8sClusterCheckTool(),
-    K8sPodTool(),
-    K8sServiceTool(),
-    K8sDeploymentTool(),
-    K8sConfigTool(),
-    K8sLogsTool(),
-    K8sMonitorTool(),
-    K8sNamespaceTool(),
-    K8sScalingTool(),
-    K8sIngressTool(),
-    K8sResourceTool(),
-]
+def create_tools():
+    """每个服务生命周期使用独立工具及资源"""
+    return [
+        TimeTool(),
+        SystemInfoTool(),
+        FileReadTool(),
+        FileListTool(),
+        FileStatsTool(),
+        CalculatorTool(),
+        StatisticsTool(),
+        UnitConverterTool(),
+        K8sClusterCheckTool(),
+        K8sPodTool(),
+        K8sServiceTool(),
+        K8sDeploymentTool(),
+        K8sConfigTool(),
+        K8sLogsTool(),
+        K8sMonitorTool(),
+        K8sNamespaceTool(),
+        K8sScalingTool(),
+        K8sIngressTool(),
+        K8sResourceTool(),
+    ]
+
+
+# 保留既有工具导入接口，服务端使用独立工厂实例
+tools = create_tools()
