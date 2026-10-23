@@ -333,8 +333,8 @@ async def add_document(request: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(request, dict) and "content" in request:
         content = request.get("content")
         metadata = request.get("metadata") or {}
-        title = metadata.get("title") or metadata.get("source") or "用户文档"
-        file_name = metadata.get("filename") or f"{uuid.uuid4().hex[:8]}.md"
+        title = request.get("title") or metadata.get("title") or metadata.get("source") or "用户文档"
+        file_name = request.get("file_name") or metadata.get("filename") or f"{uuid.uuid4().hex[:8]}.md"
         payload = {"title": title, "content": content, "file_name": file_name}
     else:
         payload = request

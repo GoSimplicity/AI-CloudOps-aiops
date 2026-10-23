@@ -175,6 +175,8 @@ class OptimizedAssistantService(BaseService):
 
         try:
             result = await self._assistant.refresh_knowledge_base()
+            if not result.get("success"):
+                raise AssistantError("知识库刷新未完成，请检查失败文件与索引服务")
             self._performance_monitor.reset()
 
             return {
@@ -599,6 +601,8 @@ class OptimizedAssistantService(BaseService):
                     timeout=timeout,
                 )
 
+                if not result.get("success", True):
+                    raise AssistantError("RAG处理失败，请检查知识检索与模型服务")
                 # 记录成功指标
                 self._performance_monitor.record_success()
 
@@ -607,13 +611,16 @@ class OptimizedAssistantService(BaseService):
                 enhanced_result["mode"] = "rag"  # 标记模式
                 return enhanced_result
 
-            except asyncio.TimeoutError:
-                logger.error(f"RAG请求超时: {timeout}秒")
-                return await self._use_fallback_response(question, session_id, "超时")
+            except asyncio.TimeoutError as e:
+                self._performance_monitor.record_failure()
+                raise AssistantError("RAG请求超时") from e
+            except AssistantError:
+                self._performance_monitor.record_failure()
+                raise
             except Exception as e:
                 self._performance_monitor.record_failure()
-                logger.error(f"RAG获取答案失败: {str(e)}")
-                return await self._use_fallback_response(question, session_id, str(e))
+                logger.error("RAG获取答案失败，异常类型: %s", type(e).__name__)
+                raise AssistantError("RAG调用失败") from e
 
     async def _handle_mcp_mode(
         self, question: str, session_id: Optional[str]
@@ -777,43 +784,11 @@ class OptimizedAssistantService(BaseService):
 
             logger.info(f"知识库文件已保存: {file_path}")
 
-            # 立即更新向量索引
-            try:
-                # 准备文档元数据
-                metadata = {
-                    "title": os.path.splitext(final_filename)[0],
-                    "source": "user_upload",
-                    "category": "general",
-                    "filename": final_filename,
-                    "file_path": file_path,
-                    "upload_time": datetime.now().isoformat(),
-                }
-
-                # 调用助手服务添加到向量存储
-                if self._assistant:
-                    upload_result = await self._assistant.upload_knowledge(
-                        {
-                            "content": file_content,
-                            "metadata": metadata,
-                            "title": metadata["title"],
-                            "source": "user_upload",
-                        }
-                    )
-
-                    if upload_result.get("success"):
-                        logger.info(
-                            f"文档已添加到向量索引: {final_filename}, 生成块数: {upload_result.get('document_count', 0)}"
-                        )
-                    else:
-                        logger.warning(
-                            f"向量索引更新失败: {upload_result.get('message', '未知错误')}"
-                        )
-                else:
-                    logger.warning("助手服务未初始化，向量索引未更新")
-
-            except Exception as vector_error:
-                # 向量索引更新失败不应该影响文件上传成功
-                logger.error(f"更新向量索引失败: {vector_error}")
+            await self._index_saved_document(file_content, {
+                "title": os.path.splitext(final_filename)[0],
+                "source": "user_upload", "category": "general", "filename": final_filename,
+                "file_path": file_path, "upload_time": datetime.now().isoformat(),
+            })
 
             return {
                 "uploaded": True,
@@ -830,6 +805,17 @@ class OptimizedAssistantService(BaseService):
         except Exception as e:
             logger.error(f"上传文件失败: {str(e)}")
             raise AssistantError(f"文件上传失败: {str(e)}")
+
+    async def _index_saved_document(self, content: str, metadata: Dict[str, Any]) -> None:
+        """文件保留用于恢复，但未成功索引时不报告知识添加完成"""
+        if self._assistant is None:
+            raise AssistantError("文件已保存，但助手索引尚未就绪")
+        result = await self._assistant.upload_knowledge({
+            "content": content, "metadata": metadata,
+            "title": metadata["title"], "source": metadata["source"],
+        })
+        if not result.get("success") or result.get("document_count", 0) <= 0:
+            raise AssistantError("文件已保存，但知识索引未完成，请检查索引服务后刷新知识库")
 
     def _resolve_filename_conflict(self, directory: str, filename: str) -> str:
         """解决文件名冲突，如果文件已存在则添加UUID"""
@@ -914,43 +900,10 @@ class OptimizedAssistantService(BaseService):
 
             logger.info(f"知识库文档已保存: {file_path}")
 
-            # 立即更新向量索引
-            try:
-                # 准备文档元数据
-                metadata = {
-                    "title": title,
-                    "source": "user_add",
-                    "category": payload.get("category", "general"),
-                    "filename": final_filename,
-                    "file_path": file_path,
-                    "add_time": datetime.now().isoformat(),
-                }
-
-                # 调用助手服务添加到向量存储
-                if self._assistant:
-                    upload_result = await self._assistant.upload_knowledge(
-                        {
-                            "content": file_content,
-                            "metadata": metadata,
-                            "title": title,
-                            "source": "user_add",
-                        }
-                    )
-
-                    if upload_result.get("success"):
-                        logger.info(
-                            f"文档已添加到向量索引: {final_filename}, 生成块数: {upload_result.get('document_count', 0)}"
-                        )
-                    else:
-                        logger.warning(
-                            f"向量索引更新失败: {upload_result.get('message', '未知错误')}"
-                        )
-                else:
-                    logger.warning("助手服务未初始化，向量索引未更新")
-
-            except Exception as vector_error:
-                # 向量索引更新失败不应该影响文档添加成功
-                logger.error(f"更新向量索引失败: {vector_error}")
+            await self._index_saved_document(file_content, {
+                "title": title, "source": "user_add", "category": payload.get("category", "general"),
+                "filename": final_filename, "file_path": file_path, "add_time": datetime.now().isoformat(),
+            })
 
             return {
                 "added": True,

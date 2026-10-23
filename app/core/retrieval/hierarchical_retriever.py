@@ -458,10 +458,18 @@ class HierarchicalRetriever:
             quality_score = self.quality_scorer.calculate_quality_score(doc, embedding)
             self.cluster_manager.add_document(doc, embedding, quality_score)
 
-        self.stats["total_documents"] = len(documents)
+        self.stats["total_documents"] = len(self.cluster_manager.document_to_cluster)
         self.stats["total_clusters"] = len(self.cluster_manager.clusters)
 
         logger.info(f"聚类完成，生成 {self.stats['total_clusters']} 个聚类")
+
+    def reset(self) -> None:
+        """清空聚类中的文档，避免刷新后重新召回已删除内容"""
+        self.cluster_manager.clusters.clear()
+        self.cluster_manager.document_to_cluster.clear()
+        self.quality_scorer.quality_cache.clear()
+        self.stats["total_documents"] = 0
+        self.stats["total_clusters"] = 0
 
     async def hierarchical_search(
         self, query: str, k: int = 5, context: Optional[Dict[str, Any]] = None

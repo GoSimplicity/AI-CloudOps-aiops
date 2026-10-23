@@ -1,6 +1,7 @@
 """上传读取在初始化模型前执行有界校验"""
 
 from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from fastapi import UploadFile
@@ -17,6 +18,7 @@ def service(monkeypatch, tmp_path):
     service = OptimizedAssistantService()
     service.MAX_KNOWLEDGE_FILE_SIZE = 32
     service._ensure_ready = AsyncMock()
+    service._assistant = SimpleNamespace(upload_knowledge=AsyncMock(return_value={"success": True, "document_count": 1}))
     return service
 
 

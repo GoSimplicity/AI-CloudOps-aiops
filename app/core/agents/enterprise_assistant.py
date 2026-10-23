@@ -24,6 +24,8 @@ from langchain_core.documents import Document
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
+from app.common.exceptions import AssistantError
+
 logger = logging.getLogger("aiops.rag_assistant")
 
 
@@ -738,6 +740,7 @@ class RAGAssistant:
         try:
             cleared_items = 0
             cache_results = {}
+            cache_errors = []
 
             # 清理检索器缓存
             if hasattr(self.retriever, "_cache"):
@@ -767,6 +770,7 @@ class RAGAssistant:
                         cache_results["cache_manager"] = cache_manager_count
                         logger.info(f"缓存管理器已清理: {cache_manager_count} 项")
                     else:
+                        cache_errors.append("answer_cache")
                         logger.warning(
                             f"缓存管理器清理失败: {cache_manager_result.get('message')}"
                         )
@@ -774,6 +778,7 @@ class RAGAssistant:
                             f"失败: {cache_manager_result.get('message')}"
                         )
                 except Exception as cache_mgr_error:
+                    cache_errors.append("answer_cache")
                     logger.error(f"缓存管理器清理异常: {cache_mgr_error}")
                     cache_results["cache_manager"] = f"异常: {str(cache_mgr_error)}"
 
@@ -802,6 +807,7 @@ class RAGAssistant:
                         cache_results["vector_stats"] = "已重置"
 
                 except Exception as vector_error:
+                    cache_errors.append("vector_cache")
                     logger.error(f"向量存储缓存清理失败: {vector_error}")
                     cache_results["vector_cache"] = f"失败: {str(vector_error)}"
 
@@ -817,8 +823,9 @@ class RAGAssistant:
             logger.info(f"缓存清理完成，总计清理 {cleared_items} 项")
 
             return {
-                "success": True,
-                "message": f"缓存清理完成，共清理 {cleared_items} 项",
+                "success": not cache_errors,
+                "message": f"缓存清理完成，共清理 {cleared_items} 项" if not cache_errors else "部分查询缓存清理失败",
+                "failed_caches": cache_errors,
                 "cleared_items": cleared_items,
                 "details": cache_results,
                 "timestamp": datetime.now().isoformat(),
@@ -849,10 +856,12 @@ class RAGAssistant:
 
                 logger.info("清理向量存储...")
                 clear_result = await self.vector_store.clear()
+                if not cache_result.get("success") or not clear_result.get("success"):
+                    return {"success": False, "message": "旧索引或查询缓存未能清理，刷新已停止"}
                 logger.info(f"向量存储清理结果: {clear_result}")
             except Exception as clear_error:
                 logger.error(f"清理阶段失败: {clear_error}")
-                # 继续执行，不让清理失败阻止整个流程
+                return {"success": False, "message": "索引清理失败，刷新已停止"}
 
             # 2. 从文件系统加载知识库
             knowledge_base_path = self.config.rag.knowledge_base_path
@@ -937,7 +946,7 @@ class RAGAssistant:
                 logger.warning(f"无法获取文档数量: {count_error}")
 
             # 5. 返回结果
-            success = len(loaded_files) > 0
+            success = not failed_files
             message = f"知识库刷新{'成功' if success else '失败'}。加载了 {len(loaded_files)} 个文件，共 {total_docs} 个文档片段"
             if failed_files:
                 message += (
@@ -983,11 +992,11 @@ class RAGAssistant:
         }
 
     async def upload_knowledge(self, document_data: Dict[str, Any]) -> Dict[str, Any]:
+        """索引写入与缓存失效完成后才确认上传成功"""
         try:
             content = document_data.get("content", "")
             if not content:
                 return {"success": False, "message": "内容为空"}
-
             metadata = {
                 "title": document_data.get("title"),
                 "source": document_data.get("source", "user_upload"),
@@ -995,63 +1004,27 @@ class RAGAssistant:
                 "tags": document_data.get("tags", []),
                 **document_data.get("metadata", {}),
             }
-
-            # 检测是否是MD文档并使用专门的处理方法
-            if self._is_markdown_content(content):
-                logger.info("检测到MD文档，使用专门处理流程")
-                try:
-                    # 检查向量存储是否支持MD文档处理
-                    if hasattr(self.vector_store, "add_md_documents"):
-                        ids = await self.vector_store.add_md_documents(
-                            [content], [metadata]
-                        )
-                        document_count = len(ids)
-                    else:
-                        logger.warning("向量存储不支持MD文档专门处理，使用普通文档处理")
-                        # 如果不支持MD处理，使用普通文档处理
-                        from langchain_core.documents import Document
-
-                        docs = [Document(page_content=content, metadata=metadata)]
-                        ids = await self.vector_store.add_documents(docs)
-                        document_count = len(ids)
-
-                    return {
-                        "success": True,
-                        "document_ids": ids if isinstance(ids, list) else [ids],
-                        "document_count": document_count,
-                        "message": f"MD知识上传成功，生成 {document_count} 个结构化块",
-                        "document_type": "markdown",
-                    }
-                except Exception as md_error:
-                    logger.warning(f"MD文档专门处理失败，使用普通文档处理: {md_error}")
-                    # 回退到普通文档处理
-                    from langchain_core.documents import Document
-
-                    docs = [Document(page_content=content, metadata=metadata)]
-                    ids = await self.vector_store.add_documents(docs)
-                    return {
-                        "success": True,
-                        "document_id": ids[0] if ids else None,
-                        "document_count": len(ids),
-                        "message": f"知识上传成功（普通模式），生成 {len(ids)} 个文档块",
-                        "document_type": "plain",
-                    }
+            markdown = self._is_markdown_content(content)
+            if markdown and hasattr(self.vector_store, "add_md_documents"):
+                ids = await self.vector_store.add_md_documents([content], [metadata])
             else:
-                # 普通文档处理
-                from langchain_core.documents import Document
-
-                docs = [Document(page_content=content, metadata=metadata)]
-                ids = await self.vector_store.add_documents(docs)
-                return {
-                    "success": True,
-                    "document_id": ids[0] if ids else None,
-                    "document_count": len(ids),
-                    "message": f"知识上传成功，生成 {len(ids)} 个文档块",
-                    "document_type": "plain",
-                }
+                ids = await self.vector_store.add_documents([Document(page_content=content, metadata=metadata)])
+            if not ids:
+                return {"success": False, "message": "索引未返回已写入的文档"}
+            cache_result = await self.clear_cache()
+            if not cache_result.get("success"):
+                return {"success": False, "message": "索引已写入，但查询缓存更新失败"}
+            return {
+                "success": True,
+                "document_id": ids[0],
+                "document_ids": ids,
+                "document_count": len(ids),
+                "document_type": "markdown" if markdown else "plain",
+                "message": f"知识上传成功，生成 {len(ids)} 个文档块",
+            }
         except Exception as e:
-            logger.error(f"上传知识失败: {e}")
-            return {"success": False, "message": str(e)}
+            logger.error("上传知识失败，异常类型: %s", type(e).__name__)
+            return {"success": False, "message": "知识索引写入失败，文档尚未确认可检索"}
 
     def _is_markdown_content(self, content: str) -> bool:
         """检测内容是否是Markdown格式"""
@@ -1393,11 +1366,8 @@ class AnswerGenerator:
             return {"answer": response, "confidence": confidence}
 
         except Exception as e:
-            logger.error(f"答案生成失败: {e}")
-            return {
-                "answer": f"生成答案时出错: {str(e)}，请稍后重试。",
-                "confidence": 0.0,
-            }
+            logger.error("答案生成失败，异常类型: %s", type(e).__name__)
+            raise AssistantError("知识库回答生成失败") from e
 
     def _has_markdown_documents(self, docs: List[Document]) -> bool:
         """检测文档列表是否包含MD文档"""

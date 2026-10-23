@@ -289,6 +289,8 @@ class EnhancedRedisVectorStore:
 
         # 并行存储
         doc_ids = await self._parallel_store(processed_documents, embeddings)
+        if len(doc_ids) != len(processed_documents):
+            raise ValueError("Partial document storage cannot be committed to the search index")
 
         # 更新索引
         await self.index_manager.update_index(doc_ids, embeddings)
@@ -1743,13 +1745,7 @@ class EnhancedRedisVectorStore:
             # 7. 清理层次化检索器
             if self.hierarchical_retriever:
                 try:
-                    # 重置聚类状态
-                    if hasattr(self.hierarchical_retriever, "stats"):
-                        self.hierarchical_retriever.stats = {
-                            "total_documents": 0,
-                            "total_clusters": 0,
-                            "last_cluster_update": 0,
-                        }
+                    self.hierarchical_retriever.reset()
                     logger.info("层次化检索器状态已重置")
                 except Exception as e:
                     logger.warning(f"重置层次化检索器失败: {e}")
@@ -1837,7 +1833,7 @@ class IndexManager:
             elif index_type == "HNSW":
                 # 改进的HNSW配置
                 M = min(64, max(16, dim // 30))  # 动态调整连接数
-                self.faiss_index = self.faiss.IndexHNSWFlat(dim, M)
+                self.faiss_index = self.faiss.IndexHNSWFlat(dim, M, self.faiss.METRIC_INNER_PRODUCT)
                 # 设置搜索参数
                 self.faiss_index.hnsw.efSearch = 64
                 self.faiss_index.hnsw.efConstruction = 200
