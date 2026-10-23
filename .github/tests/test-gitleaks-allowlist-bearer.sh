@@ -63,6 +63,9 @@ def who(s):
     if s in lab: return lab[s]
     for k, v in lab.items():
         if k and s.startswith(k): return "%s+后缀(%d字符)" % (v, len(s) - len(k))
+    # review3h P3-c：拼接写法的 secret 不是整段 token 时，标出其中含哪个 token（不打印值）
+    for k, v in lab.items():
+        if k and len(k) >= 20 and k in s: return "含%s(%d字符)" % (v, len(s))
     return "其他(%d字符)" % len(s)
 print(" ".join(sorted("%s=%s" % (f.get("RuleID", ""), who(f.get("Secret", ""))) for f in r)) or "-")
 PY
@@ -102,8 +105,9 @@ scan "占位符 \${AIOPS_API_KEY} 后跟真 token（多行 curl）" "$KB" "$C=TO
     "curl -H \"Authorization: $B $V\" \\
   -H \"Authorization: $B $TA\" $U"
 # JWT 形状的 token：默认规则 jwt 也会报；另外 gitleaks 8.30.1 会把 base64 片段解码后再匹配，
-# 解码出的 JWT header 以 "{" 开头，kb-bearer-token 因此多一条 secret 为 "{" 的附带命中（tags decoded:base64）。
-J1="$K=其他(1字符)"
+# 解码出的 JWT header 以 "{" 开头，kb-bearer-token 因此多一条附带命中（tags decoded:base64）。review3h P3-c 起 secret 取到空白为止，
+# 这条附带命中的 secret 由 "{" 变为解码文本的第一段 {"alg": （7 字符，json.dumps 的固定前缀）。
+J1="$K=其他(7字符)"
 scan "JWT 形状 token（curl）" "$KB" "$C=JWT jwt=JWT $K=JWT $J1" \
     "curl -H \"Authorization: $B $JWT\" $U"
 scan "JWT 形状 token（非 curl，小写 bearer）" "$KB" "jwt=JWT $K=JWT $J1" \
@@ -143,6 +147,35 @@ scan "\${S3_API_KEY} 整套配置不报（带数字，默认全局 allowlist 不
 scan "\${X_API_KEY}abc 照常报（变量后带后缀）" "$KB" "$K=X变量+后缀(3字符)" "Authorization: $B ${VX}abc"
 scan "your-api-key 单独出现也报（allowlist 已删除）" "$KB" "$C=占位符 $K=占位符" \
     "curl -H \"Authorization: $B $P\" $U"
+# review3h P3-c：拼接/分隔符/不换行空格写法。secret 取 Bearer 之后到空白为止的整段（去掉一个前导引号和收尾的引号/标点），
+# 只有整段恰好是 *_API_KEY 变量引用才放行；变量后面拼接了任何值都照常报。
+D9b='$S3_API_KEY'
+NB="$(printf '\302\240')"
+scan "c1 \"Bearer \"\${S3_API_KEY}\"TOKEN\" 拼接报" "$KB" "$K=含TOKEN_A(54字符)" "Authorization: \"$B \"$D9\"$TA\""
+scan "c2 'Bearer '\$S3_API_KEY'TOKEN' 拼接报" "$KB" "$K=含TOKEN_A(52字符)" "Authorization: '$B '$D9b'$TA'"
+scan "c3 Bearer: TOKEN 报" "$KB" "$K=TOKEN_A" "Authorization: $B: $TA"
+scan "c3b Bearer:TOKEN（无空格）报" "$KB" "$K=TOKEN_A" "Authorization: $B:$TA"
+scan "c4 Bearer=TOKEN 报" "$KB" "$K=TOKEN_A" "Authorization: $B=$TA"
+scan "c4b Bearer = TOKEN 报" "$KB" "$K=TOKEN_A" "Authorization: $B = $TA"
+scan "c5 Bearer<NBSP>TOKEN 报" "$KB" "$K=TOKEN_A" "Authorization: $B$NB$TA"
+scan "c5b Bearer<空格+NBSP>TOKEN 报" "$KB" "$K=TOKEN_A" "Authorization: $B $NB$TA"
+scan "c6 \${S3_API_KEY}TOKEN 报" "$KB" "$K=含TOKEN_A(53字符)" "Authorization: $B $D9$TA"
+scan "c6b \"\${S3_API_KEY}\"TOKEN 报" "$KB" "$K=含TOKEN_A(54字符)" "Authorization: $B \"$D9\"$TA"
+scan "c6c \${S3_API_KEY}\"TOKEN\" 报" "$KB" "$K=含TOKEN_A(54字符)" "Authorization: $B $D9\"$TA\""
+scan "c6d '\${S3_API_KEY}'TOKEN 报" "$KB" "$K=含TOKEN_A(54字符)" "Authorization: $B '$D9'$TA"
+# 合法写法对照（整段只有变量引用）：都应 0 条
+scan "合法 知识库现有写法 \"Bearer \${OPENAI_API_KEY}\" \\ 续行" "$KB" "-" \
+    "curl -H \"Authorization: $B \${OPENAI_API_KEY}\" \\
+  https://api.openai.com/v1/models"
+scan "合法 Bearer \"\${S3_API_KEY}\"" "$KB" "-" "Authorization: $B \"$D9\""
+scan "合法 Bearer '\${S3_API_KEY}'" "$KB" "-" "Authorization: $B '$D9'"
+scan "合法 \"Bearer \"\${S3_API_KEY}（引号外只有变量）" "$KB" "-" "Authorization: \"$B \"$D9"
+scan "合法 JSON \"Bearer \${S3_API_KEY}\"}," "$KB" "-" "{\"headers\": {\"Authorization\": \"$B $D9\"},"
+scan "合法 转义 \\\"Bearer \${S3_API_KEY}\\\"}\"" "$KB" "-" "-d \"{\\\"Authorization\\\": \\\"$B $D9\\\"}\""
+scan "合法 Bearer: \${S3_API_KEY}" "$KB" "-" "Authorization: $B: $D9"
+scan "合法 Bearer=\${S3_API_KEY}" "$KB" "-" "Authorization: $B=$D9"
+scan "合法 Bearer<NBSP>\${S3_API_KEY}" "$KB" "-" "Authorization: $B$NB$D9"
+scan "合法 Bearer \${S3_API_KEY})" "$KB" "-" "headers(Authorization=\"$B $D9\")"
 # 路径范围：kb-bearer-token 只管知识库目录
 scan "对照 知识库外 非 curl 不受 kb 规则约束" docs/other.md "-" \
     "Authorization: $B $P  Authorization: $B $TA"
