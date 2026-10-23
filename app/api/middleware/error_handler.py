@@ -22,8 +22,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.common.constants import HttpStatusCodes, ServiceConstants
 from app.common.exceptions import AIOpsException
+from app.config.envmode import debug_details_allowed
 from app.config.settings import config
 from app.models import BaseResponse
+
+
+def _debug_details() -> bool:
+    """debug 开启且非生产环境时才在 5xx 响应里带出 message/details（生产环境即使 debug=true 也脱敏）"""
+    return debug_details_allowed(config.env, config.debug)
+
 
 logger = logging.getLogger("aiops.error_handler")
 
@@ -53,11 +60,11 @@ async def custom_http_exception_handler(
         if error_code:
             error_data["error_code"] = error_code
             error_details = getattr(exc, "error_details", None)
-            if error_details and (exc.status_code < 500 or config.debug):
+            if error_details and (exc.status_code < 500 or _debug_details()):
                 error_data["details"] = error_details
         error_response = BaseResponse(
             code=exc.status_code,
-            message=str(exc.detail) if exc.status_code < 500 or config.debug else ServiceConstants.INTERNAL_SERVER_ERROR_MESSAGE,
+            message=str(exc.detail) if exc.status_code < 500 or _debug_details() else ServiceConstants.INTERNAL_SERVER_ERROR_MESSAGE,
             data=error_data,
         )
 
@@ -130,7 +137,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         error_data = _build_error_data(
             request, HttpStatusCodes.INTERNAL_SERVER_ERROR, str(exc)
         )
-        if config.debug:
+        if _debug_details():
             error_data["type"] = type(exc).__name__
 
         error_response = BaseResponse(
@@ -167,12 +174,12 @@ async def aiops_exception_handler(
         # 构建包含 error_code 与 details 的标准错误数据
         error_data = _build_error_data(request, status_code, exc.details or exc.message)
         error_data["error_code"] = getattr(exc, "error_code", "AIOPS_ERROR")
-        if getattr(exc, "details", None) and (status_code < 500 or config.debug):
+        if getattr(exc, "details", None) and (status_code < 500 or _debug_details()):
             error_data["details"] = exc.details
 
         error_response = BaseResponse(
             code=status_code,
-            message=exc.message if status_code < 500 or config.debug else ServiceConstants.INTERNAL_SERVER_ERROR_MESSAGE,
+            message=exc.message if status_code < 500 or _debug_details() else ServiceConstants.INTERNAL_SERVER_ERROR_MESSAGE,
             data=error_data,
         )
         return JSONResponse(status_code=status_code, content=error_response.dict())
@@ -266,7 +273,7 @@ def _build_error_data(
     error_id = f"err_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
     return {
         "error_id": error_id,
-        "detail": detail if status_code < 500 or config.debug else "Internal server error",
+        "detail": detail if status_code < 500 or _debug_details() else "Internal server error",
         "timestamp": datetime.now().isoformat(),
         "path": str(request.url.path),
         "method": request.method,
@@ -284,7 +291,7 @@ def _create_fallback_response(
         "message": message,
         "data": {
             "timestamp": datetime.now().isoformat(),
-            "error": error if config.debug else "Internal server error",
+            "error": error if _debug_details() else "Internal server error",
         },
     }
     return JSONResponse(

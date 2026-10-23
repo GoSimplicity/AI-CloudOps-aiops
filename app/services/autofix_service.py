@@ -148,7 +148,9 @@ class AutoFixService(BaseService):
             return bool(k8s_healthy)
 
         except Exception as e:
-            self.logger.warning(f"自动修复服务健康检查失败: {str(e)}")
+            # 承接 SEC-26 P3-3：warning 只记异常类型，完整内容放 debug
+            self.logger.warning("自动修复服务健康检查失败，异常类型: %s", type(e).__name__)
+            self.logger.debug("自动修复服务健康检查失败详情: %s", e, exc_info=True)
             return False
 
     async def execute_multi_agent_workflow(self, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -255,6 +257,26 @@ class AutoFixService(BaseService):
                 raise
             raise WorkflowApprovalError(409, reason) from error
 
+    @staticmethod
+    def _namespace_precheck_refusal(namespace: Any, actions: List[Dict[str, Any]], *engines: Any) -> bool:
+        """对每个（去重后的）引擎调用公开的 namespace_refusal；缺少该方法或预检异常一律按拒绝（fail-closed）"""
+        seen = set()
+        for engine in engines:
+            if id(engine) in seen:
+                continue
+            seen.add(id(engine))
+            refusal = getattr(engine, "namespace_refusal", None)
+            if not callable(refusal):
+                logger.warning("执行引擎 %s 未实现 namespace_refusal，按拒绝处理", type(engine).__name__)
+                return True
+            try:
+                if refusal(namespace, actions):
+                    return True
+            except Exception as e:
+                logger.warning("命名空间预检异常，按拒绝处理，异常类型: %s", type(e).__name__)
+                return True
+        return False
+
     async def _confirm_claimed_workflow(self, record: WorkflowApproval, normalized_action_ids: List[str]) -> Dict[str, Any]:
         normalized_plan_id = record.plan_id
         workflow_result = deepcopy(record.result or {})
@@ -267,10 +289,14 @@ class AutoFixService(BaseService):
         if not diagnosis:
             raise ValidationError("plan_id", "工作流结果缺少诊断上下文")
 
-        if isinstance(self._remediation_engine, AutoFixRemediationEngine):
-            # 确认时按当前配置重新读取白名单：计划生成后被收紧的命名空间在重新校验中即被拒绝（403）
-            self._remediation_engine.allowed_namespaces = build_namespace_policy().allowed_namespaces
-        current_plan = await self._remediation_engine.build_plan(diagnosis)
+        shared_engine = self._remediation_engine
+        # 承接 SEC-26 P3-7：确认时按当前配置在局部重新构建策略（allowed_namespaces + auto_execute + 受限命名空间），
+        # 不修改共享单例；计划生成后被收紧的命名空间在重新校验中即被拒绝（403）。
+        # 注意：配置本身只在启动时加载，改白名单需重启（重启会清掉待审批项），见 docs/autofix_guide.md。
+        engine = shared_engine
+        if isinstance(shared_engine, AutoFixRemediationEngine):
+            engine = shared_engine.with_policy(build_namespace_policy())
+        current_plan = await engine.build_plan(diagnosis)
         plan = deepcopy(workflow_result.get("plan") or {})
         if any(current_plan.get(key) != plan.get(key) for key in ("namespace", "deployment")):
             raise WorkflowApprovalError(409, "重新校验的目标与原计划不一致，请重新生成计划")
@@ -283,9 +309,12 @@ class AutoFixService(BaseService):
             if current is None or original is None or any(current.get(key) != original.get(key) for key in ("action_id", "action_type", "target", "parameters", "executable", "rollback_available")):
                 raise WorkflowApprovalError(409, "原计划动作或目标参数已变化，请重新生成计划")
             risk = current.get("risk_assessment") or {}
-            if any(risk.get(key) is not True for key in ("namespace_allowed", "permission_allowed", "resource_exists")):
+            if any(risk.get(key) is not True for key in ("namespace_allowed", "permission_allowed")):
                 # SEC-26 P3-2：确认时重新校验未通过属于授权/策略拒绝，返回 403（审批不能覆盖）
-                raise WorkflowApprovalError(403, "当前资源、权限或命名空间限制未通过，审批不能覆盖，请重新诊断")
+                raise WorkflowApprovalError(403, "当前权限或命名空间限制未通过，审批不能覆盖，请重新诊断")
+            if risk.get("resource_exists") is not True:
+                # 承接 SEC-26 P3-6：目标资源已不存在属于状态冲突，返回 409（尚未执行，需重新诊断）
+                raise WorkflowApprovalError(409, "目标资源当前不存在，审批不能覆盖，尚未执行，请重新诊断")
 
         review = deepcopy(workflow_result.get("review") or {})
         previous_executed_actions = deepcopy(workflow_result.get("executed_actions") or [])
@@ -361,16 +390,16 @@ class AutoFixService(BaseService):
         plan["allowed_actions"] = allowed_actions + approved_actions
         plan["blocked_actions"] = remaining_blocked_actions
 
-        if isinstance(self._remediation_engine, AutoFixRemediationEngine):
-            # SEC-26 第一层审查附加条件 P3-1：置 effects_started 前先做执行引擎同一道命名空间硬校验；
-            # 被拒绝时尚未调用任何执行接口，审批记录应进入 invalidated（而非 uncertain）。
-            # 预检与下面 execute_plan 内的校验之间没有 await，读到的是同一份白名单。
-            refused = self._remediation_engine._namespace_refusal(plan.get("namespace", "default"), plan["allowed_actions"])
-            if refused:
-                raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
+        # SEC-26 第一层审查附加条件 P3-1：置 effects_started 前先做执行引擎同一道命名空间硬校验；
+        # 被拒绝时尚未调用任何执行接口，审批记录应进入 invalidated（而非 uncertain）。
+        # 预检与下面 execute_plan 内的校验之间没有 await，读到的是同一份白名单。
+        # 所有引擎（不只是 AutoFixRemediationEngine）都必须实现 RemediationEngine.namespace_refusal 并经过预检；
+        # 局部策略副本与共享单例都要放行才执行（任一拒绝即拒绝）。
+        if self._namespace_precheck_refusal(plan.get("namespace", "default"), plan["allowed_actions"], engine, shared_engine):
+            raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
 
         record.effects_started = True
-        execution = await self._remediation_engine.execute_plan(plan)
+        execution = await engine.execute_plan(plan)
         current_executed_actions = execution.get("executed_actions", [])
         executed_ids = [action.get("action_id") for action in current_executed_actions]
         if execution.get("status") == "blocked" and not current_executed_actions:
@@ -800,7 +829,8 @@ class AutoFixService(BaseService):
                         else:
                             self._k8s_fixer.cleanup()
                 except Exception as e:
-                    self.logger.warning(f"清理K8s修复代理失败: {e}")
+                    self.logger.warning("清理K8s修复代理失败，异常类型: %s", type(e).__name__)
+                    self.logger.debug("清理K8s修复代理失败详情: %s", e, exc_info=True)
                 self._k8s_fixer = None
 
             # 清理监督代理
@@ -812,7 +842,8 @@ class AutoFixService(BaseService):
                         else:
                             self._supervisor.cleanup()
                 except Exception as e:
-                    self.logger.warning(f"清理监督代理失败: {e}")
+                    self.logger.warning("清理监督代理失败，异常类型: %s", type(e).__name__)
+                    self.logger.debug("清理监督代理失败详情: %s", e, exc_info=True)
                 self._supervisor = None
 
             self._ops_workflow = None
@@ -824,5 +855,6 @@ class AutoFixService(BaseService):
             self.logger.info("自动修复服务资源清理完成")
 
         except Exception as e:
-            self.logger.error(f"自动修复服务资源清理失败: {str(e)}")
+            self.logger.error("自动修复服务资源清理失败，异常类型: %s", type(e).__name__)
+            self.logger.debug("自动修复服务资源清理失败详情: %s", e, exc_info=True)
             raise

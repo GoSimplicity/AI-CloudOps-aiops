@@ -41,6 +41,7 @@ except ImportError:
         logging.error(f"导入模块失败: {e}")
         sys.exit(1)
 
+from app.config.envmode import ensure_debug_safe
 from app.config.logging import setup_logging
 
 setup_logging()
@@ -75,6 +76,8 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     global mcp_server, sse_shutdown
 
+    # 与主应用一致：生产环境开启 debug 时拒绝启动（MCP 也注册了同一套错误处理器）
+    ensure_debug_safe(config.env, config.debug)
     logger.info("正在启动MCP服务端...")
     sse_shutdown = asyncio.Event()
     try:

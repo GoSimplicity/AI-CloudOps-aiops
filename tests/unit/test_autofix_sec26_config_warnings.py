@@ -36,7 +36,12 @@ def warnings_from(caplog):
         ("1", False, True),
         ("", False, True),
         ("yes", False, True),
-        (" true", False, True),
+        # 承接 SEC-26 s4：先 strip 再 lower，等于 true 才开启
+        (" true", True, False),
+        ("true\n", True, False),
+        ("\tTRUE  ", True, False),
+        (" false ", False, False),
+        (" 1 ", False, True),
         ("TRUE", True, False),
         ("true", True, False),
         ("false", False, False),

@@ -30,6 +30,9 @@ class FakeRemediationEngine:
             "post_check": {"ready": True},
         }
 
+    def namespace_refusal(self, namespace, actions):
+        return None
+
 
 class FakeBlockedRemediationEngine:
     async def build_plan(self, diagnosis):
@@ -73,6 +76,9 @@ class FakeBlockedRemediationEngine:
             "blocked_actions": plan["blocked_actions"],
             "post_check": {"ready": True},
         }
+
+    def namespace_refusal(self, namespace, actions):
+        return None
 
 
 @pytest.mark.asyncio

@@ -496,8 +496,10 @@ async def prediction_ready() -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"就绪检查失败: {str(e)}")
-        raise ServiceUnavailableError("prediction", {"error": str(e)})
+        # 承接 SEC-26 P3-5：503 不把 str(e) 放进 details；日志只记异常类型，完整内容放 debug
+        logger.error("就绪检查失败，异常类型: %s", type(e).__name__)
+        logger.debug("就绪检查失败详情: %s", e, exc_info=True)
+        raise ServiceUnavailableError("prediction") from e
 
 
 @router.get(

@@ -20,6 +20,9 @@ class FakeRemediationEngine:
         self.executed = True
         return {"status": "completed", "executed_actions": plan["candidate_actions"], "blocked_actions": [], "post_check": {"ready": True}}
 
+    def namespace_refusal(self, namespace, actions):
+        return None
+
 
 class FakeLLMClient:
     provider = "fake"

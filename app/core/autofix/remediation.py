@@ -11,12 +11,39 @@ Description: 诊断结果到可执行修复动作的转换、风险评估和执�
 
 from __future__ import annotations
 
+import copy
 from copy import deepcopy
 from datetime import datetime
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 logger = logging.getLogger("aiops.autofix.remediation")
+
+_MAX_REASON_LEN = 64
+
+
+def api_error_summary(exc: BaseException) -> Dict[str, Any]:
+    """异常日志摘要：只含异常类型、HTTP status 与 reason，不含 body/headers（可能含集群内部信息）"""
+    status = getattr(exc, "status", None)
+    reason = getattr(exc, "reason", None)
+    return {
+        "type": type(exc).__name__,
+        "status": status if isinstance(status, int) else None,
+        "reason": reason[:_MAX_REASON_LEN] if isinstance(reason, str) else None,
+    }
+
+
+@runtime_checkable
+class RemediationEngine(Protocol):
+    """修复执行引擎协议：autofix_service 对所有引擎（含测试替身）都在执行前调用 namespace_refusal 预检"""
+
+    async def build_plan(self, diagnosis_result: Dict[str, Any]) -> Dict[str, Any]: ...
+
+    async def execute_plan(self, plan: Dict[str, Any]) -> Dict[str, Any]: ...
+
+    def namespace_refusal(self, namespace: str, actions: List[Dict[str, Any]]) -> Optional[str]:
+        """返回拒绝原因（不允许执行）或 None（允许）"""
+        ...
 
 
 class AutoFixRemediationEngine:
@@ -109,7 +136,7 @@ class AutoFixRemediationEngine:
             ]
 
         if actions and not dry_run:
-            refused = self._namespace_refusal(namespace, actions)
+            refused = self.namespace_refusal(namespace, actions)
             if refused:
                 return {
                     "status": "blocked",
@@ -200,7 +227,12 @@ class AutoFixRemediationEngine:
         try:
             return await self.k8s_client.get_deployment(name, namespace)
         except Exception as exc:
-            logger.warning("获取Deployment失败，将按资源不存在评估风险: 错误类型=%s", type(exc).__name__)
+            # 承接 SEC-26 s7：只记异常类型、HTTP status 和 reason，不记 body
+            summary = api_error_summary(exc)
+            logger.warning(
+                "获取Deployment失败，将按资源不存在评估风险: 错误类型=%s, status=%s, reason=%s",
+                summary["type"], summary["status"], summary["reason"],
+            )
             return None
 
     def _classify_fault(self, diagnosis_result: Dict[str, Any]) -> str:
@@ -386,8 +418,12 @@ class AutoFixRemediationEngine:
         except TypeError:
             return bool(await self.k8s_client.can_i(verb, resource, namespace))
         except Exception as exc:
-            # 只记录异常类型与 action_id：ApiException 的 body/headers 可能含集群内部信息，不写入日志
-            logger.warning("权限检查失败: action_id=%s, 错误类型=%s", action.get("action_id"), type(exc).__name__)
+            # 只记录 action_id、异常类型、HTTP status 和 reason：ApiException 的 body/headers 可能含集群内部信息，不写入日志
+            summary = api_error_summary(exc)
+            logger.warning(
+                "权限检查失败: action_id=%s, 错误类型=%s, status=%s, reason=%s",
+                action.get("action_id"), summary["type"], summary["status"], summary["reason"],
+            )
             return False
 
     def _namespace_allowed(self, namespace: str) -> bool:
@@ -396,8 +432,20 @@ class AutoFixRemediationEngine:
         # 未配置 allowed_namespaces 时 fail-closed
         return namespace in self.allowed_namespaces
 
-    def _namespace_refusal(self, namespace: str, actions: List[Dict[str, Any]]) -> Optional[str]:
-        """执行前硬校验：计划及每个动作的目标命名空间都必须在白名单内"""
+    def with_policy(self, policy: "AutoFixRemediationEngine") -> "AutoFixRemediationEngine":
+        """返回按 policy 覆盖命名空间策略的局部副本，不修改 self（共享单例）。
+
+        覆盖 allowed_namespaces 与 auto_execute；受限命名空间取两者并集（只会更严）。
+        k8s_client 等其它属性沿用 self。
+        """
+        local = copy.copy(self)
+        local.allowed_namespaces = set(policy.allowed_namespaces)
+        local.auto_execute = bool(policy.auto_execute)
+        local.restricted_namespaces = set(policy.restricted_namespaces) | set(self.restricted_namespaces)
+        return local
+
+    def namespace_refusal(self, namespace: str, actions: List[Dict[str, Any]]) -> Optional[str]:
+        """执行前硬校验：计划及每个动作的目标命名空间都必须在白名单内（公开接口，见 RemediationEngine）"""
         targets = {namespace}
         for action in actions:
             target_ns = (action.get("target") or {}).get("namespace")
@@ -410,6 +458,10 @@ class AutoFixRemediationEngine:
                 return "未配置 autofix.allowed_namespaces，自动修复不允许在任何命名空间执行"
             return f"命名空间 {namespace} 不在 autofix.allowed_namespaces 白名单内，拒绝执行"
         return None
+
+    def _namespace_refusal(self, namespace: str, actions: List[Dict[str, Any]]) -> Optional[str]:
+        """兼容别名：保留旧私有名，统一走公开的 namespace_refusal"""
+        return self.namespace_refusal(namespace, actions)
 
     def _affects_multiple_replicas(self, action: Dict[str, Any], deployment: Optional[Dict[str, Any]]) -> bool:
         if action.get("action_type") not in {"restart_deployment", "scale_deployment", "adjust_resource_requests"}:

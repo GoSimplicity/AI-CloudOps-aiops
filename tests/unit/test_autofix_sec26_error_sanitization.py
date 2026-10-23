@@ -66,9 +66,11 @@ def test_bootstrap_route_hides_exception(monkeypatch, caplog) -> None:
     client = make_app(monkeypatch, service)
     with caplog.at_level(logging.ERROR):
         response = client.post("/autofix/bootstrap")
-    assert response.status_code == 502
+    # 承接 SEC-26 s1：非上游（非 ApiException/超时）的未预期异常 → 500，固定文案 + AUTOFIX_INTERNAL_ERROR
+    assert response.status_code == 500
     assert SECRET not in response.text
-    assert response.json()["data"]["detail"] == "自动修复错误: 引导故障资源失败"
+    assert response.json()["data"]["detail"] == "自动修复内部错误: 引导故障资源失败"
+    assert response.json()["data"]["error_code"] == "AUTOFIX_INTERNAL_ERROR"
     assert_logged_with_traceback(caplog, "aiops")
 
 
@@ -79,9 +81,11 @@ def test_diagnose_route_hides_exception(monkeypatch, caplog) -> None:
     client = make_app(monkeypatch, service)
     with caplog.at_level(logging.ERROR):
         response = client.post("/autofix/diagnose", json={"deployment": "api", "namespace": "default"})
-    assert response.status_code == 502
+    # 承接 SEC-26 s1：非上游（非 ApiException/超时）的未预期异常 → 500，固定文案 + AUTOFIX_INTERNAL_ERROR
+    assert response.status_code == 500
     assert SECRET not in response.text
-    assert response.json()["data"]["detail"] == "自动修复错误: 诊断操作失败"
+    assert response.json()["data"]["detail"] == "自动修复内部错误: 诊断操作失败"
+    assert response.json()["data"]["error_code"] == "AUTOFIX_INTERNAL_ERROR"
     assert_logged_with_traceback(caplog, "aiops")
 
 

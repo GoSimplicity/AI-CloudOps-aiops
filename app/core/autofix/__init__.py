@@ -3,6 +3,6 @@
 
 """自动修复核心能力。"""
 
-from .remediation import AutoFixRemediationEngine
+from .remediation import AutoFixRemediationEngine, RemediationEngine
 
-__all__ = ["AutoFixRemediationEngine"]
+__all__ = ["AutoFixRemediationEngine", "RemediationEngine"]

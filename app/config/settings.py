@@ -731,12 +731,16 @@ _autofix_config_logger = logging.getLogger("aiops.config.autofix")
 
 
 def _parse_autofix_bool(env_key: str, config_path: str) -> bool:
-    """autofix 开关只认 true（大小写不敏感）；false 为关闭；其它任何值（含空串、0/1、yes/no、YAML 数字）按关闭处理并告警"""
+    """autofix 开关解析规则：先 strip，再 lower，等于 true 才开启；false 为关闭。
+
+    其它任何值（含空串、0/1、yes/no、YAML 数字 1/0）按关闭处理并告警。
+    YAML 里写成 ``1``（int）同样按关闭处理并告警——只有 true 会开启。
+    """
     value = get_env_or_config(env_key, config_path, False)
     if value is True or value is False:
         return value
-    if isinstance(value, str) and value.lower() in ("true", "false"):
-        return value.lower() == "true"
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
     _autofix_config_logger.warning(
         "autofix 开关 %s / %s 的值 %r 不是 true/false，已按 false（关闭）处理；只有 true 会开启",
         env_key,

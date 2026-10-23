@@ -128,6 +128,17 @@ class AutoFixError(AIOpsException):
         )
 
 
+class AutoFixInternalError(AIOpsException):
+    """自动修复内部错误（非上游原因的未预期异常），映射 HTTP 500"""
+
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(
+            message=f"自动修复内部错误: {message}",
+            error_code="AUTOFIX_INTERNAL_ERROR",
+            details=details,
+        )
+
+
 class AssistantError(AIOpsException):
     """智能助手异常"""
 
