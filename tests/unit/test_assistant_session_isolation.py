@@ -379,3 +379,61 @@ def test_failed_implicit_session_does_not_consume_owner_quota(session_client):
     assert response.status_code == 502
     assert not service._sessions.sessions
     assert not rag.context_manager.session_contexts
+
+
+@pytest.fixture
+def cold_session_client(session_client, monkeypatch, tmp_path):
+    client, service, _ = session_client
+    knowledge = tmp_path / "knowledge"
+    knowledge.mkdir()
+    document = knowledge / "existing.md"
+    document.write_text("已存在的知识文档，冷启动可能触发嵌入")
+    monkeypatch.setattr(config.rag, "knowledge_base_path", str(knowledge))
+    embedding = AsyncMock(return_value=[1.0, 0.0])
+    generation = AsyncMock(return_value={"answer": "owned cold start", "success": True})
+
+    async def load_existing_document():
+        await embedding(document.read_text())
+        service._assistant = SimpleNamespace(get_answer=generation)
+
+    service._assistant = None
+    service._initialized = False
+    initializer = AsyncMock(side_effect=load_existing_document)
+    monkeypatch.setattr(service, "_do_initialize", initializer)
+    initialize = AsyncMock(wraps=service.initialize)
+    monkeypatch.setattr(service, "initialize", initialize)
+    return client, service, initialize, initializer, embedding, generation
+
+
+@pytest.mark.parametrize("target", ["foreign", "internal", "unknown", "legacy"])
+def test_cold_rag_rejects_session_before_initialization_or_provider_use(cold_session_client, target):
+    client, service, initialize, initializer, embedding, generation = cold_session_client
+    sid = client.post("/assistant/session", headers=headers("1")).json()["data"]["session_id"]
+    reader = None if target == "internal" else "2"
+    if target in {"unknown", "legacy"}:
+        sid = "unknown-session" if target == "unknown" else "user_1_legacy-predictable"
+    expected = 404 if target in {"unknown", "legacy"} else 403
+    response = client.post("/assistant/query", headers=headers(reader), json={
+        "question": "不得初始化或调用模型", "mode": 1, "session_id": sid,
+    })
+    assert response.status_code == expected
+    initialize.assert_not_awaited()
+    initializer.assert_not_awaited()
+    embedding.assert_not_awaited()
+    generation.assert_not_awaited()
+    assert not service.is_initialized()
+
+
+def test_cold_rag_initializes_and_generates_for_owned_session(cold_session_client):
+    client, service, initialize, initializer, embedding, generation = cold_session_client
+    sid = client.post("/assistant/session", headers=headers("1")).json()["data"]["session_id"]
+    response = client.post("/assistant/query", headers=headers("1"), json={
+        "question": "已授权会话", "mode": 1, "session_id": sid,
+    })
+    assert response.status_code == 200
+    assert response.json()["data"]["answer"] == "owned cold start"
+    initialize.assert_awaited_once()
+    initializer.assert_awaited_once()
+    embedding.assert_awaited_once()
+    generation.assert_awaited_once_with(question="已授权会话", session_id=sid)
+    assert service.is_initialized()

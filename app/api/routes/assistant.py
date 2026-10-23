@@ -151,11 +151,8 @@ async def assistant_query(
             status_code=HttpStatusCodes.BAD_REQUEST, detail="question不能为空"
         )
 
-    # MCP 模式不依赖 RAG 与嵌入模型，先完成模式和输入校验
+    # 服务层先校验会话归属，再按模式初始化依赖
     valid_req = AssistantRequest(**request)
-    if valid_req.mode == 1:
-        await (await get_assistant_service()).initialize()
-
     result = await (await get_assistant_service()).get_answer(
         question=valid_req.question,
         mode=valid_req.mode,
