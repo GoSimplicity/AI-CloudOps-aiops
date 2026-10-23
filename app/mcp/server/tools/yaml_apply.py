@@ -5,7 +5,6 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from functools import partial
 import json
-import os
 import re
 from typing import Any
 
@@ -13,6 +12,7 @@ from kubernetes.dynamic import DynamicClient
 import yaml
 
 from .k8s_base_tool import K8sToolInputError
+from .kubeconfig_policy import CONFIG_PATH_UNAVAILABLE_MESSAGE
 
 MAX_YAML_BYTES = 1024 * 1024
 MAX_DOCUMENTS = 20
@@ -61,9 +61,10 @@ def _parse(parameters):
     if set(parameters) - {"operation", "config_path", "namespace", "yaml_content"}:
         raise ApplyValidationError("apply_yaml包含不支持的参数，不接受强制覆盖字段所有权")
     config_path = parameters.get("config_path")
-    # 与门禁 has_custom_config_path 一致：缺省、None、空串都按默认 kubeconfig 处理
-    if config_path not in (None, "") and (not isinstance(config_path, str) or not os.path.isfile(config_path)):
-        raise ApplyValidationError("显式kubeconfig必须是存在的文件，拒绝回退到其他集群")
+    # 与门禁 has_custom_config_path 一致：缺省、None、空串都按默认 kubeconfig 处理。
+    # SEC-46：apply_yaml 是写操作，自定义来源只读，任何其它取值一律拒绝（不探测文件是否存在）
+    if config_path not in (None, ""):
+        raise ApplyValidationError(CONFIG_PATH_UNAVAILABLE_MESSAGE)
     content = parameters.get("yaml_content")
     if not isinstance(content, str) or not content.strip() or len(content.encode("utf-8")) > MAX_YAML_BYTES:
         raise ApplyValidationError("YAML必须为非空UTF-8文本且不超过1MiB")

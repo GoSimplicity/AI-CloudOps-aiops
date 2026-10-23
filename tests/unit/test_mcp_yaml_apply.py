@@ -267,13 +267,18 @@ async def test_invalid_explicit_config_never_falls_back_to_another_cluster(tool)
     tool._initialize_clients = Mock(side_effect=AssertionError("must not initialize"))
     result = await tool._execute_internal({"operation": "apply_yaml", "yaml_content": bundle(manifest()), "config_path": "/nonexistent/offline-kubeconfig"})
     assert result["success"] is False
-    assert "拒绝回退" in result["message"]
+    # SEC-46 / P3-G：apply_yaml 是写操作，任何 config_path 统一拒绝，不探测文件是否存在
+    assert "config_path 不可用" in result["message"]
     tool._initialize_clients.assert_not_called()
 
 
 def test_cached_resource_client_never_ignores_a_different_explicit_target(tool, tmp_path, monkeypatch):
+    """SEC-46：不再绑定首个来源。未配置白名单时任何显式 config_path 都在加载前拒绝，
+    且被拒绝的请求不会影响默认来源；默认来源只加载一次并缓存。"""
+    from app.config.settings import config
     from app.mcp.server.tools.k8s_base_tool import K8sBaseTool
 
+    monkeypatch.setattr(config.mcp, "kubeconfig_allowed_dir", "")
     first, second = tmp_path / "first", tmp_path / "second"
     first.touch()
     second.touch()
@@ -283,13 +288,13 @@ def test_cached_resource_client_never_ignores_a_different_explicit_target(tool, 
         calls.append(config_path)
         return Mock(name="api-client")
 
-    # SEC-33 L2 P1-1：绑定逻辑下沉到 K8sBaseTool，只替换最底层的 kubeconfig 加载，真实走初始化与缓存
+    # 只替换最底层的 kubeconfig 加载，真实走初始化与缓存
     monkeypatch.setattr(K8sBaseTool, "_new_api_client", new_api_client)
     monkeypatch.setattr(K8sResourceTool, "_create_api_clients", lambda self, api_client: {"offline": api_client})
-    tool._initialize_clients(str(first))
-    tool._initialize_clients(str(first))
-    with pytest.raises(ValueError, match="切换集群"):
-        tool._initialize_clients(str(second))
-    with pytest.raises(ValueError, match="切换集群"):
-        tool._initialize_clients(None)
-    assert calls == [str(first)]
+    for explicit in (str(first), str(second)):
+        with pytest.raises(ValueError, match="config_path 不可用"):
+            tool._initialize_clients(explicit)
+    default = tool._initialize_clients(None)
+    assert tool._initialize_clients("") is default
+    assert calls == [None]
+    assert tool._custom_clients == {}

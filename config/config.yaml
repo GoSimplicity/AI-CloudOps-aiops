@@ -216,6 +216,7 @@ mcp:
   health_check_interval: 30 # 健康检查间隔（秒）
   write_tools_enabled: false # SEC-33：MCP 写工具总开关，默认关闭；开启后仍需 autofix.repair_enabled 与 allowed_namespaces
   secret_read_enabled: false # SEC-33：MCP list_secrets/get_secret 开关，默认关闭；开启后也只返回 name/type/keys，并受 allowed_namespaces 约束
+  kubeconfig_allowed_dir: "" # SEC-46：K8s 读工具 config_path 白名单目录（realpath），默认空=禁用自定义 config_path；不得位于 data/ 或知识库目录下，含 exec/auth-provider 的 kubeconfig 一律拒绝
 
 # 安全配置
 security:

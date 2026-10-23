@@ -1,14 +1,17 @@
-"""SEC-33 第二层 P1-1：K8s 工具客户端与配置来源绑定，缓存客户端不能绕过写门禁的 config_path 限制。
+"""SEC-33 第二层 P1-1 / SEC-46（L3 P3-A）：K8s 工具客户端按配置来源分开缓存，缓存客户端不能绕过写门禁的 config_path 限制。
+
+SEC-46 起不再「绑定首个来源」：默认来源客户端单独保存（读写），白名单目录内的自定义 kubeconfig 按 realpath
+缓存且只读。原 L2 断言「切换来源即拒绝」改为断言「每个请求只落在它自己的来源上，写/Secret 读只落在 default」。
 
 全部离线：kubeconfig 加载被替换为把合成 host 写入 Configuration 的假实现，所有 K8s API 方法在类上替换为
 只记录「方法名 + 实际使用的 host」的记录器（不替换 _initialize_clients，真实走工具的初始化与缓存逻辑）。
 """
 
-import os
 from unittest.mock import Mock
 
 from kubernetes import client, config as kube_config
 import pytest
+import yaml
 
 from app.config.settings import config
 from app.mcp.server.mcp_server import MCPServer
@@ -39,24 +42,28 @@ def kube(monkeypatch, tmp_path):
     (home / ".kube" / "config").write_text("synthetic-default-kubeconfig\n")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("KUBECONFIG", raising=False)
-    alt = tmp_path / "alt-kubeconfig"
-    alt.write_text("synthetic-alt-kubeconfig\n")
-    alt_link = tmp_path / "alt-link"
+    allowed = tmp_path / "kubeconfigs"
+    allowed.mkdir()
+    monkeypatch.setattr(config.mcp, "kubeconfig_allowed_dir", str(allowed))
+    alt = allowed / "alt-kubeconfig"
+    alt.write_text(yaml.safe_dump({"clusters": [{"name": "c", "cluster": {"server": ALT_HOST}}], "users": [{"name": "u", "user": {"token": "t"}}]}))
+    alt_link = allowed / "alt-link"
     alt_link.symlink_to(alt)
     monkeypatch.setattr(client.Configuration, "_default", None)
     loads = []
 
     def fake_load_kube_config(config_file=None, context=None, client_configuration=None, persist_config=True, temp_file_path=None):
-        host = ALT_HOST if config_file and os.path.realpath(config_file) == os.path.realpath(alt) else DEFAULT_HOST
-        loads.append((config_file, client_configuration is None))
-        if client_configuration is None:
-            cfg = client.Configuration()
-            cfg.host = host
-            client.Configuration.set_default(cfg)
-        else:
-            client_configuration.host = host
+        # SEC-46：按路径加载只用于默认来源（~/.kube/config）
+        assert config_file is None
+        loads.append(("default", client_configuration is None))
+        client_configuration.host = DEFAULT_HOST
+
+    def fake_load_from_dict(config_dict, context=None, client_configuration=None, persist_config=True, temp_file_path=None):
+        loads.append((config_dict["clusters"][0]["cluster"]["server"], client_configuration is None))
+        client_configuration.host = config_dict["clusters"][0]["cluster"]["server"]
 
     monkeypatch.setattr(kube_config, "load_kube_config", fake_load_kube_config)
+    monkeypatch.setattr(kube_config, "load_kube_config_from_dict", fake_load_from_dict)
     monkeypatch.setattr(kube_config, "load_incluster_config", Mock(side_effect=AssertionError("in-cluster config must not be used")))
     calls = []
 
@@ -103,24 +110,21 @@ def _hosts(calls, prefix=""):
     return [host for name, host in calls if name.startswith(prefix)]
 
 
-async def test_list_pods_with_alt_config_then_delete_pod_without_config_never_hits_alt(kube, gates, server):
+async def test_list_pods_with_alt_config_then_delete_pod_without_config_goes_to_default_only(kube, gates, server):
     gates(write=True, repair=True, allowed=["staging"])
     await server.execute_tool("k8s_pod_management", {"operation": "list_pods", "namespace": "staging", "config_path": kube.alt})
     assert ("list_namespaced_pod", ALT_HOST) in kube.calls
-    result = await server.execute_tool("k8s_pod_management", {"operation": "delete_pod", "namespace": "staging", "pod_name": "web-0"})
-    assert _hosts(kube.calls, "delete_") == []
-    assert result["success"] is False
-    assert "切换集群" in result["message"]
+    await server.execute_tool("k8s_pod_management", {"operation": "delete_pod", "namespace": "staging", "pod_name": "web-0"})
+    assert _hosts(kube.calls, "delete_") == [DEFAULT_HOST]
 
 
 async def test_list_configmaps_with_alt_config_then_get_secret_never_reads_alt_secret(kube, gates, server):
     gates(secret=True, allowed=["staging"])
     await server.execute_tool("k8s_config_management", {"operation": "list_configmaps", "namespace": "staging", "config_path": kube.alt})
     assert ("list_namespaced_config_map", ALT_HOST) in kube.calls
-    result = await server.execute_tool("k8s_config_management", {"operation": "get_secret", "namespace": "staging", "resource_name": "db"})
-    assert [c for c in kube.calls if "secret" in c[0]] == []
-    assert result["success"] is False
-    assert "切换集群" in result["message"]
+    await server.execute_tool("k8s_config_management", {"operation": "get_secret", "namespace": "staging", "resource_name": "db"})
+    secret_hosts = [host for name, host in kube.calls if "secret" in name]
+    assert secret_hosts and set(secret_hosts) == {DEFAULT_HOST}
 
 
 READS = [
@@ -138,27 +142,25 @@ READS = [
 
 
 @pytest.mark.parametrize("tool,params", READS, ids=[r[0] for r in READS])
-async def test_every_k8s_tool_binds_clients_to_first_config_source(kube, gates, server, tool, params):
+async def test_every_k8s_tool_keeps_alt_and_default_sources_apart(kube, gates, server, tool, params):
     await server.execute_tool(tool, {**params, "config_path": kube.alt})
     first = list(kube.calls)
     assert first and set(_hosts(first)) == {ALT_HOST}
     # 独立 Configuration：不修改 kubernetes 全局默认配置
     assert client.Configuration.get_default_copy().host != ALT_HOST
     assert all(not global_load for _, global_load in kube.loads)
-    result = await server.execute_tool(tool, dict(params))
-    assert kube.calls == first, "未带 config_path 的请求不能复用绑定到备用配置的客户端"
-    assert result["success"] is False
-    assert "切换集群" in result["message"]
+    await server.execute_tool(tool, dict(params))
+    later = kube.calls[len(first) :]
+    assert later and set(_hosts(later)) == {DEFAULT_HOST}, "未带 config_path 的请求绝不能复用备用配置的客户端"
 
 
 @pytest.mark.parametrize("tool,params", READS, ids=[r[0] for r in READS])
-async def test_default_bound_tool_refuses_later_alt_config(kube, gates, server, tool, params):
+async def test_default_first_then_alt_read_uses_alt(kube, gates, server, tool, params):
     await server.execute_tool(tool, dict(params))
     assert kube.calls and set(_hosts(kube.calls)) == {DEFAULT_HOST}
-    before = list(kube.calls)
-    result = await server.execute_tool(tool, {**params, "config_path": kube.alt})
-    assert kube.calls == before
-    assert result["success"] is False and "切换集群" in result["message"]
+    before = len(kube.calls)
+    await server.execute_tool(tool, {**params, "config_path": kube.alt})
+    assert kube.calls[before:] and set(_hosts(kube.calls[before:])) == {ALT_HOST}
 
 
 async def test_same_source_via_symlink_reuses_clients(kube, gates, server):
@@ -171,35 +173,35 @@ async def test_same_source_via_symlink_reuses_clients(kube, gates, server):
 
 @pytest.mark.parametrize("tool,params", READS[:3], ids=[r[0] for r in READS[:3]])
 async def test_missing_explicit_config_never_falls_back_to_default(kube, gates, server, tool, params, tmp_path):
-    result = await server.execute_tool(tool, {**params, "config_path": str(tmp_path / "missing-kubeconfig")})
+    result = await server.execute_tool(tool, {**params, "config_path": str(tmp_path / "kubeconfigs" / "missing-kubeconfig")})
     assert kube.calls == []
-    assert result["success"] is False
-    # 之后默认配置仍可正常绑定
+    assert result["success"] is False and "config_path 不可用" in result["message"]
+    # 之后默认配置仍可正常使用
     await server.execute_tool(tool, dict(params))
     assert set(_hosts(kube.calls)) == {DEFAULT_HOST}
 
 
-async def test_resource_tool_bound_to_alt_cannot_label_default_and_apply_client_is_independent(kube, gates, server):
+async def test_resource_tool_alt_read_then_default_label_and_apply_client_is_independent(kube, gates, server):
     gates(write=True, repair=True, allowed=["staging"])
     await server.execute_tool(
         "k8s_resource_operations",
         {"operation": "describe_resource", "resource_type": "pod", "resource_name": "web-0", "namespace": "staging", "config_path": kube.alt},
     )
     assert kube.dynamic_hosts == [ALT_HOST]
-    before = list(kube.calls)
-    result = await server.execute_tool(
+    before = len(kube.calls)
+    await server.execute_tool(
         "k8s_resource_operations",
         {"operation": "add_labels", "resource_type": "pod", "resource_name": "web-0", "namespace": "staging", "labels": {"a": "b"}},
     )
-    assert kube.calls == before
-    assert result["success"] is False and "切换集群" in result["message"]
+    assert kube.dynamic_hosts == [ALT_HOST, DEFAULT_HOST]
+    assert ALT_HOST not in _hosts(kube.calls[before:])
 
 
-async def test_cleanup_releases_binding_so_tool_can_rebind(kube, gates, server):
+async def test_cleanup_releases_all_sources_so_tool_can_reinitialize(kube, gates, server):
     params = {"operation": "list_pods", "namespace": "staging"}
     await server.execute_tool("k8s_pod_management", {**params, "config_path": kube.alt})
     tool = server.tools["k8s_pod_management"]
     await tool.cleanup()
-    assert tool._api_clients is None and tool._client_source is None
+    assert tool._api_clients is None and tool._custom_clients == {}
     await server.execute_tool("k8s_pod_management", dict(params))
     assert _hosts(kube.calls) == [ALT_HOST, DEFAULT_HOST]

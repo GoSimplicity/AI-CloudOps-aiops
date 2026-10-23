@@ -54,8 +54,11 @@ async def test_safe_input_error_message_passes_through(capture):
 
 
 async def test_kubeconfig_load_failure_does_not_leak(capture, tmp_path, monkeypatch):
-    kubeconfig = tmp_path / "kubeconfig"
-    kubeconfig.write_text("synthetic", encoding="utf-8")
+    # SEC-46：按路径加载只剩默认来源（~/.kube/config）
+    home = tmp_path / "home"
+    (home / ".kube").mkdir(parents=True)
+    (home / ".kube" / "config").write_text("synthetic", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
 
     def boom(*args, **kwargs):
         raise RuntimeError(f"load failed {MARKER}")
@@ -64,9 +67,32 @@ async def test_kubeconfig_load_failure_does_not_leak(capture, tmp_path, monkeypa
 
     class _InitTool(_Tool):
         async def _execute_internal(self, parameters):
-            self._initialize_clients(str(kubeconfig))
+            self._initialize_clients(None)
 
     result = await _InitTool(None).execute({})
     assert result["message"] == "无法加载Kubernetes配置"
+    assert MARKER not in repr(result)
+    assert MARKER not in _rendered(capture, logging.INFO)
+
+
+async def test_custom_kubeconfig_load_failure_does_not_leak(capture, tmp_path, monkeypatch):
+    from app.config.settings import config
+
+    allowed = tmp_path / "kubeconfigs"
+    allowed.mkdir()
+    (allowed / "alt.yaml").write_text("clusters: []\nusers: []\n", encoding="utf-8")
+    monkeypatch.setattr(config.mcp, "kubeconfig_allowed_dir", str(allowed))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError(f"load failed {MARKER}")
+
+    monkeypatch.setattr(k8s_base_tool.config, "load_kube_config_from_dict", boom)
+
+    class _InitTool(_Tool):
+        async def _execute_internal(self, parameters):
+            self._initialize_clients(str(allowed / "alt.yaml"))
+
+    result = await _InitTool(None).execute({})
+    assert "config_path 不可用" in result["message"]
     assert MARKER not in repr(result)
     assert MARKER not in _rendered(capture, logging.INFO)
