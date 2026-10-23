@@ -149,3 +149,10 @@ data/vector_db
 
 # Local cluster credentials
 /deploy/kubernetes/config
+
+# SEC-01A: 环境变量文件（含备份如 .env.bak-*），禁止提交
+# （/deploy/kubernetes/config 已在上方 "Local cluster credentials" 中忽略）
+.env.*
+# 模板保持跟踪（必须放在上面的忽略规则之后）
+!*.example
+!.env.example
