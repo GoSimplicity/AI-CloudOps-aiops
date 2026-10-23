@@ -47,10 +47,18 @@ async def custom_http_exception_handler(
         log_method(f"请求信息 - URL: {request.url}, Method: {request.method}")
 
         # 构建错误响应
+        error_data = _build_error_data(request, exc.status_code, exc.detail)
+        # api_response 转换的领域异常保留 error_code / details，前端据此区分错误类型
+        error_code = getattr(exc, "error_code", None)
+        if error_code:
+            error_data["error_code"] = error_code
+            error_details = getattr(exc, "error_details", None)
+            if error_details and (exc.status_code < 500 or config.debug):
+                error_data["details"] = error_details
         error_response = BaseResponse(
             code=exc.status_code,
             message=str(exc.detail) if exc.status_code < 500 or config.debug else ServiceConstants.INTERNAL_SERVER_ERROR_MESSAGE,
-            data=_build_error_data(request, exc.status_code, exc.detail),
+            data=error_data,
         )
 
         return JSONResponse(status_code=exc.status_code, content=error_response.dict())

@@ -19,7 +19,7 @@ from fastapi import HTTPException, Request
 from app.models import BaseResponse
 
 from ..common.constants import HttpStatusCodes
-from ..common.exceptions import AIOpsException, FeatureDisabledError, NamespaceNotAllowedError
+from ..common.exceptions import AIOpsException
 
 try:
     from app.common.logger import get_logger
@@ -27,6 +27,15 @@ try:
     logger = get_logger("aiops.api.decorators")
 except Exception:
     logger = logging.getLogger("aiops.api.decorators")
+
+
+class AIOpsHTTPException(HTTPException):
+    """携带领域 error_code / details 的 HTTPException（api_response 用来保留 AIOpsException 的错误码）"""
+
+    def __init__(self, status_code: int, detail: Any, error_code: str, error_details: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(status_code=status_code, detail=detail)
+        self.error_code = error_code
+        self.error_details = error_details or {}
 
 
 def api_response(operation_name: str = "操作") -> Callable:
@@ -47,15 +56,16 @@ def api_response(operation_name: str = "操作") -> Callable:
 
             except HTTPException:
                 raise
-            except (FeatureDisabledError, NamespaceNotAllowedError):
-                # 交给 AIOps 异常处理器输出 data.error_code / data.details，便于前端按 error_code 区分
-                raise
             except AIOpsException as e:
-                logger.error(f"{operation_name}失败: {e.message}")
-                raise HTTPException(
+                # 保留领域异常的 error_code / details：由 custom_http_exception_handler 写入
+                # data.error_code / data.details；>=500 时 message 与 details 仍由处理器统一脱敏
+                logger.error(f"{operation_name}失败: [{e.error_code}] {e.message}")
+                raise AIOpsHTTPException(
                     status_code=_get_http_status_for_aiops_exception(e),
                     detail=e.message,
-                )
+                    error_code=e.error_code,
+                    error_details=e.details,
+                ) from e
             except Exception as e:
                 logger.error(f"{operation_name}发生未处理异常: {str(e)}", exc_info=True)
                 raise HTTPException(
