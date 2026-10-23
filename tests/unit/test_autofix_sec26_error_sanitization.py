@@ -32,6 +32,16 @@ def assert_logged_with_traceback(caplog, logger_prefix: str, error_type: str = "
         assert error_type in record.getMessage()
 
 
+def assert_error_logged_without_traceback(caplog, logger_prefix: str, error_type: str) -> None:
+    """SEC-33 L2 P3-1：diagnose 链路 ERROR 日志只有操作名/类型/状态，不带堆栈（异常链含原始文本），原始信息只进 DEBUG"""
+    records = [r for r in caplog.records if r.name.startswith(logger_prefix) and r.levelno >= logging.ERROR]
+    assert records
+    assert any(error_type in r.getMessage() for r in records)
+    for record in records:
+        assert record.exc_info is None
+        assert SECRET not in logging.Formatter().format(record)
+
+
 @pytest.fixture(autouse=True)
 def debug_on(monkeypatch):
     # debug 打开时全局处理器会回显 message/details，用最宽松的设置证明响应里也没有异常内容
@@ -122,8 +132,8 @@ async def test_service_pod_logs_failure_hides_exception(caplog) -> None:
         result = await service.diagnose_kubernetes_issues("api", "default", include_pods=True, include_logs=True)
     assert result["diagnosis"]["logs"] == {"api-0": "获取日志失败"}
     assert SECRET not in str(result)
-    # execute_with_timeout 先把原始异常包装为 ServiceUnavailableError
-    assert_logged_with_traceback(caplog, "aiops.services.autofix", "ServiceUnavailableError")
+    # SEC-33 L2 P3-1：diagnose 链路 ERROR 只记类型（取 execute_with_timeout 包装前的原始异常类型），不带堆栈
+    assert_error_logged_without_traceback(caplog, "aiops.services.autofix", "LeakyError")
 
 
 async def test_service_diagnose_failure_hides_exception(caplog) -> None:
@@ -136,7 +146,7 @@ async def test_service_diagnose_failure_hides_exception(caplog) -> None:
     assert SECRET not in raised.value.message
     assert raised.value.details == {}
     assert raised.value.error_code == "SERVICE_UNAVAILABLE"
-    assert_logged_with_traceback(caplog, "aiops.services.autofix", "LeakyError")
+    assert_error_logged_without_traceback(caplog, "aiops.services.autofix", "LeakyError")
 
 
 async def test_service_health_info_hides_exception(monkeypatch, caplog) -> None:

@@ -40,7 +40,7 @@ class K8sClient(Protocol):
 
     # 可选：与Deployment相关的方法，供需要的上层使用
     async def get_deployment(
-        self, name: str, namespace: str
+        self, name: str, namespace: str, *, raise_unavailable: bool = False
     ) -> Optional[Dict[str, Any]]: ...
 
     async def patch_deployment(
@@ -82,7 +82,7 @@ class NullK8sClient:
         return None
 
     async def get_deployment(
-        self, name: str, namespace: str
+        self, name: str, namespace: str, *, raise_unavailable: bool = False
     ) -> Optional[Dict[str, Any]]:
         return None
 
