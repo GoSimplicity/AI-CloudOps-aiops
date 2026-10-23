@@ -18,6 +18,8 @@ from datetime import datetime
 import logging
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
+from app.common.identity import principal_context
+
 from .audit import PHASE_INTENT, PHASE_REFUSED, PHASE_RESULT, build_audit_record, emit_audit, new_audit_id
 
 logger = logging.getLogger("aiops.autofix.remediation")
@@ -31,7 +33,8 @@ ACTION_RISK_GRADES: Dict[str, str] = {
     "scale_deployment": "medium",
     "adjust_resource_requests": "medium",
 }
-AUTO_EXECUTE_ACTION_TYPES = frozenset({"restart_deployment", "patch_image_pull_policy"})
+# SEC-44 修正：免确认白名单只保留 restart_deployment；patch_image_pull_policy 风险等级仍为 low，但一律需人工确认
+AUTO_EXECUTE_ACTION_TYPES = frozenset({"restart_deployment"})
 
 # SEC-44 G1：动作 → 对应故障类型 → 必须在实时 Pod 状态中看到的信号（任一即匹配）
 ACTION_FAULT_TYPES: Dict[str, str] = {
@@ -41,11 +44,17 @@ ACTION_FAULT_TYPES: Dict[str, str] = {
     "adjust_resource_requests": "resource_insufficient",
 }
 FAULT_EVIDENCE_SIGNALS: Dict[str, frozenset] = {
-    "crash_loop_backoff": frozenset({"crash_loop_backoff", "high_restart_count", "not_ready_after_restart"}),
+    # SEC-44 修正：CrashLoop 只认 waiting=CrashLoopBackOff 或 restart_count>=3（不再接受「未 Ready 且重启>=1」）
+    "crash_loop_backoff": frozenset({"crash_loop_backoff", "high_restart_count"}),
     "image_pull_failure": frozenset({"image_pull_backoff"}),
     "resource_insufficient": frozenset({"oom_killed", "unschedulable"}),
 }
 HIGH_RESTART_COUNT = 3
+
+
+def _is_user_principal(principal: Any) -> bool:
+    return isinstance(principal, str) and principal.startswith("user:") and len(principal) > len("user:")
+
 EVIDENCE_TIMEOUT_SECONDS = 15.0
 _IMAGE_PULL_REASONS = {"ImagePullBackOff", "ErrImagePull"}
 
@@ -263,6 +272,7 @@ class AutoFixRemediationEngine:
                 "not_attempted_actions": not_attempted_actions,
                 "error": refusal.get("error"),
                 "refusal": refusal.get("refusal"),
+                "audit_result_recorded": True,
                 "dry_run": dry_run,
                 "timestamp": datetime.now().isoformat(),
             }
@@ -288,6 +298,8 @@ class AutoFixRemediationEngine:
             "post_check": post_check,
             "not_attempted_actions": not_attempted_actions,
             "error": "修复动作或工作负载就绪检查未确认成功，请核对实际状态，勿盲目重试" if failed or rollout_failed else None,
+            # SEC-44 修正：任一已写动作的结果审计缺失即为 False，由调用方透传到 run 状态 / confirm 响应
+            "audit_result_recorded": all(record.get("audit_result_recorded", True) is not False for record in executed_actions),
             "dry_run": dry_run,
             "timestamp": datetime.now().isoformat(),
         }
@@ -405,9 +417,6 @@ class AutoFixRemediationEngine:
                 continue
             status = pod.get("status") or {}
             conditions = status.get("conditions") or []
-            not_ready = any(
-                isinstance(c, dict) and c.get("type") == "Ready" and str(c.get("status")) != "True" for c in conditions
-            )
             if any(
                 isinstance(c, dict) and c.get("type") == "PodScheduled" and c.get("reason") == "Unschedulable" for c in conditions
             ):
@@ -426,8 +435,6 @@ class AutoFixRemediationEngine:
                     signals.add("image_pull_backoff")
                 if restarts >= HIGH_RESTART_COUNT:
                     signals.add("high_restart_count")
-                if not_ready and restarts >= 1:
-                    signals.add("not_ready_after_restart")
                 if terminated.get("reason") == "OOMKilled":
                     signals.add("oom_killed")
         return signals
@@ -732,6 +739,22 @@ class AutoFixRemediationEngine:
                 )
             )
 
+        # SEC-44 修正：确认路径必须有可信用户主体（user:<id>）；未知主体或服务主体不执行，记 refused 审计
+        if not auto_executed and not _is_user_principal(principal_context.get()):
+            record.update(
+                {
+                    "status": "refused",
+                    "refusal": "principal",
+                    "error": "确认执行需要可信用户身份（X-CloudOps-User-ID），未执行写操作",
+                    "finished_at": datetime.now().isoformat(),
+                }
+            )
+            try:
+                audit(PHASE_REFUSED, result="refused", reason="principal missing")
+            except Exception as exc:
+                logger.warning("拒绝审计写入失败: 错误类型=%s", type(exc).__name__)
+            return record
+
         # SEC-44 G2：实际写入口按当前配置再过一次写操作门禁；不放行即不写集群
         refusal = self._mutation_refusal(namespace, str(action_type or ""), auto_executed)
         if refusal is not None:
@@ -777,7 +800,7 @@ class AutoFixRemediationEngine:
             audit(PHASE_RESULT, result=record["status"], error_type=error_type)
         except Exception as exc:
             # 写操作已提交，无法回退：标记审计缺失，由调用方/运维核对
-            logger.error("结果审计写入失败: 错误类型=%s, audit_id=%s", type(exc).__name__, audit_id)
+            logger.error("结果审计写入失败（写操作已提交）: 错误类型=%s", type(exc).__name__)
             record["audit_result_recorded"] = False
         return record
 

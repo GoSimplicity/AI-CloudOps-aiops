@@ -648,7 +648,7 @@ class OpsMultiAgentWorkflow:
         review = state.get("review") or {}
         execution = state.get("execution") or {}
         status = state.get("status") or execution.get("status") or "completed"
-        return {
+        result = {
             "status": status,
             "next_action": state.get("next_action", "finish"),
             "agents_used": state.get("agents_used", []),
@@ -662,3 +662,7 @@ class OpsMultiAgentWorkflow:
             "messages": state.get("messages", []),
             "timestamp": datetime.now().isoformat(),
         }
+        if "audit_result_recorded" in execution:
+            # SEC-44 修正：结果审计缺失（写操作已提交）在 run 状态顶层显式上报
+            result["audit_result_recorded"] = execution["audit_result_recorded"] is not False
+        return result

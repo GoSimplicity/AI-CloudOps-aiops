@@ -110,8 +110,47 @@ async def test_autofix_service_executes_multi_agent_workflow() -> None:
     assert result["approval"]["pending_action_ids"] == ["patch-image-pull-policy"]
 
 
+class FakeRestartRemediationEngine(FakeRemediationEngine):
+    async def build_plan(self, diagnosis):
+        return {
+            "fault_type": "crash_loop_backoff",
+            "candidate_actions": [
+                {
+                    "action_id": "restart-deployment",
+                    "action_type": "restart_deployment",
+                    "executable": True,
+                    "risk_assessment": {
+                        "allowed": True,
+                        "risk_level": "low",
+                        "requires_human_confirmation": False,
+                        "live_evidence": {"source": "live", "fault_type": "crash_loop_backoff", "checked": True, "matched": True},
+                    },
+                }
+            ],
+        }
+
+
 @pytest.mark.asyncio
 async def test_autofix_service_legacy_auto_execute_switch(monkeypatch) -> None:
+    from app.config.settings import config
+
+    monkeypatch.setattr(config.autofix, "auto_execute_enabled", True)
+    service = AutoFixService()
+    service._initialized = True
+    service._remediation_engine = FakeRestartRemediationEngine()
+
+    result = await service.execute_multi_agent_workflow(
+        {"problem_description": "deployment api CrashLoopBackOff", "deployment": "api", "namespace": "default"}
+    )
+
+    assert result["status"] == "completed"
+    assert result["agents_used"] == ["Coordinator", "Analyzer", "Planner", "Reviewer", "Executor"]
+    assert result["candidate_actions"][0]["risk_assessment"]["allowed"] is True
+
+
+@pytest.mark.asyncio
+async def test_autofix_service_auto_execute_never_runs_image_patch(monkeypatch) -> None:
+    """SEC-44 修正：patch_image_pull_policy 即使风险 low、证据匹配，auto 开启时也只计划、待确认"""
     from app.config.settings import config
 
     monkeypatch.setattr(config.autofix, "auto_execute_enabled", True)
@@ -123,9 +162,9 @@ async def test_autofix_service_legacy_auto_execute_switch(monkeypatch) -> None:
         {"problem_description": "deployment api ImagePullBackOff", "deployment": "api", "namespace": "default"}
     )
 
-    assert result["status"] == "completed"
-    assert result["agents_used"] == ["Coordinator", "Analyzer", "Planner", "Reviewer", "Executor"]
-    assert result["candidate_actions"][0]["risk_assessment"]["allowed"] is True
+    assert result["status"] == "needs_human_confirmation"
+    assert "Executor" not in result["agents_used"]
+    assert result["executed_actions"] == []
 
 
 class FakeAutoFixService:

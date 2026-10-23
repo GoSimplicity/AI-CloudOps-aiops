@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 import pytest
 
+from app.common.identity import principal_scope
 from app.core.autofix.remediation import AutoFixRemediationEngine
 
 
@@ -145,19 +146,26 @@ async def test_high_risk_multi_replica_restart_is_blocked_from_execution() -> No
 
 
 @pytest.mark.asyncio
-async def test_image_pull_failure_executes_safe_image_pull_policy_patch_and_records_rollout(allow_autofix_writes) -> None:
+async def test_image_pull_failure_patch_requires_confirmation_and_records_rollout(allow_autofix_writes) -> None:
     allow_autofix_writes("default", auto_execute=True)
     fake_k8s = FakeK8sClient(deployment(), pods=[waiting_pod("ImagePullBackOff")])
     engine = AutoFixRemediationEngine(k8s_client=fake_k8s, allowed_namespaces=["default"], auto_execute=True)
 
-    result = await engine.plan_and_execute(
-        {
-            "deployment": "api",
-            "namespace": "default",
-            "event": "ImagePullBackOff failed to pull image",
-            "diagnosis": {"events": [{"reason": "ImagePullBackOff", "message": "failed to pull image repo/api:bad"}]},
-        }
-    )
+    diagnosis = {
+        "deployment": "api",
+        "namespace": "default",
+        "event": "ImagePullBackOff failed to pull image",
+        "diagnosis": {"events": [{"reason": "ImagePullBackOff", "message": "failed to pull image repo/api:bad"}]},
+    }
+    # SEC-44 修正：image 补丁不在免确认白名单，auto 路径只记录证据、不写集群
+    auto = await engine.plan_and_execute(diagnosis)
+    assert auto["status"] == "blocked"
+    assert fake_k8s.patched == []
+    patch = next(a for a in auto["plan"]["candidate_actions"] if a["action_type"] == "patch_image_pull_policy")
+    assert patch["risk_assessment"]["live_evidence"]["matched"] is True
+
+    with principal_scope("user:1"):
+        result = await engine.execute_plan({"deployment": "api", "namespace": "default", "allowed_actions": [patch], "blocked_actions": []}, trigger="confirm")
 
     assert result["status"] == "completed"
     assert result["executed_actions"][0]["action_type"] == "patch_image_pull_policy"

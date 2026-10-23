@@ -14,11 +14,19 @@ import pytest
 from app.api.decorators import api_response
 from app.api.middleware.error_handler import setup_error_handlers
 from app.common.exceptions import AIOpsException, ServiceUnavailableError
+from app.common.identity import principal_scope
 from app.config.settings import config
 from tests.unit.test_autofix_sec26_auth_and_tightening import _plan_restart
 from tests.unit.test_autofix_sec26_run_lockdown import assert_no_writes, make_service, mock_k8s
 
 SIDE_EFFECT_HINT = "可能已产生副作用"
+
+@pytest.fixture(autouse=True)
+def confirming_user():
+    """SEC-44 修正：确认路径需要可信用户主体；本模块的确认流程以 user:1 执行"""
+    with principal_scope("user:1"):
+        yield
+
 
 
 async def _confirm_denied(service, plan_id: str, action_id: str) -> AIOpsException:

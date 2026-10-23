@@ -17,7 +17,7 @@
 | P3-7 | 确认重读白名单时在局部构建策略（`AutoFixRemediationEngine.with_policy`：`allowed_namespaces`、`auto_execute`、受限命名空间取并集），不修改共享单例。 | 无 |
 | P3-d | autofix / MCP 五个开关的 YAML 显式标签 `!!bool` 只接受不加引号的 `true`/`True`/`TRUE`/`false`/`False`/`FALSE`；`!!bool yes`、`!!bool 'true'`、`!!bool tRuE`、`!!bool 1` 等按关闭处理并告警（告警不含取值）。只改严格 loader，全局 `yaml.safe_load` 不变。 | 原来 `!!bool yes`/`on` 等为开启、`!!bool 'true'` 为开启，现在关闭 |
 | P3-e | `/autofix/diagnose`：上游超时与 Kubernetes 不可用（`ApiException` 无状态码 / 0、429、5xx）由 502 `AUTOFIX_ERROR` 改为 **503 `SERVICE_UNAVAILABLE`**（`details` 为空）；未知异常为 500 `AUTOFIX_INTERNAL_ERROR`。覆盖 s1 中 diagnose 的 502 部分，repair / bootstrap 不变。见 `docs/autofix_guide.md`「diagnose 错误映射」。 | 前端按 502 判断 diagnose 上游失败的需改为 503 |
-| SEC-44 | `auto_execute_enabled=true` 时，只有低风险白名单动作（restart、imagePullPolicy）且有实时 Pod 证据佐证的才自动执行，scale/requests 一律需确认；写入口统一调用 `ensure_mutation_allowed`（auto 与 confirm 都调用）；每个写动作前后各写一条结构化审计，意图审计失败则不执行。见 `docs/release/SEC-44-autofix-auto-execute.md`。 | 开启自动执行的部署中 scale/requests 改走确认；confirm 新增 403（门禁）/503（审计失败）两种不执行的拒绝；默认配置无行为变化 |
+| SEC-44 | `auto_execute_enabled=true` 时，只有白名单动作 restart 且有实时 Pod 证据佐证的才自动执行（SEC-44 修正后 imagePullPolicy 也改为一律确认），scale/requests 一律需确认；写入口统一调用 `ensure_mutation_allowed`（auto 与 confirm 都调用）；每个写动作前后各写一条结构化审计，意图审计失败则不执行。见 `docs/release/SEC-44-autofix-auto-execute.md`。 | 开启自动执行的部署中 scale/requests 改走确认；confirm 新增 403（门禁）/503（审计失败）/401（缺少用户主体）三种不执行的拒绝；默认配置无行为变化 |
 
 ## Tech Lead 补充决定（同一提交）
 

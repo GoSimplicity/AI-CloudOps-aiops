@@ -154,6 +154,15 @@ def switches(monkeypatch):
     return _set
 
 
+@pytest.fixture
+def human():
+    """确认路径需要可信用户主体（SEC-44 修正）；引擎级 confirm 测试以 user:1 身份执行"""
+    from app.common.identity import principal_scope
+
+    with principal_scope("user:1"):
+        yield
+
+
 def make_service(sdk: FakeSDK) -> AutoFixService:
     service = AutoFixService()
     service._initialized = True
@@ -182,12 +191,12 @@ def test_action_grades_and_whitelist_are_explicit() -> None:
         "scale_deployment": "medium",
         "adjust_resource_requests": "medium",
     }
-    assert AUTO_EXECUTE_ACTION_TYPES == frozenset({"restart_deployment", "patch_image_pull_policy"})
+    assert AUTO_EXECUTE_ACTION_TYPES == frozenset({"restart_deployment"})  # SEC-44 修正：image 仍为 low，但一律确认
     assert all(ACTION_RISK_GRADES[action] == "low" for action in AUTO_EXECUTE_ACTION_TYPES)
     assert set(ACTION_FAULT_TYPES) == set(ACTION_RISK_GRADES)
 
 
-@pytest.mark.parametrize("action_type", ["scale_deployment", "adjust_resource_requests", "unknown_write"])
+@pytest.mark.parametrize("action_type", ["patch_image_pull_policy", "scale_deployment", "adjust_resource_requests", "unknown_write"])
 def test_non_whitelisted_action_is_refused_even_with_low_risk_and_matching_evidence(action_type) -> None:
     evidence = {"source": "live", "fault_type": ACTION_FAULT_TYPES.get(action_type, "unknown"), "matched": True}
     action = {"action_type": action_type, "risk_assessment": {"risk_level": "low", "live_evidence": evidence}}
@@ -330,19 +339,57 @@ def test_matching_live_evidence_auto_executes_restart_with_two_audit_records(mon
     assert result["result"] == "succeeded" and result["error_type"] is None
 
 
-def test_image_pull_evidence_auto_executes_whitelisted_patch(monkeypatch, switches, sink) -> None:
+def test_image_pull_evidence_is_recorded_but_still_requires_confirmation(monkeypatch, switches, sink) -> None:
+    """SEC-44 修正：patch_image_pull_policy 风险等级仍为 low，但不在自动执行白名单；开启 auto 时照样读证据，只记录不放行"""
     switches(auto_execute=True)
     sdk = FakeSDK(pods=PULL_FAILING)
     client = make_app(monkeypatch, make_service(sdk))
 
     data = run_workflow(client, IMAGE_PULL)
 
-    assert data["status"] == "completed", data
-    assert [action["action_type"] for action in data["executed_actions"]] == ["patch_image_pull_policy"]
+    assert data["status"] == "needs_human_confirmation"
+    assert data["executed_actions"] == []
+    patch = pending_action(data, "patch_image_pull_policy")
+    risk = patch["risk_assessment"]
+    assert risk["risk_level"] == "low"
+    assert risk["live_evidence"]["source"] == "live" and risk["live_evidence"]["matched"] is True
+    assert "image_pull_backoff" in risk["live_evidence"]["signals"]
+    assert "action not in auto-execute whitelist" in risk["reasons"]
+    assert sdk.pod_reads == 1
+    assert sdk.writes() == [] and sink.records == []
+
+    confirmed = client.post("/autofix/workflow/confirm", json={"plan_id": data["plan"]["plan_id"], "approved_action_ids": [patch["action_id"]]})
+    assert confirmed.status_code == 200, confirmed.text
     assert sdk.writes() == ["patch_namespaced_deployment"]
-    assert [record["phase"] for record in sink.records] == ["intent", "result"]
+    assert [(r["phase"], r["auto_executed"]) for r in sink.records] == [("intent", False), ("result", False)]
     # 审计不含 patch 内容
     assert "IfNotPresent" not in str(sink.records) and "imagePullPolicy" not in str(sink.records)
+
+
+@pytest.mark.parametrize(
+    ("pods", "expected"),
+    [
+        ([pod(restarts=1, ready=False)], "needs_human_confirmation"),
+        ([pod(restarts=2, ready=False)], "needs_human_confirmation"),
+        ([pod(restarts=3, ready=True)], "completed"),
+        ([pod(waiting="CrashLoopBackOff", restarts=0, ready=False)], "completed"),
+    ],
+    ids=["not-ready-restart-1", "not-ready-restart-2", "restart-3", "waiting-crashloop"],
+)
+def test_crashloop_evidence_only_waiting_reason_or_three_restarts(monkeypatch, switches, sink, pods, expected) -> None:
+    """SEC-44 修正：CrashLoop 证据只认 waiting=CrashLoopBackOff 或 restart_count>=3；「未 Ready 且重启>=1」不再算"""
+    switches(auto_execute=True)
+    sdk = FakeSDK(pods=pods)
+    client = make_app(monkeypatch, make_service(sdk))
+
+    data = run_workflow(client, CRASHLOOP)
+
+    assert data["status"] == expected, data
+    if expected == "completed":
+        assert sdk.writes() == ["patch_namespaced_deployment"]
+    else:
+        assert sdk.writes() == [] and sink.records == []
+        assert "not_ready_after_restart" not in pending_action(data, "restart_deployment")["risk_assessment"]["live_evidence"]["signals"]
 
 
 def test_mismatched_live_evidence_does_not_authorize_other_fault(monkeypatch, switches, sink) -> None:
@@ -448,7 +495,7 @@ def test_auto_path_gate_refuses_when_namespace_revoked_before_write(monkeypatch,
 
 
 @pytest.mark.parametrize("trigger", ["auto", "confirm"])
-async def test_engine_write_entry_gate_blocks_both_triggers(switches, sink, trigger) -> None:
+async def test_engine_write_entry_gate_blocks_both_triggers(switches, sink, human, trigger) -> None:
     """引擎自身白名单放行、但当前配置不允许：auto 与 confirm 两条路径在写入口都被拒绝"""
     switches(auto_execute=True, namespaces=[])
     sdk = FakeSDK(pods=CRASHING)
@@ -466,7 +513,7 @@ async def test_engine_write_entry_gate_blocks_both_triggers(switches, sink, trig
     assert sink.records[0]["auto_executed"] is (trigger == "auto")
 
 
-async def test_confirm_trigger_requires_namespace_but_not_auto_switch(switches, sink) -> None:
+async def test_confirm_trigger_requires_namespace_but_not_auto_switch(switches, sink, human) -> None:
     switches(auto_execute=False)
     sdk = FakeSDK()
     engine = AutoFixRemediationEngine(make_k8s_service(sdk), allowed_namespaces=[NS])
@@ -550,7 +597,7 @@ def test_intent_audit_failure_blocks_confirmed_execution(monkeypatch, switches) 
     assert sdk.writes() == []
 
 
-async def test_result_audit_failure_is_flagged_after_write(switches) -> None:
+async def test_result_audit_failure_is_flagged_after_write(switches, human, caplog) -> None:
     """写入已提交后结果审计失败：无法回退，只在执行记录上标记 audit_result_recorded=False"""
     switches(auto_execute=False)
     failing = ListSink(fail_phases=("result",))
@@ -564,10 +611,11 @@ async def test_result_audit_failure_is_flagged_after_write(switches) -> None:
         audit_module.set_audit_sink(previous)
     assert sdk.writes() == ["patch_namespaced_deployment"]
     assert result["executed_actions"][0]["audit_result_recorded"] is False
+    assert result["audit_result_recorded"] is False
     assert [r["phase"] for r in failing.records] == ["intent"]
 
 
-async def test_audit_has_no_patch_values_or_exception_text(switches, sink) -> None:
+async def test_audit_has_no_patch_values_or_exception_text(switches, sink, human) -> None:
     switches(auto_execute=False)
     client = AsyncMock()
     client.patch_deployment.side_effect = RuntimeError(f"apiserver said {SECRET_MARKER}")
@@ -640,3 +688,148 @@ async def test_service_maps_gate_refusal_to_403(monkeypatch) -> None:
     assert raised.value.status_code == 403
     assert "门禁" in raised.value.message
     assert engine.execute_plan.await_args.kwargs == {"trigger": "confirm"}
+
+
+# ---------------------------------------------------------------- SEC-44 修正：结果审计失败上报、确认路径主体
+
+
+def result_audit_error_logs(caplog) -> List[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "aiops.autofix.remediation" and r.levelname == "ERROR" and "结果审计写入失败" in r.getMessage()
+    ]
+
+
+def test_result_audit_failure_on_confirm_is_reported(monkeypatch, switches, caplog) -> None:
+    switches(auto_execute=False)
+    sdk = FakeSDK()
+    client = make_app(monkeypatch, make_service(sdk))
+    data = run_workflow(client, CRASHLOOP)
+    restart = pending_action(data, "restart_deployment")
+
+    failing = ListSink(fail_phases=("result",))
+    previous = audit_module.set_audit_sink(failing)
+    try:
+        with caplog.at_level("ERROR", logger="aiops.autofix.remediation"):
+            response = client.post("/autofix/workflow/confirm", json={"plan_id": data["plan"]["plan_id"], "approved_action_ids": [restart["action_id"]]})
+    finally:
+        audit_module.set_audit_sink(previous)
+
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    assert sdk.writes() == ["patch_namespaced_deployment"]
+    assert body["audit_result_recorded"] is False
+    assert body["execution"]["audit_result_recorded"] is False
+    assert body["executed_actions"][0]["audit_result_recorded"] is False
+    logs = result_audit_error_logs(caplog)
+    assert len(logs) == 1
+    assert "OSError" in logs[0]
+    assert SECRET_MARKER not in logs[0] and failing.records[0]["audit_id"] not in logs[0]
+    assert SECRET_MARKER not in response.text
+
+
+def test_result_audit_failure_on_auto_run_is_reported(monkeypatch, switches, caplog) -> None:
+    switches(auto_execute=True)
+    sdk = FakeSDK(pods=CRASHING)
+    failing = ListSink(fail_phases=("result",))
+    previous = audit_module.set_audit_sink(failing)
+    try:
+        client = make_app(monkeypatch, make_service(sdk))
+        with caplog.at_level("ERROR", logger="aiops.autofix.remediation"):
+            data = run_workflow(client, CRASHLOOP)
+    finally:
+        audit_module.set_audit_sink(previous)
+
+    assert sdk.writes() == ["patch_namespaced_deployment"]
+    assert data["audit_result_recorded"] is False
+    assert data["execution"]["audit_result_recorded"] is False
+    assert len(result_audit_error_logs(caplog)) == 1
+
+
+def test_successful_audit_reports_recorded_true(monkeypatch, switches, sink) -> None:
+    switches(auto_execute=True)
+    sdk = FakeSDK(pods=CRASHING)
+    client = make_app(monkeypatch, make_service(sdk))
+    data = run_workflow(client, CRASHLOOP)
+    assert data["status"] == "completed"
+    assert data["audit_result_recorded"] is True
+    assert data["execution"]["audit_result_recorded"] is True
+
+
+def test_confirm_without_user_identity_is_refused_with_401(monkeypatch, switches, sink) -> None:
+    """缺少 X-CloudOps-User-ID（中间件记为 service:internal）的确认：401，记一条 refused 审计，0 写入"""
+    from fastapi.testclient import TestClient
+
+    from tests.unit.test_autofix_sec26_repair_bootstrap import KEY
+
+    switches(auto_execute=False)
+    sdk = FakeSDK()
+    client = make_app(monkeypatch, make_service(sdk))
+    internal = TestClient(client.app, headers={"X-API-Key": KEY})
+    data = run_workflow(internal, CRASHLOOP)
+    restart = pending_action(data, "restart_deployment")
+
+    response = internal.post("/autofix/workflow/confirm", json={"plan_id": data["plan"]["plan_id"], "approved_action_ids": [restart["action_id"]]})
+
+    assert response.status_code == 401, response.text
+    assert sdk.writes() == []
+    assert [(r["phase"], r["result"], r["reason"], r["principal"], r["auto_executed"]) for r in sink.records] == [
+        ("refused", "refused", "principal missing", "service:internal", False)
+    ]
+
+
+def test_auto_run_without_user_identity_records_internal_principal(monkeypatch, switches, sink) -> None:
+    from fastapi.testclient import TestClient
+
+    from tests.unit.test_autofix_sec26_repair_bootstrap import KEY
+
+    switches(auto_execute=True)
+    sdk = FakeSDK(pods=CRASHING)
+    client = make_app(monkeypatch, make_service(sdk))
+    internal = TestClient(client.app, headers={"X-API-Key": KEY})
+
+    data = run_workflow(internal, CRASHLOOP)
+
+    assert data["status"] == "completed"
+    assert sdk.writes() == ["patch_namespaced_deployment"]
+    assert [r["principal"] for r in sink.records] == ["service:internal", "service:internal"]
+
+
+@pytest.mark.parametrize("principal", [None, "service:internal", "", "user:"])
+async def test_engine_confirm_requires_user_principal(switches, sink, principal) -> None:
+    from app.common.identity import principal_scope
+
+    switches(auto_execute=False)
+    sdk = FakeSDK()
+    engine = AutoFixRemediationEngine(make_k8s_service(sdk), allowed_namespaces=[NS])
+    action = {"action_id": "restart-deployment", "action_type": "restart_deployment"}
+    with principal_scope(principal):
+        result = await engine.execute_plan({"deployment": "api", "namespace": NS, "allowed_actions": [action], "blocked_actions": []}, trigger="confirm")
+
+    assert result["status"] == "blocked" and result["refusal"] == "principal"
+    assert sdk.writes() == []
+    assert [(r["phase"], r["reason"]) for r in sink.records] == [("refused", "principal missing")]
+    assert sink.records[0]["principal"] == (principal or "unknown")
+
+
+async def test_service_maps_principal_refusal_to_401() -> None:
+    from app.common.identity import principal_scope
+    from tests.unit.test_autofix_approval_isolation import ACTION, create_plan, pending_result
+
+    service = AutoFixService()
+    service._initialized = True
+    original = pending_result()
+    service._ops_workflow = MagicMock()
+    service._ops_workflow.run = AsyncMock(side_effect=lambda *_a, **_k: deepcopy(original))
+    engine = MagicMock()
+    engine.build_plan = AsyncMock(side_effect=lambda *_a, **_k: deepcopy(original["plan"]))
+    engine.namespace_refusal = MagicMock(return_value=None)
+    engine.with_policy = MagicMock(return_value=engine)
+    engine.execute_plan = AsyncMock(return_value={"status": "blocked", "executed_actions": [], "refusal": "principal", "error": "x"})
+    service._remediation_engine = engine
+    plan_id = await create_plan(service)
+    with principal_scope("user:1"):
+        with pytest.raises(AIOpsException) as raised:
+            await service.confirm_multi_agent_workflow(plan_id, [ACTION])
+    assert raised.value.status_code == 401

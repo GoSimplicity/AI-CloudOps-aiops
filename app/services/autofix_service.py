@@ -444,6 +444,9 @@ class AutoFixService(BaseService):
             if execution.get("refusal") == "audit":
                 # SEC-44 G4：意图审计写入失败，未执行任何写操作
                 raise WorkflowApprovalError(503, "审计记录写入失败，未执行任何动作，请稍后重新生成计划")
+            if execution.get("refusal") == "principal":
+                # SEC-44 修正：确认缺少可信用户主体（无 X-CloudOps-User-ID）→ 401，与 require_principal / 鉴权中间件的身份缺失约定一致
+                raise WorkflowApprovalError(401, "确认执行需要可信用户身份（X-CloudOps-User-ID），未执行任何动作")
             if execution.get("refusal") == "mutation_gate":
                 raise WorkflowApprovalError(403, "写操作门禁未放行（开关或命名空间限制），未执行任何动作，请重新诊断")
             raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
@@ -454,6 +457,9 @@ class AutoFixService(BaseService):
         execution_payload = deepcopy(execution)
         execution_payload["executed_actions"] = cumulative_executed_actions
         execution_payload["blocked_actions"] = remaining_blocked_actions
+        # SEC-44 修正：写操作已提交但结果审计缺失时显式上报，供调用方/运维核对
+        audit_result_recorded = all(action.get("audit_result_recorded", True) is not False for action in cumulative_executed_actions)
+        execution_payload["audit_result_recorded"] = audit_result_recorded
 
         agents_used = list(workflow_result.get("agents_used") or [])
         for agent in ["HumanConfirm", "Executor"]:
@@ -514,6 +520,7 @@ class AutoFixService(BaseService):
             "plan": plan,
             "review": review,
             "execution": execution_payload,
+            "audit_result_recorded": audit_result_recorded,
             "candidate_actions": plan.get("candidate_actions", []),
             "executed_actions": cumulative_executed_actions,
             "blocked_actions": remaining_blocked_actions,

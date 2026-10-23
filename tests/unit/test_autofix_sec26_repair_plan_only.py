@@ -4,12 +4,20 @@ import asyncio
 
 import pytest
 
+from app.common.identity import principal_scope
 from app.config.settings import config
 from app.core.agents.ops_workflow import OpsMultiAgentWorkflow
 from tests.unit.test_autofix_sec26_repair_bootstrap import REPAIR_BODY, make_app
 from tests.unit.test_autofix_sec26_run_lockdown import WRITE_METHODS, assert_no_writes, live_pods, make_service, mock_k8s
 
 CRASHLOOP = "CrashLoopBackOff restarting failed container"
+
+@pytest.fixture(autouse=True)
+def confirming_user():
+    """SEC-44 修正：确认路径需要可信用户主体；本模块的确认流程以 user:1 执行"""
+    with principal_scope("user:1"):
+        yield
+
 
 
 def write_count(client) -> int:

@@ -6,11 +6,19 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.common.exceptions import AIOpsException
+from app.common.identity import principal_scope
 from app.config.settings import AutoFixConfig, _parse_namespace_list, config
 from app.core.autofix.remediation import AutoFixRemediationEngine
 from app.services.autofix_service import AutoFixService
 
 WRITE_METHODS = ("patch_deployment", "scale_deployment", "restart_deployment")
+
+@pytest.fixture(autouse=True)
+def confirming_user():
+    """SEC-44 修正：确认路径需要可信用户主体；本模块的确认流程以 user:1 执行"""
+    with principal_scope("user:1"):
+        yield
+
 
 
 def fake_deployment(namespace: str = "default", replicas: int = 1) -> Dict[str, Any]:

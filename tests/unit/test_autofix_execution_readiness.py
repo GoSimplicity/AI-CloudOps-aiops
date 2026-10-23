@@ -2,7 +2,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.common.identity import principal_scope
 from app.core.autofix.remediation import AutoFixRemediationEngine
+
+
+@pytest.fixture(autouse=True)
+def confirming_user():
+    """SEC-44 修正：确认路径需要可信用户主体；本模块的确认流程以 user:1 执行"""
+    with principal_scope("user:1"):
+        yield
+
 
 
 @pytest.mark.asyncio

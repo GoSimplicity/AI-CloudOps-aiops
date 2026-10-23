@@ -13,6 +13,7 @@ import urllib3.exceptions
 
 from app.api.routes import autofix as autofix_routes
 from app.common.exceptions import AIOpsException, AutoFixError, AutoFixInternalError, ServiceUnavailableError, ValidationError
+from app.common.identity import principal_scope
 from app.config import settings
 from app.config.settings import AutoFixConfig, config
 from app.core.autofix import RemediationEngine
@@ -23,6 +24,13 @@ from tests.unit.test_autofix_sec26_run_lockdown import assert_no_writes, make_se
 
 SECRET = "body-secret-token=sk-followup-leak-7c1e"
 REPO = Path(__file__).resolve().parents[2]
+
+@pytest.fixture(autouse=True)
+def confirming_user():
+    """SEC-44 修正：确认路径需要可信用户主体；本模块的确认流程以 user:1 执行"""
+    with principal_scope("user:1"):
+        yield
+
 
 
 def api_exception(status: int = 403, reason: str = "Forbidden") -> ApiException:
