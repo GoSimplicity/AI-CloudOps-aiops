@@ -12,9 +12,10 @@ Description: AI-CloudOps智能预测服务 - 提供四种资源预测能力
 from datetime import datetime, timedelta
 import hashlib
 import logging
+import math
 from typing import Any, Dict, List, Optional
 
-from app.common.exceptions import PredictionError, ValidationError
+from app.common.exceptions import HistoricalDataError, PredictionError, ValidationError
 from app.core.prediction import (
     AnomalyDetector,
     CostAnalyzer,
@@ -283,7 +284,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             return result
 
-        except ValidationError:
+        except (ValidationError, HistoricalDataError):
             # 参数验证错误直接透传
             raise
         except Exception as e:
@@ -394,7 +395,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             return result
 
-        except ValidationError:
+        except (ValidationError, HistoricalDataError):
             raise
         except Exception as e:
             self.logger.error(f"CPU预测失败: {str(e)}")
@@ -504,7 +505,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             return result
 
-        except ValidationError:
+        except (ValidationError, HistoricalDataError):
             raise
         except Exception as e:
             self.logger.error(f"内存预测失败: {str(e)}")
@@ -614,7 +615,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             return result
 
-        except ValidationError:
+        except (ValidationError, HistoricalDataError):
             raise
         except Exception as e:
             self.logger.error(f"磁盘预测失败: {str(e)}")
@@ -710,7 +711,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             return enhanced_result
 
-        except ValidationError:
+        except (ValidationError, HistoricalDataError):
             raise
         except Exception as e:
             self.logger.error(f"增强预测失败: {str(e)}")
@@ -771,7 +772,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             return result
 
-        except ValidationError:
+        except (ValidationError, HistoricalDataError):
             raise
         except Exception as e:
             self.logger.error(f"多维度预测失败: {str(e)}")
@@ -1030,20 +1031,31 @@ class PredictionService(BaseService, HealthCheckMixin):
     ) -> List[Dict[str, Any]]:
         """获取历史数据"""
 
-        # 首先尝试从Prometheus获取真实数据
         try:
             prometheus_data = await self._get_prometheus_data(
                 prediction_type, metric_query, hours
             )
-            if prometheus_data:
-                self.logger.info(
-                    f"成功从Prometheus获取{len(prometheus_data)}条历史数据"
-                )
-                return prometheus_data
+        except PredictionError:
+            raise
         except Exception as e:
             raise PredictionError("Historical metrics are unavailable; prediction was not performed") from e
 
-        raise PredictionError("No historical metrics were returned; prediction was not performed")
+        if not prometheus_data:
+            raise HistoricalDataError("No historical metrics were returned; prediction was not performed")
+        if len(prometheus_data) < 2:
+            raise HistoricalDataError("Insufficient historical metrics: at least two observations are required; prediction was not performed")
+
+        # 特征提取按小时位置取历史值，不能将缺失小时压缩成连续样本
+        try:
+            timestamps = [datetime.fromisoformat(str(point["timestamp"]).replace("Z", "+00:00")) for point in prometheus_data]
+            valid_values = all(math.isfinite(float(point["value"])) for point in prometheus_data)
+            hourly = all(right - left == timedelta(hours=1) for left, right in zip(timestamps, timestamps[1:]))
+        except (KeyError, ValueError, TypeError, OverflowError) as e:
+            raise HistoricalDataError("Historical metrics contain invalid samples; prediction was not performed") from e
+        if not valid_values or not hourly:
+            raise HistoricalDataError("Historical metrics require finite, consecutive hourly observations; prediction was not performed")
+        self.logger.info(f"成功从Prometheus获取{len(prometheus_data)}条历史数据")
+        return prometheus_data
 
     async def _get_prometheus_data(
         self, prediction_type: PredictionType, custom_query: Optional[str], hours: int
@@ -1055,8 +1067,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
         # 检查Prometheus连接
         if not await prom_service.health_check():
-            self.logger.warning("Prometheus服务不可用")
-            return None
+            raise PredictionError("Prometheus upstream is unavailable; prediction was not performed")
 
         # 确定查询语句
         query = custom_query or self._get_default_query(prediction_type)
@@ -1110,22 +1121,20 @@ class PredictionService(BaseService, HealthCheckMixin):
 
     def _convert_prometheus_data(self, df) -> List[Dict[str, Any]]:
         """转换Prometheus数据格式"""
-        import numpy as np
-        import pandas as pd
+        if "value" not in df.columns:
+            return []
+        if df.index.has_duplicates:
+            raise HistoricalDataError("Multiple metric series require an explicit aggregate in PromQL; prediction was not performed")
 
         data = []
-
-        # 按时间排序
-        df_sorted = df.sort_index()
-
-        for timestamp, row in df_sorted.iterrows():
-            # 取平均值作为主要指标
-            value = row.get("value", 0)
-            if pd.isna(value) or not np.isfinite(value):
-                value = 0
-
-            data.append({"timestamp": timestamp.isoformat(), "value": float(value)})
-
+        for timestamp, row in df.sort_index().iterrows():
+            try:
+                value = float(row["value"])
+            except (ValueError, TypeError, OverflowError):
+                continue
+            if not math.isfinite(value):
+                continue
+            data.append({"timestamp": timestamp.isoformat(), "value": value})
         return data
 
     def _build_prediction_response(
@@ -1327,6 +1336,7 @@ class PredictionService(BaseService, HealthCheckMixin):
             # 构建缓存输入参数
             cache_params = {
                 "type": prediction_type,
+                "data_contract": "observed-hourly-v1",
                 "current": round(current_value, 2),  # 避免浮点数精度问题
                 "query": metric_query or "default",
                 "hours": prediction_hours,

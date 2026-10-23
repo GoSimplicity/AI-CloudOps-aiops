@@ -12,12 +12,14 @@ Description: Prometheus监控数据服务
 import asyncio
 from datetime import datetime
 import logging
+import math
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import requests
 
 from app.common.constants import HttpStatusCodes
+from app.common.exceptions import ExternalServiceError, HistoricalDataError
 from app.config.settings import config
 from app.services.base import BaseService
 
@@ -90,7 +92,11 @@ class PrometheusService(BaseService):
             response.raise_for_status()
 
             data = response.json()
-            if data["status"] != "success" or not data["data"]["result"]:
+            if data["status"] != "success":
+                if data.get("errorType") == "bad_data":
+                    raise HistoricalDataError("PromQL query was rejected; check the metric query")
+                raise ExternalServiceError("prometheus", "Upstream query did not succeed")
+            if not data["data"]["result"]:
                 self.logger.warning(f"Prometheus查询无结果: {query}")
                 return None
 
@@ -107,9 +113,10 @@ class PrometheusService(BaseService):
 
                 for val in result["values"]:
                     try:
-                        values.append(float(val[1]))
+                        value = float(val[1])
+                        values.append(value if math.isfinite(value) else float("nan"))
                     except (ValueError, TypeError):
-                        values.append(0.0)
+                        values.append(float("nan"))
 
                 series_df = pd.DataFrame(
                     {"value": values}, index=pd.DatetimeIndex(timestamps)
@@ -123,24 +130,23 @@ class PrometheusService(BaseService):
                 all_series.append(series_df)
 
             if all_series:
-                # 合并所有时间序列
-                combined_df = pd.concat(all_series, ignore_index=False)
-                # 重采样到指定频率（使用min而不是已弃用的T）
-                resampled = combined_df.resample("1min").mean(numeric_only=True)
-                # 前向填充缺失值（使用新的方法）
-                return resampled.ffill()
+                # 保留采样时间、缺失值及标签，不插值或隐式聚合不同序列
+                return pd.concat(all_series, ignore_index=False).sort_index()
 
             return None
 
-        except requests.exceptions.Timeout:
-            self.logger.error(f"Prometheus查询超时: {query}")
-            return None
+        except (HistoricalDataError, ExternalServiceError):
+            raise
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code in {400, 422}:
+                raise HistoricalDataError("PromQL query was rejected; check the metric query") from e
+            raise ExternalServiceError("prometheus", "Upstream HTTP request failed") from e
+        except requests.exceptions.Timeout as e:
+            raise ExternalServiceError("prometheus", "Upstream query timed out") from e
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"Prometheus请求失败: {str(e)}")
-            return None
+            raise ExternalServiceError("prometheus", "Upstream connection failed") from e
         except Exception as e:
-            self.logger.error(f"查询Prometheus失败: {str(e)}")
-            return None
+            raise ExternalServiceError("prometheus", "Upstream response could not be parsed") from e
 
     async def query_instant(
         self, query: str, timestamp: Optional[datetime] = None

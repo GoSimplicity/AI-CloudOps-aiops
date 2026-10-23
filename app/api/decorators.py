@@ -136,6 +136,7 @@ def _get_http_status_for_aiops_exception(exc: AIOpsException) -> int:
         AutoFixError,
         ConfigurationError,
         ExternalServiceError,
+        HistoricalDataError,
         PredictionError,
         RCAError,
         RequestTimeoutError,
@@ -144,6 +145,8 @@ def _get_http_status_for_aiops_exception(exc: AIOpsException) -> int:
         ValidationError,
     )
 
+    if isinstance(exc, HistoricalDataError):
+        return HttpStatusCodes.UNPROCESSABLE_ENTITY
     if isinstance(exc, ServiceUnavailableError):
         return HttpStatusCodes.SERVICE_UNAVAILABLE
     if isinstance(exc, ValidationError):

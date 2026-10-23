@@ -308,6 +308,14 @@ class MetricsCollector(BaseDataCollector):
             if hasattr(data, "empty") and data.empty:
                 return []
 
+            # 无效样本不进入响应和统计，保留真实零值及采样缺口
+            numeric_values = pd.to_numeric(data["value"], errors="coerce").to_numpy()
+            finite = np.isfinite(numeric_values)
+            data = data.iloc[np.flatnonzero(finite)].copy()
+            data["value"] = numeric_values[finite]
+            if data.empty:
+                return []
+
             # 智能分组
             group_cols = self._determine_grouping_columns(data.columns)
 
@@ -355,20 +363,11 @@ class MetricsCollector(BaseDataCollector):
         self, name: str, data: pd.DataFrame, labels: Dict[str, str]
     ) -> MetricData:
         """快速创建MetricData对象"""
-        # 提取时间序列值（优化：批量处理）
-        values = []
-        if "timestamp" in data.columns and "value" in data.columns:
-            # 使用向量化操作
-            timestamps = data["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            values_array = data["value"].fillna(0.0).values
-
-            values = [
-                {"timestamp": ts, "value": float(val)}
-                for ts, val in zip(timestamps, values_array)
-            ]
-
-        # 快速计算基础统计
-        value_series = data["value"].dropna()
+        # 查询结果使用 DatetimeIndex，兼容已存在的显式 timestamp 列
+        observed_times = data["timestamp"] if "timestamp" in data.columns else data.index
+        timestamps = pd.DatetimeIndex(pd.to_datetime(observed_times, utc=True)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        values = [{"timestamp": ts, "value": float(val)} for ts, val in zip(timestamps, data["value"].values)]
+        value_series = data["value"]
 
         # 异常分数（简化计算）
         anomaly_score = 0.0

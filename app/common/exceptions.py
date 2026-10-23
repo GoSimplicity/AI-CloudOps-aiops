@@ -64,6 +64,14 @@ class PredictionError(AIOpsException):
         )
 
 
+class HistoricalDataError(PredictionError):
+    """历史数据不足、间断或查询返回多个序列，无法执行预测"""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.error_code = "HISTORICAL_DATA_ERROR"
+
+
 class RCAError(AIOpsException):
     """根因分析异常"""
 
