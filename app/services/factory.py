@@ -11,6 +11,7 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional, Type, TypeVar, cast
 
+from app.common.exceptions import ServiceUnavailableError
 from app.services.base import BaseService
 
 logger = logging.getLogger("aiops.services.factory")
@@ -28,6 +29,9 @@ class ServiceFactory:
 
     _instances: Dict[str, BaseService] = {}
     _locks: Dict[str, asyncio.Lock] = {}
+    _initialization_tasks: Dict[str, asyncio.Task[None]] = {}
+    _cleanup_lock = asyncio.Lock()
+    _closing = False
 
     @classmethod
     def _get_lock(cls, name: str) -> asyncio.Lock:
@@ -48,23 +52,34 @@ class ServiceFactory:
         Returns:
             已存在或新创建的服务实例。
         """
+        if cls._closing:
+            raise ServiceUnavailableError(name)
         if name in cls._instances:
             return cast(TService, cls._instances[name])
 
         async with cls._get_lock(name):
+            if cls._closing:
+                raise ServiceUnavailableError(name)
             if name in cls._instances:
                 return cast(TService, cls._instances[name])
 
             instance: TService = service_cls()
             cls._instances[name] = instance
 
-            # 懒初始化：不强制等待初始化完成
-            try:
-                asyncio.create_task(instance.initialize())
-            except Exception as e:
-                logger.warning("服务 %s 初始化任务创建失败: %s", name, e)
+            # 持有初始化任务，关闭时先取消并等待，再释放实例资源
+            task = asyncio.create_task(instance.initialize())
+            cls._initialization_tasks[name] = task
+            task.add_done_callback(lambda completed: cls._observe_initialization(name, completed))
 
             return instance
+
+    @classmethod
+    def _observe_initialization(cls, name: str, task: asyncio.Task[None]) -> None:
+        """取回后台异常，避免未处理任务异常遗失"""
+        if not task.cancelled():
+            error = task.exception()
+            if error is not None:
+                logger.warning("服务 %s 后台初始化失败，异常类型: %s", name, type(error).__name__)
 
     @classmethod
     def peek(cls, name: str) -> Optional[BaseService]:
@@ -146,18 +161,27 @@ class ServiceFactory:
         Returns:
             清理结果与总体成功标记。
         """
-        results: Dict[str, Any] = {"results": {}, "success": True}
-
-        for name, service in list(cls._instances.items()):
+        async with cls._cleanup_lock:
+            cls._closing = True
+            results: Dict[str, Any] = {"results": {}, "success": True}
             try:
-                await service.cleanup()
-                results["results"][name] = {"success": True}
-            except Exception as e:
-                results["results"][name] = {"success": False, "error": str(e)}
-                results["success"] = False
+                tasks = list(cls._initialization_tasks.values())
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
-        # 清理内部状态
-        cls._instances.clear()
-        cls._locks.clear()
-
-        return results
+                for name, service in list(cls._instances.items()):
+                    try:
+                        await service.cleanup()
+                        results["results"][name] = {"success": True}
+                    except Exception as e:
+                        results["results"][name] = {"success": False, "error": str(e)}
+                        results["success"] = False
+                return results
+            finally:
+                cls._instances.clear()
+                cls._locks.clear()
+                cls._initialization_tasks.clear()
+                cls._closing = False

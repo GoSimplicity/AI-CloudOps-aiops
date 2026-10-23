@@ -39,6 +39,8 @@ logger = logging.getLogger("aiops.services.assistant")
 class OptimizedAssistantService(BaseService):
     """助手服务"""
 
+    MAX_KNOWLEDGE_FILE_SIZE = 10 * 1024 * 1024
+
     def __init__(self) -> None:
         super().__init__("assistant")
         self._assistant = None
@@ -731,18 +733,15 @@ class OptimizedAssistantService(BaseService):
 
     async def upload_knowledge_file(self, file) -> Dict[str, Any]:
         try:
-            # 确保服务就绪
-            await self._ensure_ready()
-
-            # 验证文件
+            # 在读取内容和初始化模型前验证上传对象
             if not file:
                 raise ValidationError("file", "文件不能为空")
 
-            # 读取文件内容
-            content = await file.read()
+            # 最多读取限制加一个字节，避免先加载整个超大文件
+            max_file_size = self.MAX_KNOWLEDGE_FILE_SIZE
+            content = await file.read(max_file_size + 1)
 
             # 检查文件大小
-            max_file_size = 10 * 1024 * 1024  # 10MB
             if len(content) > max_file_size:
                 raise ValidationError(
                     "file", f"文件大小不能超过{max_file_size // (1024 * 1024)}MB"
@@ -782,6 +781,9 @@ class OptimizedAssistantService(BaseService):
                 raise ValidationError(
                     "file", "文件编码不支持，请使用UTF-8编码的文本文件"
                 )
+
+            # 无效上传不得初始化模型与外部依赖
+            await self._ensure_ready()
 
             # 获取知识库根路径
             knowledge_base_path = config.rag.knowledge_base_path

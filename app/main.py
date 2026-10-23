@@ -63,46 +63,53 @@ async def lifespan(app: FastAPI):
     logger.info(f"日志级别: {config.log_level}")
     logger.info("=" * 50)
 
-    # 初始化启动服务
-    await startup_service.initialize()
+    try:
+        # 初始化启动服务
+        await startup_service.initialize()
 
-    # Business dependencies initialize on first use. Optional prewarming must not
-    # turn liveness into a request to an unavailable model provider or cluster.
-    app_state.is_shutting_down = False
-    warmup_results = {"success": True}
-    if os.getenv("AIOPS_PREWARM", "false").lower() == "true":
-        await _register_managed_services()
-        warmup_results = await startup_service.warmup_services()
+        # Business dependencies initialize on first use. Optional prewarming must not
+        # turn liveness into a request to an unavailable model provider or cluster.
+        app_state.is_shutting_down = False
+        warmup_results = {"success": True}
+        if os.getenv("AIOPS_PREWARM", "false").lower() == "true":
+            await _register_managed_services()
+            warmup_results = await startup_service.warmup_services()
 
-    # 记录启动信息
-    startup_time = startup_service.get_uptime()
-    logger.info(f"{AppConstants.APP_NAME} 启动完成，耗时: {startup_time:.2f}秒")
-    logger.info(f"服务地址: http://{config.host}:{config.port}")
-    logger.info("主要API端点:")
-    logger.info(
-        f"  - GET  {AppConstants.API_VERSION_V1}/predict/ready - 预测服务就绪检查"
-    )
-    logger.info(
-        f"  - GET  {AppConstants.API_VERSION_V1}/rca/ready     - RCA服务就绪检查"
-    )
-    logger.info(
-        f"  - GET  {AppConstants.API_VERSION_V1}/autofix/ready - 自动修复服务就绪检查"
-    )
-    logger.info(
-        f"  - GET  {AppConstants.API_VERSION_V1}/assistant/ready - 智能助手就绪检查"
-    )
-    logger.info(f"  - POST {AppConstants.API_VERSION_V1}/predict       - 负载预测")
-    logger.info(f"  - POST {AppConstants.API_VERSION_V1}/rca           - 根因分析")
-    logger.info(f"  - POST {AppConstants.API_VERSION_V1}/autofix       - 自动修复")
-    logger.info(
-        f"  - POST {AppConstants.API_VERSION_V1}/assistant/query - AI-CloudOps智能小助手"
-    )
+        # 记录启动信息
+        startup_time = startup_service.get_uptime()
+        logger.info(f"{AppConstants.APP_NAME} 启动完成，耗时: {startup_time:.2f}秒")
+        logger.info(f"服务地址: http://{config.host}:{config.port}")
+        logger.info("主要API端点:")
+        logger.info(
+            f"  - GET  {AppConstants.API_VERSION_V1}/predict/ready - 预测服务就绪检查"
+        )
+        logger.info(
+            f"  - GET  {AppConstants.API_VERSION_V1}/rca/ready     - RCA服务就绪检查"
+        )
+        logger.info(
+            f"  - GET  {AppConstants.API_VERSION_V1}/autofix/ready - 自动修复服务就绪检查"
+        )
+        logger.info(
+            f"  - GET  {AppConstants.API_VERSION_V1}/assistant/ready - 智能助手就绪检查"
+        )
+        logger.info(f"  - POST {AppConstants.API_VERSION_V1}/predict       - 负载预测")
+        logger.info(f"  - POST {AppConstants.API_VERSION_V1}/rca           - 根因分析")
+        logger.info(f"  - POST {AppConstants.API_VERSION_V1}/autofix       - 自动修复")
+        logger.info(
+            f"  - POST {AppConstants.API_VERSION_V1}/assistant/query - AI-CloudOps智能小助手"
+        )
 
-    if not warmup_results["success"]:
-        logger.warning("部分服务预热失败，系统仍可正常使用")
+        if not warmup_results["success"]:
+            logger.warning("部分服务预热失败，系统仍可正常使用")
 
-    yield
+        yield
+    finally:
+        await _shutdown_application()
 
+
+async def _shutdown_application():
+    """正常退出、启动失败和上下文异常均执行资源回收"""
+    logger = logging.getLogger("aiops")
     # 关闭时执行 - 优雅关闭逻辑
     logger.info("开始优雅关闭流程...")
     app_state.is_shutting_down = True
@@ -119,10 +126,8 @@ async def lifespan(app: FastAPI):
         logger.info(f"等待 {app_state.active_requests} 个请求完成...")
         await asyncio.sleep(0.5)
 
-    # 清理资源
-    await cleanup_resources()
-
-    # 工厂统一清理（在启动服务清理之后执行，确保路由持有的单例也被关闭）
+    # 先终止后台初始化，再清理启动服务持有的实例
+    # 工厂统一清理也覆盖路由按需创建的服务
     try:
         factory_cleanup = await ServiceFactory.cleanup_all()
         if factory_cleanup.get("success", False):
@@ -131,6 +136,8 @@ async def lifespan(app: FastAPI):
             logger.warning(f"ServiceFactory 清理存在失败: {factory_cleanup}")
     except Exception as e:
         logger.warning(f"ServiceFactory 清理失败: {e}")
+
+    await cleanup_resources()
 
     total_time = startup_service.get_uptime()
     logger.info(f"{AppConstants.APP_NAME} 运行总时长: {total_time:.2f}秒")
