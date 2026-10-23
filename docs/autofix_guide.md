@@ -93,7 +93,10 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 
 **配置取值规则（启动时解析，修改后需重启）**：
 
-- 三个布尔开关**只有 `true` 才开启**（大小写不敏感，如 `true`/`TRUE`）；`false` 为关闭；其余任何值——包括空字符串、`1`、`0`、`yes`、`no`、`on`，以及 YAML 中的数字 `1`——一律按 `false`（关闭）处理，并在启动时打印 WARNING 日志（logger `aiops.config.autofix`），提示该值不是 true/false。
+- 三个布尔开关**只有 `true` 才开启**；`false` 为关闭；其余任何值一律按 `false`（关闭）处理，并在启动时打印 WARNING 日志（logger `aiops.config.autofix`），提示该值不是 true/false：
+  - **环境变量**：`true` 大小写不敏感（`true`/`True`/`TRUE`）；`1`、`0`、`yes`、`no`、`on`、空字符串等都按关闭处理并告警。
+  - **YAML**：开关字段使用专门的严格解析（不认 YAML 1.1 的布尔别名），只有不加引号的 `true`/`True`/`TRUE` 为开启、`false`/`False`/`FALSE` 为关闭。不加引号的 `yes`/`Yes`/`on`/`On`/`no`/`off` 等**不再**被当作布尔，按关闭处理并告警；`y`、数字 `1`/`0`、加引号的 `'yes'` 同样按关闭处理并告警。加引号的 `'true'`/`'TRUE'` 字符串与环境变量规则一致，视为开启。
+  - 严格解析只作用于 `autofix.auto_execute_enabled`、`autofix.repair_enabled`、`autofix.bootstrap_enabled` 这三个字段；其它配置项（如 `app.debug`、`dev.auto_reload`）仍按原有 YAML 1.1 规则解析，行为不变。
 - `allowed_namespaces` **大小写敏感、按字面精确匹配**，不做大小写归一；Kubernetes 命名空间均为小写，写成 `Staging` 不会匹配 `staging`。
 - **`*` 不是通配符**：`*`、`prod-*` 等只会按字面匹配，实际不会放行任何命名空间；要放行多个命名空间请逐个列出。
 - 启动时白名单中出现含 `*` 的条目或含大写字母的条目会打印 WARNING（不会自动改写，仍按字面生效）。
