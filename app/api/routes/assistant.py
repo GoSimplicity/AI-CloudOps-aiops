@@ -61,7 +61,7 @@ async def get_assistant_service() -> OptimizedAssistantService:
     global assistant_service
     if assistant_service is None:
         assistant_service = await ServiceFactory.get_service(
-            "assistant", OptimizedAssistantService
+            "assistant", OptimizedAssistantService, initialize=False
         )
     return assistant_service
 
@@ -152,10 +152,10 @@ async def assistant_query(
             status_code=HttpStatusCodes.BAD_REQUEST, detail="question不能为空"
         )
 
-    await (await get_assistant_service()).initialize()
-
-    # 将dict映射为模型，确保其余字段验证与默认值
+    # MCP 模式不依赖 RAG 与嵌入模型，先完成模式和输入校验
     valid_req = AssistantRequest(**request)
+    if valid_req.mode == 1:
+        await (await get_assistant_service()).initialize()
 
     result = await (await get_assistant_service()).get_answer(
         question=valid_req.question,

@@ -34,13 +34,8 @@ class MCPService(BaseService):
 
     async def _do_initialize(self) -> None:
         """初始化服务"""
-        try:
-            self._mcp_assistant = MCPAssistant()
-            logger.info("MCP服务初始化完成")
-        except Exception as e:
-            logger.warning(f"MCP服务初始化失败: {str(e)}，将在首次使用时重试")
-            # 允许服务启动，延迟初始化
-            self._mcp_assistant = None
+        self._mcp_assistant = MCPAssistant()
+        logger.info("MCP服务初始化完成")
 
     async def _do_health_check(self) -> bool:
         """健康检查"""
@@ -90,6 +85,7 @@ class MCPService(BaseService):
         self._validate_question(question)
 
         # 确保服务就绪
+        await self.initialize()
         await self._ensure_ready()
 
         try:
@@ -120,55 +116,13 @@ class MCPService(BaseService):
                 "timestamp": datetime.now().isoformat(),
             }
 
-        except asyncio.TimeoutError:
-            logger.error(f"MCP请求超时: {timeout}秒")
-            return await self._use_fallback_response(question, session_id, "超时")
+        except asyncio.TimeoutError as e:
+            raise AssistantError("MCP请求超时") from e
+        except AssistantError:
+            raise
         except Exception as e:
-            logger.error(f"MCP获取答案失败: {str(e)}")
-            return await self._use_fallback_response(question, session_id, str(e))
-
-    async def _use_fallback_response(
-        self, question: str, session_id: Optional[str], error_reason: str
-    ) -> Dict[str, Any]:
-        """使用备用实现生成响应"""
-        logger.warning(f"使用MCP备用实现处理请求，原因: {error_reason}")
-
-        # 简单的关键词匹配备用实现
-        question_lower = question.lower()
-
-        if any(
-            keyword in question_lower
-            for keyword in ["时间", "几点", "现在", "当前时间"]
-        ):
-            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            fallback_answer = f"当前时间是: {current_time}"
-        elif any(
-            keyword in question_lower for keyword in ["计算", "加", "减", "乘", "除"]
-        ):
-            fallback_answer = "抱歉，计算工具当前不可用，请稍后重试。"
-        elif any(
-            keyword in question_lower
-            for keyword in ["k8s", "kubernetes", "pod", "deployment"]
-        ):
-            fallback_answer = (
-                "抱歉，Kubernetes工具当前不可用，请稍后重试或使用RAG模式查询相关文档。"
-            )
-        else:
-            fallback_answer = "抱歉，MCP服务当前不可用，请稍后重试或切换到RAG模式。"
-
-        return {
-            "answer": fallback_answer,
-            "confidence_score": 0.3,  # 备用实现的置信度较低
-            "source_documents": [],
-            "cache_hit": False,
-            "processing_time": 0.1,  # 快速响应时间
-            "session_id": session_id,
-            "success": True,  # 虽然是备用，但仍提供了答案
-            "fallback_used": True,
-            "fallback_reason": error_reason,
-            "mode": "mcp",
-            "timestamp": datetime.now().isoformat(),
-        }
+            logger.error("MCP获取答案失败，异常类型: %s", type(e).__name__)
+            raise AssistantError("MCP调用失败") from e
 
     async def get_service_health_info(self) -> Dict[str, Any]:
         """获取详细健康信息"""

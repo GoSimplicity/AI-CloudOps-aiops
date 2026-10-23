@@ -40,7 +40,7 @@ class ServiceFactory:
         return cls._locks[name]
 
     @classmethod
-    async def get_service(cls, name: str, service_cls: Type[TService]) -> TService:
+    async def get_service(cls, name: str, service_cls: Type[TService], *, initialize: bool = True) -> TService:
         """获取指定服务的单例实例。
 
         首次调用会创建实例并以后台任务方式触发 `initialize()`。
@@ -67,9 +67,10 @@ class ServiceFactory:
             cls._instances[name] = instance
 
             # 持有初始化任务，关闭时先取消并等待，再释放实例资源
-            task = asyncio.create_task(instance.initialize())
-            cls._initialization_tasks[name] = task
-            task.add_done_callback(lambda completed: cls._observe_initialization(name, completed))
+            if initialize:
+                task = asyncio.create_task(instance.initialize())
+                cls._initialization_tasks[name] = task
+                task.add_done_callback(lambda completed: cls._observe_initialization(name, completed))
 
             return instance
 

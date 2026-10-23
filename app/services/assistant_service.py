@@ -621,11 +621,7 @@ class OptimizedAssistantService(BaseService):
         """处理工具协议模式请求"""
         try:
             # 通过工厂延迟获取服务实例，避免循环依赖
-            from .mcp_service import MCPService
-
-            mcp_service: MCPService = await ServiceFactory.get_service(
-                "mcp", MCPService
-            )
+            mcp_service = await self._get_mcp_service()
 
             # 调用服务处理
             result = await mcp_service.get_answer(
@@ -640,50 +636,19 @@ class OptimizedAssistantService(BaseService):
             enhanced_result["mode"] = "mcp"
             return enhanced_result
 
+        except AssistantError:
+            self._performance_monitor.record_failure()
+            raise
         except Exception as e:
             self._performance_monitor.record_failure()
-            logger.error(f"MCP获取答案失败: {str(e)}")
-            return await self._use_mcp_fallback_response(question, session_id, str(e))
+            logger.error("MCP获取答案失败，异常类型: %s", type(e).__name__)
+            raise AssistantError("MCP调用失败") from e
 
     async def _get_mcp_service(self) -> "MCPService":
         """兼容旧接口：通过工厂获取MCP服务单例"""
         from .mcp_service import MCPService
 
         return await ServiceFactory.get_service("mcp", MCPService)
-
-    async def _use_mcp_fallback_response(
-        self, question: str, session_id: Optional[str], error_reason: str
-    ) -> Dict[str, Any]:
-        """工具协议模式的备用响应"""
-        logger.warning(f"使用MCP备用实现处理请求，原因: {error_reason}")
-
-        # 简单的关键词匹配
-        question_lower = question.lower()
-
-        if any(
-            keyword in question_lower
-            for keyword in ["时间", "几点", "现在", "当前时间"]
-        ):
-            from datetime import datetime
-
-            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            fallback_answer = f"当前时间是: {current_time}"
-        else:
-            fallback_answer = "抱歉，MCP服务当前不可用，请稍后重试或切换到RAG模式。"
-
-        return {
-            "answer": fallback_answer,
-            "confidence_score": config.rag.similarity_threshold * 0.4,
-            "source_documents": [],
-            "cache_hit": False,
-            "processing_time": 0.1,
-            "session_id": session_id,
-            "success": True,
-            "fallback_used": True,
-            "fallback_reason": error_reason,
-            "mode": "mcp",
-            "timestamp": datetime.now().isoformat(),
-        }
 
     def _validate_mode(self, mode: int) -> None:
         """验证模式参数"""
