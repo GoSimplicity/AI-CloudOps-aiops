@@ -13,6 +13,8 @@ Description: SEC-33 MCP 写工具门禁
 - 集群级写（patch_namespace / patch_node、create/delete_namespace、集群级 YAML kind）始终拒绝。
 - 写操作带非默认 config_path（切换 kubeconfig/集群）一律拒绝，后续由 SEC-39 处理。
 - list_secrets/get_secret 需要 mcp.secret_read_enabled=true 且命名空间在白名单内（不允许 all_namespaces）。
+- k8s_resource_operations 的 describe_resource/get_resource_yaml 只有 resource_type 归一化后属于已知非 Secret
+  资源才按普通只读放行；secret/secrets 以及空值、非字符串、未知类型一律按 Secret 读取处理（SEC-33 P1-1）。
 - 写操作需要 mcp.write_tools_enabled=true 且 autofix.repair_enabled=true，
   且目标命名空间通过 autofix.allowed_namespaces 白名单（复用 ensure_namespace_allowed）。
 拒绝时抛 FeatureDisabledError（固定文案，不带内部细节），不发起任何 Kubernetes 调用。
@@ -82,12 +84,29 @@ READ_OPERATIONS: Mapping[str, FrozenSet[str]] = {
     "k8s_application_scaling": frozenset({"list_hpa", "get_hpa_status"}),
     "k8s_ingress_management": frozenset({"list_ingresses", "get_ingress", "get_ingress_classes"}),
     "k8s_config_management": frozenset({"list_configmaps", "get_configmap"}),
+    # describe_resource / get_resource_yaml 按 resource_type 判定，见 RESOURCE_TYPED_READ_OPERATIONS（SEC-33 P1-1）
+    "k8s_resource_operations": frozenset(),
+}
+
+# 按 resource_type 区分普通只读与 Secret 读的 operation：resource_type 先 strip、lower，
+# 只有落在 NON_SECRET_READ_RESOURCE_TYPES 才按普通只读；其余（secret/secrets、空值、非字符串、未知）按 Secret 读
+RESOURCE_TYPED_READ_OPERATIONS: Mapping[str, FrozenSet[str]] = {
     "k8s_resource_operations": frozenset({"describe_resource", "get_resource_yaml"}),
 }
+NON_SECRET_READ_RESOURCE_TYPES: FrozenSet[str] = frozenset(
+    " ".join(
+        (
+            "pod pods po service services svc deployment deployments deploy replicaset replicasets rs",
+            "configmap configmaps cm ingress ingresses ing namespace namespaces ns node nodes no",
+            "pv persistentvolume persistentvolumes pvc persistentvolumeclaim persistentvolumeclaims",
+        )
+    ).split()
+)
 
 # Secret 读取：单独开关 + 命名空间白名单，不按普通只读放行
 SECRET_READ_OPERATIONS: Mapping[str, FrozenSet[str]] = {
     "k8s_config_management": frozenset({"list_secrets", "get_secret"}),
+    **RESOURCE_TYPED_READ_OPERATIONS,
 }
 
 # 所有写 operation 都是集群级的工具（create_namespace / delete_namespace）
@@ -176,6 +195,10 @@ def classify(tool_name: str, parameters: Mapping[str, Any]) -> GateDecision:
     if isinstance(operation, str) and operation in read_ops:
         return GateDecision("read")
 
+    if isinstance(operation, str) and operation in RESOURCE_TYPED_READ_OPERATIONS.get(tool_name, frozenset()):
+        if _normalize_resource_type(parameters.get("resource_type")) in NON_SECRET_READ_RESOURCE_TYPES:
+            return GateDecision("read")
+
     if isinstance(operation, str) and operation in SECRET_READ_OPERATIONS.get(tool_name, frozenset()):
         if parameters.get("all_namespaces", False) is not False:
             return GateDecision("secret_read", None)
@@ -198,6 +221,11 @@ def classify(tool_name: str, parameters: Mapping[str, Any]) -> GateDecision:
             return GateDecision("write", sorted({item["namespace"] for item in identities}))
 
     return GateDecision("write", _single_namespace(parameters))
+
+
+def _normalize_resource_type(value: Any) -> Optional[str]:
+    """strip + lower；非字符串返回 None（按 Secret 读处理）"""
+    return value.strip().lower() if isinstance(value, str) else None
 
 
 def _single_namespace(parameters: Mapping[str, Any]) -> Optional[List[str]]:

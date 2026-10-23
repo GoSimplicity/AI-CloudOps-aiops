@@ -23,6 +23,55 @@ import yaml
 from .k8s_base_tool import K8sBaseTool
 from .yaml_apply import ApplyValidationError, BoundedDynamicClient, apply_yaml
 
+# SEC-33 P1-1：Secret 只返回 name、namespace、type、keys；data、stringData、annotations（含明文
+# last-applied-configuration）与 labels 一律不返回。门禁之外的第二层防护，绕过门禁直接调工具也生效。
+_SECRET_RESOURCE_TYPES = frozenset({"secret", "secrets"})
+
+
+def _as_fields(resource: Any) -> Any:
+    """V1Secret/dict 直接读字段；其它带 to_dict 的对象（如 dynamic client 返回值）先转为 dict"""
+    if isinstance(resource, (dict, client.V1Secret)) or not callable(getattr(resource, "to_dict", None)):
+        return resource
+    converted = resource.to_dict()
+    return converted if isinstance(converted, dict) else resource
+
+
+def _field(obj: Any, *names: str) -> Any:
+    for name in names:
+        value = obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
+        if value is not None:
+            return value
+    return None
+
+
+def _is_secret(resource: Any, resource_type: Any = None) -> bool:
+    """对象是 V1Secret、kind 为 Secret，或请求的 resource_type 归一化后是 secret/secrets"""
+    if isinstance(resource, client.V1Secret):
+        return True
+    kind = _field(_as_fields(resource), "kind")
+    if isinstance(kind, str) and kind.strip().lower() == "secret":
+        return True
+    return isinstance(resource_type, str) and resource_type.strip().lower() in _SECRET_RESOURCE_TYPES
+
+
+def _secret_summary(resource: Any) -> Dict[str, Any]:
+    """只取键名，绝不读取值"""
+    resource = _as_fields(resource)
+    metadata = _field(resource, "metadata") or {}
+    keys = []
+    for source in (_field(resource, "data") or {}, _field(resource, "string_data", "stringData") or {}):
+        for key in source:
+            if key not in keys:
+                keys.append(key)
+    return {"name": _field(metadata, "name"), "namespace": _field(metadata, "namespace"), "type": _field(resource, "type"), "keys": keys}
+
+
+def _secret_safe_mapping(resource_type: Any, mapping: Any) -> Any:
+    """Secret 的 labels/annotations 只回键名列表，其它资源原样返回"""
+    if _is_secret(None, resource_type):
+        return sorted(mapping or {})
+    return mapping
+
 
 class K8sResourceTool(K8sBaseTool):
     """k8s资源操作工具"""
@@ -203,6 +252,15 @@ class K8sResourceTool(K8sBaseTool):
                     "message": f"找不到资源 {resource_type}/{resource_name}",
                 }
 
+            if _is_secret(resource_info, resource_type):
+                return {
+                    "success": True,
+                    "operation": "describe_resource",
+                    "resource_type": resource_type,
+                    "resource_description": _secret_summary(resource_info),
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                }
+
             # 格式化资源信息
             description = {
                 "name": resource_info.metadata.name,
@@ -296,8 +354,8 @@ class K8sResourceTool(K8sBaseTool):
                 "resource_name": resource_name,
                 "namespace": namespace,
                 "added_labels": labels,
-                "old_labels": old_labels,
-                "new_labels": updated_resource.metadata.labels or {},
+                "old_labels": _secret_safe_mapping(resource_type, old_labels),
+                "new_labels": _secret_safe_mapping(resource_type, updated_resource.metadata.labels or {}),
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
@@ -358,8 +416,8 @@ class K8sResourceTool(K8sBaseTool):
                 "resource_type": resource_type,
                 "resource_name": resource_name,
                 "namespace": namespace,
-                "removed_labels": removed_labels,
-                "remaining_labels": updated_resource.metadata.labels or {},
+                "removed_labels": _secret_safe_mapping(resource_type, removed_labels),
+                "remaining_labels": _secret_safe_mapping(resource_type, updated_resource.metadata.labels or {}),
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
@@ -475,7 +533,7 @@ class K8sResourceTool(K8sBaseTool):
                 "resource_type": resource_type,
                 "resource_name": resource_name,
                 "namespace": namespace,
-                "removed_annotations": removed_annotations,
+                "removed_annotations": _secret_safe_mapping(resource_type, removed_annotations),
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
@@ -519,7 +577,7 @@ class K8sResourceTool(K8sBaseTool):
                 }
 
             # 转换为YAML
-            resource_dict = self._resource_to_dict(resource)
+            resource_dict = self._resource_to_dict(resource, resource_type)
             yaml_content = yaml.dump(
                 resource_dict, default_flow_style=False, allow_unicode=True
             )
@@ -680,8 +738,10 @@ class K8sResourceTool(K8sBaseTool):
         else:
             return str(obj)
 
-    def _resource_to_dict(self, resource) -> Dict[str, Any]:
-        """将资源对象转换为字典"""
+    def _resource_to_dict(self, resource, resource_type: Any = None) -> Dict[str, Any]:
+        """将资源对象转换为字典；Secret 只保留 name、namespace、type、keys（SEC-33 P1-1）"""
+        if _is_secret(resource, resource_type):
+            return _secret_summary(resource)
         if hasattr(resource, "to_dict"):
             resource_dict = resource.to_dict()
 

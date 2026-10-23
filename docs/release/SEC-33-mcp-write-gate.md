@@ -11,7 +11,7 @@ MCP 服务端所有工具调用（HTTP `POST /tools/execute`、`MCPAssistant` �
 | 开关 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `mcp.write_tools_enabled` | `MCP_WRITE_TOOLS_ENABLED` | `false` | MCP 写类工具总开关。fail-closed：只认 `true`（大小写同 autofix 开关），其它值都按关闭处理 |
-| `mcp.secret_read_enabled` | `MCP_SECRET_READ_ENABLED` | `false` | `list_secrets` / `get_secret` 开关。fail-closed，同上 |
+| `mcp.secret_read_enabled` | `MCP_SECRET_READ_ENABLED` | `false` | Secret 读开关：`list_secrets` / `get_secret`，以及 `resource_type` 为 Secret 或无法识别的 `describe_resource` / `get_resource_yaml`。fail-closed，同上 |
 
 写操作要同时满足：`mcp.write_tools_enabled=true`、`autofix.repair_enabled=true`、目标命名空间在
 `autofix.allowed_namespaces` 白名单内且不是受限命名空间（kube-system 等，复用 `ensure_namespace_allowed`）。
@@ -25,10 +25,10 @@ MCP 服务端所有工具调用（HTTP `POST /tools/execute`、`MCPAssistant` �
 | error_code | 触发条件 |
 | --- | --- |
 | `MCP_WRITE_DISABLED` | 写操作且 `mcp.write_tools_enabled` 关闭；或 `autofix.repair_enabled` 关闭（`details.switch` 区分） |
-| `MCP_NAMESPACE_NOT_ALLOWED` | 目标命名空间不在白名单 / 属于受限命名空间 / 无法确定（含 `apply_yaml` 解析失败、Secret 读 `all_namespaces=true`） |
+| `MCP_NAMESPACE_NOT_ALLOWED` | 目标命名空间不在白名单 / 属于受限命名空间 / 无法确定（含 `apply_yaml` 解析失败、Secret 读（含按 Secret 处理的 `describe_resource` / `get_resource_yaml`）`all_namespaces=true`） |
 | `MCP_CLUSTER_SCOPED_DENIED` | 集群级写：`create_namespace`、`delete_namespace` 及 `k8s_namespace_management` 其它非读 operation；`add_labels` 等作用于 namespace/node 等非命名空间资源（即 patch_namespace / patch_node）；`apply_yaml` 含集群级 kind。**任何开关都不能放行** |
 | `MCP_CONFIG_PATH_DENIED` | 写操作或 Secret 读取带非默认 `config_path`（缺省、`null`、空串为默认，其它值一律拒绝） |
-| `MCP_SECRET_READ_DISABLED` | `list_secrets` / `get_secret` 且 `mcp.secret_read_enabled` 关闭 |
+| `MCP_SECRET_READ_DISABLED` | `list_secrets` / `get_secret`，或 `resource_type` 为 Secret / 无法识别的 `describe_resource` / `get_resource_yaml`，且 `mcp.secret_read_enabled` 关闭 |
 
 检查顺序：只读放行 → Secret 读（开关 → config_path → 白名单）→ 集群级拒绝 → 写（config_path → 写开关 → repair_enabled → 白名单）。
 
@@ -53,8 +53,14 @@ config_path、YAML 等任何参数值**；响应文案也不回显参数值。
 | `k8s_namespace_management` | `list_namespaces`、`get_namespace`、`get_namespace_resources` | | `create_namespace`、`delete_namespace`（集群级，始终拒绝） |
 | `k8s_scaling_management` | `list_hpa`、`get_hpa_status` | | `scale_deployment`、`scale_replicaset`、`create_hpa`、`delete_hpa` |
 | `k8s_ingress_management` | `list_ingresses`、`get_ingress`、`get_ingress_classes` | | `create_ingress`、`delete_ingress` |
-| `k8s_resource_operations` | `describe_resource`、`get_resource_yaml` | | `add_labels`、`remove_labels`、`add_annotations`、`remove_annotations`、`apply_yaml` |
+| `k8s_resource_operations` | `describe_resource`、`get_resource_yaml`（仅已知非 Secret 的 `resource_type`） | `describe_resource`、`get_resource_yaml`（`resource_type` 为 Secret 或无法识别） | `add_labels`、`remove_labels`、`add_annotations`、`remove_annotations`、`apply_yaml` |
 
+- `describe_resource` / `get_resource_yaml`（SEC-33 P1-1）：`resource_type` 先 strip + 小写，再按白名单匹配已知非 Secret 类型
+  （pod/pods/po、service/services/svc、deployment/deployments/deploy、replicaset/replicasets/rs、configmap/configmaps/cm、
+  ingress/ingresses/ing、namespace/namespaces/ns、node/nodes/no、pv/persistentvolume(s)、pvc/persistentvolumeclaim(s)），
+  命中才按只读放行。`secret`/`secrets`（任意大小写、前后空白）以及无法识别的值（缺省、空串、`null`、非字符串、未知字符串）
+  **一律按 Secret 读处理**：要求 `mcp.secret_read_enabled=true`、默认 `config_path`、命名空间在白名单内且非受限、不允许
+  `all_namespaces`。修复前这两个 operation 被整体列为只读，默认配置下即可经 MCP 直连读取任意命名空间 Secret 的完整内容。
 - `add_labels` / `remove_labels` / `add_annotations` / `remove_annotations`：`resource_type` 只有
   pod、service、deployment、replicaset、configmap、secret、ingress 按命名空间写处理，其它（namespace、node 等）按集群级拒绝。
 - `apply_yaml`：用工具自己的解析器取出每个文档的 kind/namespace，所有文档都必须在白名单内；文档未写 namespace 时按参数
@@ -70,6 +76,11 @@ config_path、YAML 等任何参数值**；响应文案也不回显参数值。
   **任何情况下都不返回 `data` / `stringData` 的值**，也不返回 labels / annotations（`last-applied-configuration` 注解可能含明文）。
   不返回 labels / annotations 比原要求（只要求不返回 data）更严，经 Tech Lead 确认保留，原因是 `kubectl apply` 写入的 `last-applied-configuration` 注解里可能包含 Secret 的明文。
 - 工具自身也拒绝 `all_namespaces=true`，不再调用 `list_secret_for_all_namespaces`。
+- `k8s_resource_operations` 工具侧第二层（不依赖门禁，直接调用工具也生效）：`describe_resource`、`get_resource_yaml`、
+  `_resource_to_dict` 遇到 Secret（`V1Secret` 对象、`kind` 为 Secret，或请求的 `resource_type` 归一化后是 secret/secrets）
+  只返回 `name`、`namespace`、`type`、`keys`，丢弃 `data`、`stringData`、`annotations`（含 `last-applied-configuration`）、
+  `labels`；对 Secret 执行 `add_labels` / `remove_labels` / `add_annotations` / `remove_annotations` 时，响应里的
+  新旧标签、被删除的注解等也只返回键名。
 
 ## config_path
 
@@ -94,6 +105,8 @@ MCP 服务启动（lifespan）时检查 `MCP_FILE_ROOT`（默认 `data/knowledge
 - 升级后默认所有 MCP 写操作和 Secret 读取被拒绝。依赖 MCP 写工具的调用方会收到 HTTP 200 + `status="error"` + `error_code`。
 - 普通助手（mode=2 / WebSocket）本来就只走只读 allowlist，不受影响。
 - `list_secrets` / `get_secret` 的返回结构变了（只剩键名），调用方不能再依赖 `data`。
+- `describe_resource` / `get_resource_yaml`：`resource_type` 为 Secret 或无法识别（含拼写错误、未列出的资源类型）时默认被拒绝；
+  开启 Secret 读后对 Secret 也只返回键名摘要。读其它资源类型须使用上文列出的名称/复数/简称。
 - 生产环境 `MCP_FILE_ROOT` 配置不安全时 MCP 服务将无法启动。
 
 ## 回滚

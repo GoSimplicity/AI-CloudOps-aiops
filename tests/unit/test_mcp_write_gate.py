@@ -10,7 +10,9 @@ from unittest.mock import Mock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from kubernetes import client as k8s_client
 import pytest
+import yaml
 
 from app.common.exceptions import FeatureDisabledError
 from app.config.settings import MCPConfig, config
@@ -453,6 +455,147 @@ async def test_list_secrets_tool_itself_refuses_all_namespaces():
         await tool.cleanup()
     assert result["success"] is False
     v1.list_secret_for_all_namespaces.assert_not_called()
+
+
+# ---------- SEC-33 P1-1：k8s_resource_operations 读 Secret ----------
+
+RESOURCE_READ_OPS = sorted(write_gate.RESOURCE_TYPED_READ_OPERATIONS["k8s_resource_operations"])
+LAST_APPLIED = "kubectl.kubernetes.io/last-applied-configuration"
+MARKER_B64 = base64.b64encode(MARKER.encode()).decode()
+_ABSENT = object()
+
+
+def _v1_secret(kind=None):
+    """真实 V1Secret（typed read 返回值 kind 可能为空）；data/stringData/labels/last-applied 都带标记串"""
+    return k8s_client.V1Secret(
+        api_version="v1",
+        kind=kind,
+        metadata=k8s_client.V1ObjectMeta(
+            name="db",
+            namespace="staging",
+            uid="u",
+            labels={"team": MARKER},
+            annotations={LAST_APPLIED: json.dumps({"data": {"password": MARKER_B64}, "stringData": {"token": MARKER}})},
+            creation_timestamp=datetime.now(timezone.utc),
+        ),
+        type="Opaque",
+        data={"password": MARKER_B64, "user": base64.b64encode(b"u").decode()},
+        string_data={"token": MARKER},
+    )
+
+
+def assert_secret_redacted(payload):
+    dumped = json.dumps(payload, default=str)
+    assert MARKER not in dumped and MARKER_B64 not in dumped
+    assert LAST_APPLIED not in dumped and "last-applied" not in dumped
+    for field_name in ('"data"', '"string_data"', '"stringData"', '"annotations"', '"labels"'):
+        assert field_name not in dumped, field_name
+
+
+SECRET_SUMMARY = {"name": "db", "namespace": "staging", "type": "Opaque", "keys": ["password", "user", "token"]}
+
+
+def resource_read(op, resource_type=_ABSENT, **extra):
+    params = {"operation": op, "namespace": "staging", "resource_name": "db", **extra}
+    if resource_type is not _ABSENT:
+        params["resource_type"] = resource_type
+    return params
+
+
+@pytest.mark.parametrize("op", RESOURCE_READ_OPS)
+@pytest.mark.parametrize("resource_type", ["secret", "secrets", "Secret", " SECRETS ", "", None, _ABSENT, "unknown-kind", "secret-ish", 123, ["secret"]])
+async def test_resource_read_of_secret_or_unknown_type_denied_by_default_with_zero_k8s_calls(gates, server_with_mocks, op, resource_type):
+    gates(write=True, repair=True, allowed=["staging"])  # 写开关、白名单都不影响 Secret 读
+    server, api, init = server_with_mocks
+    with pytest.raises(FeatureDisabledError) as denied:
+        await server.execute_tool("k8s_resource_operations", resource_read(op, resource_type))
+    assert denied.value.error_code == write_gate.MCP_SECRET_READ_DISABLED
+    init.assert_not_called()
+    assert api.mock_calls == []
+
+
+@pytest.mark.parametrize("op", RESOURCE_READ_OPS)
+@pytest.mark.parametrize(
+    ("params", "code"),
+    [
+        ({"namespace": "prod"}, write_gate.MCP_NAMESPACE_NOT_ALLOWED),
+        ({"all_namespaces": True}, write_gate.MCP_NAMESPACE_NOT_ALLOWED),
+        ({"config_path": "/tmp/other"}, write_gate.MCP_CONFIG_PATH_DENIED),
+    ],
+)
+def test_resource_read_of_secret_needs_whitelist_rejects_all_namespaces_and_config_path(gates, op, params, code):
+    gates(secret=True, allowed=["staging"])
+    with pytest.raises(FeatureDisabledError) as denied:
+        write_gate.enforce_write_gate("k8s_resource_operations", resource_read(op, "secrets", **params))
+    assert denied.value.error_code == code
+
+
+@pytest.mark.parametrize("op", RESOURCE_READ_OPS)
+@pytest.mark.parametrize("resource_type", ["pod", " Pods ", "configmap", "CM", "deploy", "namespace", "node", "pvc"])
+def test_resource_read_of_known_non_secret_type_still_passes_with_switches_off(gates, op, resource_type):
+    assert write_gate.classify("k8s_resource_operations", resource_read(op, resource_type)).kind == "read"
+    write_gate.enforce_write_gate("k8s_resource_operations", resource_read(op, resource_type, namespace="kube-system"))
+
+
+@pytest.mark.parametrize("kind", [None, "Secret"])
+@pytest.mark.parametrize("op", RESOURCE_READ_OPS)
+async def test_resource_read_of_secret_enabled_and_whitelisted_returns_summary_only(gates, server_with_mocks, op, kind):
+    gates(secret=True, allowed=["staging"])
+    server, api, _ = server_with_mocks
+    api.read_namespaced_secret.return_value = _v1_secret(kind)
+    result = await server.execute_tool("k8s_resource_operations", resource_read(op, "secret"))
+    assert result["success"] is True, result
+    api.read_namespaced_secret.assert_called_once_with("db", "staging")
+    assert k8s_writes(api) == []
+    summary = result["resource_description"] if op == "describe_resource" else yaml.safe_load(result["yaml_content"])
+    assert summary == SECRET_SUMMARY
+    assert_secret_redacted(result)
+
+
+@pytest.mark.parametrize("op", RESOURCE_READ_OPS)
+async def test_resource_tool_redacts_secret_even_when_gate_is_bypassed(op):
+    from app.mcp.server.tools.k8s_resource_tool import K8sResourceTool
+
+    tool = K8sResourceTool()
+    api = Mock(name="k8s-api")
+    api.read_namespaced_secret.return_value = _v1_secret()
+    try:
+        method = tool._describe_resource if op == "describe_resource" else tool._get_resource_yaml
+        result = await method(_Clients(api), resource_read(op, "secret"))
+    finally:
+        await tool.cleanup()
+    assert result["success"] is True, result
+    assert_secret_redacted(result)
+
+
+def test_resource_to_dict_redacts_secret_objects_and_keeps_other_resources():
+    from app.mcp.server.tools.k8s_resource_tool import K8sResourceTool
+
+    tool = K8sResourceTool.__new__(K8sResourceTool)
+    for secret in (_v1_secret(), _v1_secret("Secret")):
+        assert tool._resource_to_dict(secret) == SECRET_SUMMARY
+    # 非 V1Secret 对象：按 kind 或调用方的 resource_type 识别
+    dict_secret = Mock(to_dict=Mock(return_value=_v1_secret("Secret").to_dict()), spec=["to_dict"])
+    assert tool._resource_to_dict(dict_secret) == SECRET_SUMMARY
+    assert tool._resource_to_dict(dict_secret, " Secrets ") == SECRET_SUMMARY
+    config_map = k8s_client.V1ConfigMap(api_version="v1", kind="ConfigMap", metadata=k8s_client.V1ObjectMeta(name="c", namespace="staging", labels={"a": "b"}), data={"k": "v"})
+    assert tool._resource_to_dict(config_map, "configmap")["data"] == {"k": "v"}
+
+
+async def test_resource_label_and_annotation_writes_on_secret_return_keys_only(gates, server_with_mocks):
+    gates(write=True, repair=True, allowed=["staging"])
+    server, api, _ = server_with_mocks
+    api.read_namespaced_secret.side_effect = lambda *args, **kwargs: _v1_secret()
+    api.patch_namespaced_secret.side_effect = lambda name, namespace, body: body
+    for params in (
+        {"operation": "add_labels", "labels": {"new": "x"}},
+        {"operation": "remove_labels", "label_keys": ["team"]},
+        {"operation": "remove_annotations", "annotation_keys": [LAST_APPLIED]},
+    ):
+        result = await server.execute_tool("k8s_resource_operations", {"resource_type": "secret", "resource_name": "db", "namespace": "staging", **params})
+        assert result["success"] is True, result
+        dumped = json.dumps(result, default=str)
+        assert MARKER not in dumped and MARKER_B64 not in dumped, params["operation"]
 
 
 # ---------- HTTP 契约与日志 ----------
