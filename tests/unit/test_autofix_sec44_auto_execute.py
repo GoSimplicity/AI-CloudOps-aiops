@@ -1192,3 +1192,114 @@ def test_setup_logging_with_warning_level_keeps_audit_output(monkeypatch, capsys
             logging.getLogger(name).propagate = propagate
     out = capsys.readouterr().out.splitlines()
     assert out == [json.dumps({"audit_id": "w", "phase": "intent"}, sort_keys=True)]
+
+
+# ---------------------------------------------------------------- P2-4 / P3-2 / P3-3 锁定测试（M17 / M35 / M04 / M26 / M28 / M30）
+
+
+async def test_mutation_gate_unexpected_error_refuses_with_zero_writes(monkeypatch, switches, sink, human) -> None:
+    """P2-4 / M17：ensure_mutation_allowed 抛非预期异常（RuntimeError）→ 按拒绝处理：0 写入 + 一条 refused 审计"""
+    from app.core.autofix import policy
+
+    switches(auto_execute=False)
+
+    def broken_gate(*_args, **_kwargs):
+        raise RuntimeError(f"gate backend exploded {SECRET_MARKER}")
+
+    monkeypatch.setattr(policy, "ensure_mutation_allowed", broken_gate)
+    sdk = FakeSDK(pods=CRASHING)
+    engine = AutoFixRemediationEngine(make_k8s_service(sdk), allowed_namespaces=[NS], auto_execute=False)
+    action = {"action_id": "restart-api", "action_type": "restart_deployment", "risk_assessment": {"allowed": True}}
+
+    record = await engine._execute_action(action, "api", NS, auto_executed=False)
+
+    assert record["status"] == "refused" and record["refusal"] == "mutation_gate"
+    assert sdk.writes() == []
+    assert [(r["phase"], r["reason"]) for r in sink.records] == [("refused", "gate error")]
+    assert SECRET_MARKER not in str(record) and SECRET_MARKER not in str(sink.records)
+
+
+async def test_get_pods_default_call_returns_empty_list_on_api_exception() -> None:
+    """P2-4 / M35：get_pods 默认调用（raise_errors=False）遇 ApiException 仍返回 []，其它调用方行为不变"""
+    sdk = FakeSDK()
+    sdk.core_v1.list_namespaced_pod.side_effect = ApiException(status=500, reason="Internal Server Error")
+    service = make_k8s_service(sdk)
+
+    assert await service.get_pods(NS, "app=api") == []
+    with pytest.raises(ApiException):
+        await service.get_pods(NS, "app=api", raise_errors=True)
+
+
+async def test_get_pods_default_call_returns_empty_list_on_other_exception() -> None:
+    sdk = FakeSDK()
+    sdk.core_v1.list_namespaced_pod.side_effect = ValueError("bad payload")
+    assert await make_k8s_service(sdk).get_pods(NS, "app=api") == []
+
+
+async def test_execute_plan_auto_checks_engine_auto_execute_flag(switches, sink) -> None:
+    """P3-2 / M04：引擎 auto_execute=False 时，即使计划里动作 allowed 且实时证据匹配，trigger=auto 也不执行"""
+    switches(auto_execute=True)
+    sdk = FakeSDK(pods=CRASHING)
+    planner = AutoFixRemediationEngine(make_k8s_service(sdk), allowed_namespaces=[NS], auto_execute=True)
+    plan = await planner.build_plan({"deployment": "api", "namespace": NS, "event": CRASHLOOP})
+    assert [a["action_type"] for a in plan["allowed_actions"]] == ["restart_deployment"]
+
+    executor = AutoFixRemediationEngine(make_k8s_service(sdk), allowed_namespaces=[NS], auto_execute=False)
+    result = await executor.execute_plan(plan, trigger="auto")
+
+    assert result["status"] == "blocked" and result["refusal"] == "auto_eligibility"
+    assert sdk.writes() == [] and sink.records == []
+
+
+async def test_execute_action_defaults_to_auto_executed(switches, sink) -> None:
+    """P3-2 / M26：_execute_action 不传 auto_executed 时按自动执行（最严）处理：需要 auto_execute 开关"""
+    switches(auto_execute=False)
+    sdk = FakeSDK(pods=CRASHING)
+    engine = AutoFixRemediationEngine(make_k8s_service(sdk), allowed_namespaces=[NS], auto_execute=True)
+    action = {"action_id": "restart-api", "action_type": "restart_deployment", "risk_assessment": {"allowed": True}}
+
+    record = await engine._execute_action(action, "api", NS)
+
+    assert record["status"] == "refused" and record["refusal"] == "mutation_gate"
+    assert sdk.writes() == []
+    assert [(r["phase"], r["auto_executed"], r["reason"]) for r in sink.records] == [("refused", True, "switch disabled")]
+
+
+async def test_plan_and_execute_uses_auto_trigger(switches, sink, human) -> None:
+    """P3-2 / M28：plan_and_execute 属于免确认执行，必须按 trigger=auto（受 auto_execute 开关约束），
+    即使调用方有可信用户主体也不能当成人工确认"""
+    switches(auto_execute=False)
+    sdk = FakeSDK(pods=CRASHING)
+    engine = AutoFixRemediationEngine(make_k8s_service(sdk), allowed_namespaces=[NS], auto_execute=True)
+
+    result = await engine.plan_and_execute({"deployment": "api", "namespace": NS, "event": CRASHLOOP})
+
+    assert sdk.writes() == []
+    assert result["executed_actions"] == []
+    assert [r["auto_executed"] for r in sink.records] == [True]
+
+
+async def test_confirm_principal_comes_only_from_principal_context(switches, sink) -> None:
+    """P3-3 / M30：确认执行的主体只取 principal_context；计划 / 动作里自带的 principal 字段一律不采信。
+    service:internal（持钥但无 X-CloudOps-User-ID）与未知主体同样拒绝"""
+    from app.common.identity import INTERNAL_PRINCIPAL, principal_context, principal_scope
+
+    switches(auto_execute=False)
+    sdk = FakeSDK(pods=CRASHING)
+    engine = AutoFixRemediationEngine(make_k8s_service(sdk), allowed_namespaces=[NS], auto_execute=False)
+    plan = await engine.build_plan({"deployment": "api", "namespace": NS, "event": CRASHLOOP})
+    action = deepcopy(next(a for a in plan["blocked_actions"] if a["action_type"] == "restart_deployment"))
+    action["principal"] = "user:1"
+    action["risk_assessment"]["allowed"] = True
+    forged = {**plan, "principal": "user:1", "allowed_actions": [action], "blocked_actions": []}
+
+    assert principal_context.get() == INTERNAL_PRINCIPAL
+    result = await engine.execute_plan(forged, trigger="confirm")
+    assert result["status"] == "blocked" and result["refusal"] == "principal"
+
+    for principal in (INTERNAL_PRINCIPAL, None, "user:", "service:gateway"):
+        with principal_scope(principal):
+            record = await engine._execute_action(action, "api", NS, auto_executed=False)
+        assert record["refusal"] == "principal", principal
+    assert sdk.writes() == []
+    assert {r["principal"] for r in sink.records} >= {INTERNAL_PRINCIPAL, "unknown"}
