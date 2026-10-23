@@ -38,16 +38,18 @@ print("%s.%s.%s" % (e(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()),
 KB=data/knowledge_base/deployment_configuration_guide.md
 U=http://localhost:8080/api/v1/health
 
-# scan <名称> <相对路径> <期望命中（"规则=标签" 以空格分隔，顺序无关；无命中写 ->）> <文件第 3 行起的内容>
+# scan <名称> <相对路径> <期望命中（"规则=标签" 以空格分隔，顺序无关；无命中写 ->）> <文件第 3 行起的内容> [配置文件]
+# 配置文件用第 5 个参数显式传入（review3h P3-f）：不要写成 "VAR=x scan ..."——macOS bash 3.2 的 --posix 模式下，
+# 函数调用前的变量赋值在函数返回后仍然保留，后续用例会误用该配置。
 scan() {
-    local name="$1" path="$2" want="$3" body="$4"
+    local name="$1" path="$2" want="$3" body="$4" cfg="${5:-$GL_TMP/gitleaks.toml}"
     local d="$GL_TMP/s$RANDOM$RANDOM" rep="$GL_TMP/report-$RANDOM$RANDOM.json" got
     mkdir -p "$d/$(dirname "$path")"
     { echo '# guide'; echo '```bash'; printf '%s\n' "$body"; echo '```'; } >"$d/$path"
     # 在扫描根目录内以 "." 扫描，File 为相对路径（与规则 path ^data/knowledge_base/ 一致，同 CI 的 gitleaks git）。
     # 报告不打码（要与 token 比对），写在 $GL_TMP，本进程内解析成标签后立即删除；控制台只输出标签。
     (cd "$d" && env -u GITLEAKS_CONFIG -u GITLEAKS_CONFIG_TOML gitleaks dir --no-banner --exit-code 0 \
-        --config "${SCAN_CFG:-$GL_TMP/gitleaks.toml}" --report-format json --report-path "$rep" . >/dev/null 2>&1) || true
+        --config "$cfg" --report-format json --report-path "$rep" . >/dev/null 2>&1) || true
     if [ ! -s "$rep" ]; then
         echo "FAIL [$name] gitleaks 未生成报告（扫描出错）"; GL_FAILS=$((GL_FAILS+1)); return 0
     fi
@@ -125,18 +127,18 @@ scan "\${OPENAI_API_KEY} 不报（非 curl）" "$KB" "-" "Authorization: $B \${O
 #   整套配置（与 CI 相同）0 条；只用本规则（[[rules]] 段 + 规则内 allowlist，不加载默认配置）则照常报，证明本规则不放行。
 sed -n '/^\[\[rules\]\]/,$p' "$GL_TMP/gitleaks.toml" >"$GL_TMP/kb-only.toml"
 scan "\$OPENAI_API_KEY_x 整套配置 0 条（默认全局 allowlist 放行）" "$KB" "-" "Authorization: $B $M1"
-SCAN_CFG="$GL_TMP/kb-only.toml" scan "\$OPENAI_API_KEY_x 只用本规则照常报（结尾不是 _API_KEY）" "$KB" "$K=畸形引用M1" "Authorization: $B $M1"
+scan "\$OPENAI_API_KEY_x 只用本规则照常报（结尾不是 _API_KEY）" "$KB" "$K=畸形引用M1" "Authorization: $B $M1" "$GL_TMP/kb-only.toml"
 scan "\${api_key} 整套配置 0 条（默认全局 allowlist 放行）" "$KB" "-" "Authorization: $B $M2"
-SCAN_CFG="$GL_TMP/kb-only.toml" scan "\${api_key} 只用本规则照常报（小写）" "$KB" "$K=畸形引用M2" "Authorization: $B $M2"
+scan "\${api_key} 只用本规则照常报（小写）" "$KB" "$K=畸形引用M2" "Authorization: $B $M2" "$GL_TMP/kb-only.toml"
 scan "\${api_key2} 整套配置照常报（含数字，默认全局 allowlist 不放行）" "$KB" "$K=其他(11字符)" "Authorization: $B \${api_key2}"
-SCAN_CFG="$GL_TMP/kb-only.toml" scan "\${OPENAI_API_KEY} 只用本规则也不报（本规则 allowlist 放行）" "$KB" "-" "Authorization: $B \${OPENAI_API_KEY}"
+scan "\${OPENAI_API_KEY} 只用本规则也不报（本规则 allowlist 放行）" "$KB" "-" "Authorization: $B \${OPENAI_API_KEY}" "$GL_TMP/kb-only.toml"
 # review3g：花括号必须成对。只用本规则时两种不配对写法都要报；整套配置下的结果如实断言（默认全局 allowlist 不放行这两种）
-SCAN_CFG="$GL_TMP/kb-only.toml" scan "\${OPENAI_API_KEY 只用本规则照常报（缺右括号）" "$KB" "$K=缺右括号U1" "Authorization: $B $U1"
-SCAN_CFG="$GL_TMP/kb-only.toml" scan "\$OPENAI_API_KEY} 只用本规则照常报（缺左括号）" "$KB" "$K=缺左括号U2" "Authorization: $B $U2"
+scan "\${OPENAI_API_KEY 只用本规则照常报（缺右括号）" "$KB" "$K=缺右括号U1" "Authorization: $B $U1" "$GL_TMP/kb-only.toml"
+scan "\$OPENAI_API_KEY} 只用本规则照常报（缺左括号）" "$KB" "$K=缺左括号U2" "Authorization: $B $U2" "$GL_TMP/kb-only.toml"
 scan "\${OPENAI_API_KEY 整套配置照常报（缺右括号）" "$KB" "$K=缺右括号U1" "Authorization: $B $U1"
 scan "\$OPENAI_API_KEY} 整套配置照常报（缺左括号）" "$KB" "$K=缺左括号U2" "Authorization: $B $U2"
-SCAN_CFG="$GL_TMP/kb-only.toml" scan "\$OPENAI_API_KEY 只用本规则不报（不带括号的引用）" "$KB" "-" "Authorization: $B \$OPENAI_API_KEY"
-SCAN_CFG="$GL_TMP/kb-only.toml" scan "\${S3_API_KEY} 只用本规则不报（带数字，本规则 allowlist 真正起作用的情形）" "$KB" "-" "Authorization: $B $D9"
+scan "\$OPENAI_API_KEY 只用本规则不报（不带括号的引用）" "$KB" "-" "Authorization: $B \$OPENAI_API_KEY" "$GL_TMP/kb-only.toml"
+scan "\${S3_API_KEY} 只用本规则不报（带数字，本规则 allowlist 真正起作用的情形）" "$KB" "-" "Authorization: $B $D9" "$GL_TMP/kb-only.toml"
 scan "\${S3_API_KEY} 整套配置不报（带数字，默认全局 allowlist 不放行，靠本规则 allowlist）" "$KB" "-" "Authorization: $B $D9"
 scan "\${X_API_KEY}abc 照常报（变量后带后缀）" "$KB" "$K=X变量+后缀(3字符)" "Authorization: $B ${VX}abc"
 scan "your-api-key 单独出现也报（allowlist 已删除）" "$KB" "$C=占位符 $K=占位符" \
