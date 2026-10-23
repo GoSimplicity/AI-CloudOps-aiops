@@ -130,8 +130,8 @@ class AutoFixService(BaseService):
             self.logger.info("自动修复执行引擎和多智能体工作流初始化完成")
 
         except Exception as e:
-            self.logger.error(f"自动修复服务组件初始化失败: {str(e)}")
-            raise AutoFixError(f"初始化失败: {str(e)}")
+            self.logger.exception(f"自动修复服务组件初始化失败, 错误类型: {type(e).__name__}")
+            raise AutoFixError("初始化失败") from e
 
     async def _do_health_check(self) -> bool:
         try:
@@ -512,7 +512,8 @@ class AutoFixService(BaseService):
                 "namespace": namespace,
             }
         except Exception as e:
-            raise AutoFixError(f"引导测试资源失败: {str(e)}")
+            self.logger.exception(f"引导测试资源失败, 错误类型: {type(e).__name__}")
+            raise AutoFixError("引导测试资源失败") from e
 
     async def diagnose_kubernetes_issues(self, deployment: Optional[str] = None, namespace: str = "default", include_pods: bool = True, include_logs: bool = False, include_events: bool = True) -> Dict[str, Any]:
         async with self._operation():
@@ -576,7 +577,8 @@ class AutoFixService(BaseService):
                             )
                             logs[pod_info["name"]] = pod_logs
                         except Exception as e:
-                            logs[pod_info["name"]] = f"获取日志失败: {str(e)}"
+                            self.logger.exception(f"获取Pod日志失败 - Pod: {pod_info['name']}, 错误类型: {type(e).__name__}")
+                            logs[pod_info["name"]] = "获取日志失败"
 
                     diagnosis_result["diagnosis"]["logs"] = logs
 
@@ -594,10 +596,11 @@ class AutoFixService(BaseService):
             return diagnosis_result
 
         except Exception as e:
-            self.logger.error(f"诊断Kubernetes问题失败: {str(e)}")
             if isinstance(e, (ValidationError, AutoFixError)):
+                self.logger.error(f"诊断Kubernetes问题失败: {e.message}")
                 raise e
-            raise AutoFixError(f"诊断失败: {str(e)}")
+            self.logger.exception(f"诊断Kubernetes问题失败, 错误类型: {type(e).__name__}")
+            raise AutoFixError("诊断失败") from e
 
     async def get_autofix_config(self) -> Dict[str, Any]:
         """获取自动修复配置信息"""
@@ -725,11 +728,11 @@ class AutoFixService(BaseService):
             return health_status
 
         except Exception as e:
-            self.logger.error(f"获取自动修复服务健康信息失败: {str(e)}")
+            self.logger.exception(f"获取自动修复服务健康信息失败, 错误类型: {type(e).__name__}")
             return {
                 "service": "autofix",
                 "status": ServiceConstants.STATUS_UNHEALTHY,
-                "error": str(e),
+                "error": "获取健康信息失败",
                 "timestamp": datetime.now().isoformat(),
             }
 

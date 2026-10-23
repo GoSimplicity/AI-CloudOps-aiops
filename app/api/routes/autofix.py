@@ -98,8 +98,9 @@ async def autofix_ready() -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"自动修复就绪检查失败: {str(e)}")
-        raise ServiceUnavailableError("autofix", {"error": str(e)})
+        # 响应不携带异常内容；完整堆栈只进服务端日志
+        logger.exception(f"自动修复就绪检查失败, 错误类型: {type(e).__name__}")
+        raise ServiceUnavailableError("autofix") from e
 
 
 @router.post(
@@ -440,7 +441,8 @@ async def bootstrap_faulty_resources() -> Dict[str, Any]:
     except (FeatureDisabledError, NamespaceNotAllowedError):
         raise
     except Exception as e:
-        raise AutoFixError(f"引导故障资源失败: {str(e)}")
+        logger.exception(f"引导故障资源失败, 错误类型: {type(e).__name__}")
+        raise AutoFixError("引导故障资源失败") from e
 
 
 @router.post(
@@ -581,8 +583,8 @@ async def diagnose_k8s(
         # 统一将领域校验错误映射为400
         raise HTTPException(status_code=HttpStatusCodes.BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"诊断失败 - 部署: {request.deployment}, 错误: {str(e)}")
-        raise AutoFixError(f"诊断操作失败: {str(e)}")
+        logger.exception(f"诊断失败 - 部署: {request.deployment}, 错误类型: {type(e).__name__}")
+        raise AutoFixError("诊断操作失败") from e
 
 
 @router.get(

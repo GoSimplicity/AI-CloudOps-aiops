@@ -200,7 +200,7 @@ class AutoFixRemediationEngine:
         try:
             return await self.k8s_client.get_deployment(name, namespace)
         except Exception as exc:
-            logger.warning("获取Deployment失败，将按资源不存在评估风险: %s", exc)
+            logger.warning("获取Deployment失败，将按资源不存在评估风险: 错误类型=%s", type(exc).__name__)
             return None
 
     def _classify_fault(self, diagnosis_result: Dict[str, Any]) -> str:
@@ -386,7 +386,8 @@ class AutoFixRemediationEngine:
         except TypeError:
             return bool(await self.k8s_client.can_i(verb, resource, namespace))
         except Exception as exc:
-            logger.warning("权限检查失败: %s", exc)
+            # 只记录异常类型与 action_id：ApiException 的 body/headers 可能含集群内部信息，不写入日志
+            logger.warning("权限检查失败: action_id=%s, 错误类型=%s", action.get("action_id"), type(exc).__name__)
             return False
 
     def _namespace_allowed(self, namespace: str) -> bool:
