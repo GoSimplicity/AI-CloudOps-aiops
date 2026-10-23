@@ -134,3 +134,15 @@ RAG 冷启动也先校验会话归属，拒绝请求不会因为已有知识文�
 普通助手 HTTP mode=2 与 WebSocket stream 共用本地只读 allowlist。仅计算、统计、换算、UTC 时间、六类资源指标/配额与 HPA list/status 可调度；混合工具只公布只读 operation，并在每次执行前严格拒绝未知字段、类型不符、越界数值与 config_path。schema 不是执行授权，模型忽略 schema 时仍拒绝实际调用。目录新增工具默认不可用，必须审查真实输出后改本地策略。部署状态可能含 env.value、通用 YAML 可能含 Secret，不能按 get/list 名称泛开放。文件工具已有 MCP_FILE_ROOT 边界，普通助手仍不开放此入口，避免根目录误配置泄露凭据。
 
 独立 MCP /tools/execute 保留内部高权限能力，只由可信服务经密钥访问。不得把服务密钥发给浏览器、公开 MCP 端口或将 Go 普通助手权限等同于独立 MCP 写权限。内部 namespace 也不能通过普通助手升级为写操作。变更使用单独授权的 AutoFix；普通诊断不会绕过审批 owner、目标指纹或资源/权限/命名空间硬限制。指标/HPA 查询只受部署 Kubernetes 身份的 RBAC 约束，不声称提供逐用户 Kubernetes 租户授权；不同集群租户应部署隔离服务身份。
+
+## 内部高权限 YAML 应用
+
+`k8s_resource_operations` 的 `apply_yaml` 使用 Kubernetes 37.0.1 SDK 原生 `server_side_apply`，发送 `application/apply-patch+yaml`。固定 `fieldManager=ai-cloudops-mcp`、`force=false`，不允许请求强夺字段所有权或自定义管理器；仅支持已存在命名空间中的可 PATCH 资源，包括能动态发现的 namespaced CR。Namespace、CRD等集群资源及 List不支持，未知/不能唯一发现的 apiVersion/kind明确失败。Kubernetes自身的认证、RBAC、准入及字段冲突检查不被绕过。[SSA官方说明](https://kubernetes.io/docs/reference/using-api/server-side-apply/)
+
+输入为UTF-8 YAML，最多1MiB、20个文档、64层；拒绝重复对象键、锚点/别名、NaN/Infinity、重复资源和非JSON数据。每文档必须有明确apiVersion、kind、metadata.name；不支持generateName、status及managedFields/resourceVersion/uid等服务端metadata。显式 `namespace` 参数必须与所有文档一致；不传时使用文档namespace，文档也未指定则为default。命名空间不会自动创建。客户端应提供目标namespace，避免默认命名空间歧义。显式config_path必须为存在的文件，错误路径不会回退其他集群；资源工具实例绑定首次配置来源，后续请求传不同来源（包括显式/默认互换）会拒绝，应使用隔离部署或重启后明确配置。
+
+先完整解析与发现全部资源，再对全部文档发送 `dryRun=All`、`fieldValidation=Strict`，任一失败则不持久化任何资源。全部预检通过才顺序实际apply，每次必须收到匹配名称/命名空间及UID/resourceVersion才计入applied_resources。多资源不是事务：写阶段失败立即停止，返回applied_resources、errors、not_attempted、phase、outcome_unknown和retry_safe=false。HTTP403/404/409/422等失败返回状态和安全原因，不回传Secret内容或SDK异常body。字段冲突保持原字段管理器和原值。
+
+网络请求连接/读取期限5/15秒，PATCH禁隐式重试；SDK操作在线程中执行。超时/取消不能保证正在运行的线程或API请求未生效，应核对资源实际状态，禁止盲目重试或将404解释为从未执行。预检不能消除与其他写入者之间的竞态，也不提供跨资源原子回滚。独立 MCP HTTP 保持既有200协议外壳，明确失败的工具返回status=error及非空error，结构化部分结果仍保留在result。
+
+本阶段只在显式本地kind配置、随机自有namespace中验证ConfigMap创建、重复apply更新与另一fieldManager冲突409，读取验证原值/所有权未被抢占并finally删除命名空间；没有生产或模型调用。真实业务资源上线仍由用户按其集群准入/RBAC独立验收。

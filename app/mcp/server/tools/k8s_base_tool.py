@@ -65,7 +65,9 @@ class K8sBaseTool(BaseTool):
             return {
                 "success": False,
                 "error": "操作超时",
-                "message": f"{self.name}执行时间超过{ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT}秒，已中止操作。",
+                "outcome_unknown": True,
+                "retry_safe": False,
+                "message": f"{self.name}执行时间超过{ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT}秒，底层请求可能仍在执行，请核对实际状态，勿盲目重试。",
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
         except Exception as e:

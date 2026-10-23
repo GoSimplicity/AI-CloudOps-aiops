@@ -229,18 +229,20 @@ async def execute_tool(request: ToolRequest) -> ToolResponse:
         execution_time = time.time() - start_time
         logger.info(f"工具 {request.tool} 执行完成，耗时: {execution_time:.2f}秒")
 
+        failed = isinstance(result, dict) and result.get("success") is False
         return ToolResponse(
             request_id=request.request_id,
             tool=request.tool,
             result=result,
-            status="success",
+            error="工具报告操作失败，请查看结构化结果并核对实际状态" if failed else None,
+            status="error" if failed else "success",
         )
 
     except asyncio.TimeoutError:
         return ToolResponse(
             request_id=request.request_id,
             tool=request.tool,
-            error=f"Tool execution timed out after {config.mcp.timeout} seconds",
+            error=f"Tool execution timed out after {config.mcp.timeout} seconds; 底层请求可能已生效，请核对实际状态，勿盲目重试",
             status="error",
         )
     except Exception as err:

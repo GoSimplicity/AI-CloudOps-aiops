@@ -120,3 +120,11 @@
 - 普通 HTTP/stream 使用固定受审查 allowlist，模型 schema 与真实 dispatch 双重严格限制字段、类型、operation 和范围
 - 保留计算/时间、指标与 HPA 查询；拒绝自选 kubeconfig、文件、敏感资源详情和目录新增未知工具，不依赖提示词约束权限
 - 独立内部 MCP 高权限入口与 AutoFix 执行保持原契约，补假 Kubernetes patch 客户端及 ASGI/WebSocket 回归，无真实模型或集群调用
+
+### 2026-10-23 · 高权限YAML真实服务端应用
+
+- 修复 apply_yaml 只构造摘要却宣称资源已应用的问题，使用 SDK 原生 server-side apply，必须收到UID/resourceVersion确认才报告成功
+- 最多1MiB/20文档，先完整解析、去重、发现所有命名空间资源，再全量服务端 dry-run；不支持集群资源、List、锚点、重复键、非有限JSON和服务端管理字段
+- 固定字段管理器、不force、不隐式重试；冲突/拒绝如实返回，执行中失败保留已确认/失败/未尝试资源及结果未知标记，超时不谎称SDK线程已停止
+- MCP协议对工具明确失败返回error并保留结构化部分结果，SDK发现及PATCH均有期限且不阻塞事件循环
+- 新增31项离线回归，25项旧行为失败及1项协议失败已复现；本地独立kind命名空间真实验证ConfigMap创建、重复更新及409字段冲突不抢占，finally已清理

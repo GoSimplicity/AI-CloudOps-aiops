@@ -538,3 +538,5 @@ git push origin feature/amazing-feature
 `/assistant/query` 的 mode=2 与 `/assistant/stream` 仅提供受审查的计算、统计、换算、UTC 时间、资源指标/配额和 HPA 只读操作。读写混合工具的模型 Schema 被收窄，每次执行前再次严格验证操作、字段、类型和范围；禁止本地文件、任意 kubeconfig、通用资源/Secret YAML、容器环境变量详情及未知工具。模型文本、内部主体或额外参数不能提升此策略。资源变更应走单独授权的 AutoFix 工作流及其硬限制。
 
 独立 MCP `/tools/execute` 是持有内部服务密钥的高权限入口，保持现有工具能力，不能公开给普通助手用户；发布 Compose 不公开 MCP 端口。集群查询只使用部署时配置的服务身份及 Kubernetes RBAC，不提供用户自选凭据。
+
+内部高权限 `apply_yaml` 已使用真实 server-side apply，受1MiB/20文档限制；仅支持命名空间资源，先全部服务端dry-run再写入，不force覆盖其他字段管理器。部分成功和未知结果不会报告为全部成功，详见 [生产契约](docs/production.md#内部高权限-yaml-应用)。

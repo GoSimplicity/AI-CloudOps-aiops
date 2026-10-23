@@ -11,20 +11,25 @@ Description: Kubernetes资源管理工具
 
 import asyncio
 from datetime import datetime
+from functools import partial
+import os
+import threading
 from typing import Any, Dict
 
 from kubernetes import client
 from kubernetes.client.rest import ApiException
-from kubernetes.dynamic import DynamicClient
 import yaml
 
 from .k8s_base_tool import K8sBaseTool
+from .yaml_apply import ApplyValidationError, BoundedDynamicClient, apply_yaml
 
 
 class K8sResourceTool(K8sBaseTool):
     """k8s资源操作工具"""
 
     def __init__(self):
+        self._client_source_lock = threading.Lock()
+        self._client_source = None
         super().__init__(
             name="k8s_resource_operations",
             description="k8s资源操作工具，支持通用资源的describe、标签管理、注解管理和YAML应用功能",
@@ -96,11 +101,23 @@ class K8sResourceTool(K8sBaseTool):
                 },
                 "yaml_content": {
                     "type": "string",
-                    "description": "YAML内容（应用YAML时使用）",
+                    "description": "内部高权限SSA：UTF-8最多1MiB/20文档，仅命名空间资源；先全部dry-run，失败不强夺字段所有权",
+                    "maxLength": 1048576,
                 },
             },
             "required": ["operation"],
         }
+
+    def _initialize_clients(self, config_path=None):
+        if config_path is not None and (not isinstance(config_path, str) or not os.path.isfile(config_path)):
+            raise ApplyValidationError("显式kubeconfig必须是存在的文件，拒绝回退到其他集群")
+        source = os.path.realpath(config_path) if config_path is not None else "default"
+        with self._client_source_lock:
+            if self._api_clients and self._client_source != source:
+                raise ApplyValidationError("资源工具已绑定首次配置，不能在请求中切换集群")
+            clients = super()._initialize_clients(config_path)
+            self._client_source = source
+            return clients
 
     def _create_api_clients(self) -> Dict[str, Any]:
         """创建Kubernetes API客户端"""
@@ -110,24 +127,32 @@ class K8sResourceTool(K8sBaseTool):
             "apps_v1": client.AppsV1Api(),
             "networking_v1": client.NetworkingV1Api(),
             "storage_v1": client.StorageV1Api(),
-            "api_client": client.ApiClient(),
+            "api_client": self._apply_api_client(),
         }
 
         # 尝试初始化动态客户端
         try:
-            api_clients["dynamic"] = DynamicClient(api_clients["api_client"])
+            api_clients["dynamic"] = BoundedDynamicClient(api_clients["api_client"])
         except Exception:
             api_clients["dynamic"] = None
 
         return api_clients
 
+    @staticmethod
+    def _apply_api_client():
+        configuration = client.Configuration.get_default_copy()
+        configuration.retries = 0
+        return client.ApiClient(configuration=configuration)
+
     async def _execute_internal(self, parameters: Dict[str, Any]) -> Any:
         """执行工具内部逻辑"""
         operation = parameters.get("operation")
         config_path = parameters.get("config_path")
+        if operation == "apply_yaml":
+            return await self._apply_yaml(None, parameters)
 
         # 初始化API客户端
-        clients = self._initialize_clients(config_path)
+        clients = await asyncio.get_running_loop().run_in_executor(self._executor, partial(self._initialize_clients, config_path))
 
         # 根据操作类型执行相应的方法
         operation_map = {
@@ -136,7 +161,6 @@ class K8sResourceTool(K8sBaseTool):
             "remove_labels": lambda: self._remove_labels(clients, parameters),
             "add_annotations": lambda: self._add_annotations(clients, parameters),
             "remove_annotations": lambda: self._remove_annotations(clients, parameters),
-            "apply_yaml": lambda: self._apply_yaml(clients, parameters),
             "get_resource_yaml": lambda: self._get_resource_yaml(clients, parameters),
         }
 
@@ -459,73 +483,10 @@ class K8sResourceTool(K8sBaseTool):
             return {"success": False, "error": "删除注解失败", "message": str(e)}
 
     async def _apply_yaml(
-        self, clients: Dict[str, Any], parameters: Dict[str, Any]
+        self, clients: Dict[str, Any] | None, parameters: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """应用YAML配置"""
-        try:
-            yaml_content = parameters.get("yaml_content")
-
-            if not yaml_content:
-                return {
-                    "success": False,
-                    "error": "缺少参数",
-                    "message": "yaml_content是必需的参数",
-                }
-
-            # 解析YAML内容
-            try:
-                resources = list(yaml.safe_load_all(yaml_content))
-                resources = [res for res in resources if res]  # 过滤空对象
-            except yaml.YAMLError as e:
-                return {
-                    "success": False,
-                    "error": "YAML解析失败",
-                    "message": f"YAML格式错误: {str(e)}",
-                }
-
-            if not resources:
-                return {
-                    "success": False,
-                    "error": "YAML为空",
-                    "message": "YAML内容中没有有效的资源定义",
-                }
-
-            # 应用资源
-            applied_resources = []
-            errors = []
-
-            for resource_def in resources:
-                try:
-                    # 这里只是简单实现，实际使用中可能需要更复杂的逻辑
-                    applied_resources.append(
-                        {
-                            "apiVersion": resource_def.get("apiVersion"),
-                            "kind": resource_def.get("kind"),
-                            "name": resource_def.get("metadata", {}).get("name"),
-                            "namespace": resource_def.get("metadata", {}).get(
-                                "namespace"
-                            ),
-                        }
-                    )
-                except Exception as e:
-                    errors.append(
-                        {
-                            "resource": resource_def.get("kind", "Unknown"),
-                            "error": str(e),
-                        }
-                    )
-
-            return {
-                "success": len(errors) == 0,
-                "operation": "apply_yaml",
-                "message": f"已应用 {len(applied_resources)} 个资源，{len(errors)} 个失败",
-                "applied_resources": applied_resources,
-                "errors": errors,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-            }
-
-        except Exception as e:
-            return {"success": False, "error": "应用YAML失败", "message": str(e)}
+        """内部高权限SSA入口，普通助手策略不开放此operation"""
+        return await apply_yaml(self, clients, parameters)
 
     async def _get_resource_yaml(
         self, clients: Dict[str, Any], parameters: Dict[str, Any]
