@@ -75,6 +75,8 @@ class OpsMultiAgentWorkflow:
         """执行多智能体工作流并返回可审计结果。
 
         ``plan_only=True`` 时本次调用无论 ``auto_execute`` 如何都只生成计划、不调用执行引擎。
+        SEC-26 A1：fail-closed 归一化，只有显式 ``plan_only=False``（bool 本身）才允许按 ``auto_execute``
+        免确认执行；``"true"``、``"false"``、``1``、``0``、``None`` 等非 False 取值一律视为只出计划。
         """
         initial_state: OpsWorkflowState = {
             "problem_description": str(request.get("problem_description") or request.get("event") or ""),
@@ -87,14 +89,14 @@ class OpsMultiAgentWorkflow:
             "status": "running",
             "next_action": "coordinate",
             "timestamp": datetime.now().isoformat(),
-            "plan_only": plan_only is True,
+            "plan_only": plan_only is not False,
         }
         result = await self.graph.ainvoke(initial_state)
         return self._finalize(result)
 
     def _may_auto_execute(self, state: OpsWorkflowState) -> bool:
-        """本次调用是否允许免确认执行：实例开启 auto_execute 且本次未被强制 plan_only"""
-        return self.auto_execute and state.get("plan_only") is not True
+        """本次调用是否允许免确认执行：实例开启 auto_execute 且本次状态显式 plan_only=False（缺失或其它取值均 fail-closed）"""
+        return self.auto_execute is True and state.get("plan_only") is False
 
     def _build_graph(self):
         workflow = StateGraph(OpsWorkflowState)

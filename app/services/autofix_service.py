@@ -17,8 +17,20 @@ from datetime import datetime
 import logging
 from typing import Any, Dict, List, Optional
 
+from kubernetes.client.rest import ApiException
+import urllib3
+
 from ..common.constants import ServiceConstants
-from ..common.exceptions import AutoFixError, FeatureDisabledError, ValidationError, WorkflowApprovalError
+from ..common.exceptions import (
+    AutoFixError,
+    AutoFixInternalError,
+    FeatureDisabledError,
+    NamespaceNotAllowedError,
+    RequestTimeoutError,
+    ServiceUnavailableError,
+    ValidationError,
+    WorkflowApprovalError,
+)
 from ..common.identity import require_principal
 from ..config.settings import config
 from ..core.agents.k8s_fixer import K8sFixerAgent
@@ -35,6 +47,19 @@ from ..core.interfaces.k8s_client import K8sClient
 from ..core.interfaces.llm_client import NullLLMClient
 from .base import BaseService
 from .workflow_approvals import CONFIRM_ENDPOINT, WorkflowApproval, WorkflowApprovals
+
+# SEC-26 P3-e：diagnose 原样上抛的已脱敏领域异常（ServiceUnavailableError 单独处理：去掉 details 后上抛）
+_DIAGNOSE_PASSTHROUGH_ERRORS = (
+    ValidationError,
+    AutoFixError,
+    AutoFixInternalError,
+    FeatureDisabledError,
+    NamespaceNotAllowedError,
+    WorkflowApprovalError,
+    RequestTimeoutError,
+)
+# 未经 execute_with_timeout 包装直接到达的上游超时 / K8s API 异常 → 503
+_DIAGNOSE_UPSTREAM_ERRORS = (ApiException, urllib3.exceptions.TimeoutError, TimeoutError, asyncio.TimeoutError)
 
 logger = logging.getLogger("aiops.services.autofix")
 
@@ -608,7 +633,7 @@ class AutoFixService(BaseService):
             if deployment:
                 deployment_info = await self.execute_with_timeout(
                     lambda: self._k8s_fixer.k8s_service.get_deployment(
-                        deployment, namespace
+                        deployment, namespace, raise_unavailable=True
                     ),
                     timeout=ServiceConstants.AUTOFIX_K8S_TIMEOUT,
                     operation_name="get_deployment_for_diagnosis",
@@ -656,12 +681,23 @@ class AutoFixService(BaseService):
 
             return diagnosis_result
 
+        except _DIAGNOSE_PASSTHROUGH_ERRORS:
+            # SEC-26 P3-e：已脱敏的领域异常原样上抛，由 api_response 按类型映射状态码
+            raise
+        except ServiceUnavailableError as e:
+            # execute_with_timeout 已把上游超时 / 不可用统一包装为 ServiceUnavailableError（details 可能含 str(e)），
+            # 这里只保留类型与状态（503 SERVICE_UNAVAILABLE），重新构造不带 details 的异常
+            cause = e.__cause__ or e.__context__
+            self.logger.exception(
+                f"诊断Kubernetes问题失败: 上游不可用, 错误类型: {type(cause or e).__name__}"
+            )
+            raise ServiceUnavailableError(self.service_name) from e
+        except _DIAGNOSE_UPSTREAM_ERRORS as e:
+            self.logger.exception(f"诊断Kubernetes问题失败: 上游不可用, 错误类型: {type(e).__name__}")
+            raise ServiceUnavailableError(self.service_name) from e
         except Exception as e:
-            if isinstance(e, (ValidationError, AutoFixError)):
-                self.logger.error(f"诊断Kubernetes问题失败: {e.message}")
-                raise e
             self.logger.exception(f"诊断Kubernetes问题失败, 错误类型: {type(e).__name__}")
-            raise AutoFixError("诊断失败") from e
+            raise AutoFixInternalError("诊断失败") from e
 
     async def get_autofix_config(self) -> Dict[str, Any]:
         """获取自动修复配置信息"""

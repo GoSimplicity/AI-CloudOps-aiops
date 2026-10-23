@@ -15,6 +15,8 @@
 | P3-5 | assistant / predict / rca 的 `/ready` 503 不再在 `details` 里带异常文本。 | 无 |
 | P3-6 | 确认时重新校验发现 `resource_exists=false` 返回 **409**（原 403），文案写明尚未执行、需重新诊断。见 `docs/autofix_guide.md`「错误响应契约」。 | 前端按 409 提示“资源已不存在” |
 | P3-7 | 确认重读白名单时在局部构建策略（`AutoFixRemediationEngine.with_policy`：`allowed_namespaces`、`auto_execute`、受限命名空间取并集），不修改共享单例。 | 无 |
+| P3-d | autofix / MCP 五个开关的 YAML 显式标签 `!!bool` 只接受不加引号的 `true`/`True`/`TRUE`/`false`/`False`/`FALSE`；`!!bool yes`、`!!bool 'true'`、`!!bool tRuE`、`!!bool 1` 等按关闭处理并告警（告警不含取值）。只改严格 loader，全局 `yaml.safe_load` 不变。 | 原来 `!!bool yes`/`on` 等为开启、`!!bool 'true'` 为开启，现在关闭 |
+| P3-e | `/autofix/diagnose`：上游超时与 Kubernetes 不可用（`ApiException` 无状态码 / 0、429、5xx）由 502 `AUTOFIX_ERROR` 改为 **503 `SERVICE_UNAVAILABLE`**（`details` 为空）；未知异常为 500 `AUTOFIX_INTERNAL_ERROR`。覆盖 s1 中 diagnose 的 502 部分，repair / bootstrap 不变。见 `docs/autofix_guide.md`「diagnose 错误映射」。 | 前端按 502 判断 diagnose 上游失败的需改为 503 |
 
 ## Tech Lead 补充决定（同一提交）
 

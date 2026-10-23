@@ -95,7 +95,7 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 
 - 三个布尔开关解析规则：**先 strip，再 lower，等于 true 才开启**；`false` 为关闭；其余任何值一律按 `false`（关闭）处理，并在启动时打印 WARNING 日志（logger `aiops.config.autofix`），提示该值不是 true/false：
   - **环境变量**：先 strip 再 lower（`true`/`True`/`TRUE`/` true `/`true\n` 均为开启）；`1`、`0`、`yes`、`no`、`on`、空字符串等都按关闭处理并告警。
-  - **YAML**：开关字段使用专门的严格解析（不认 YAML 1.1 的布尔别名），只有不加引号的 `true`/`True`/`TRUE` 为开启、`false`/`False`/`FALSE` 为关闭。不加引号的 `yes`/`Yes`/`on`/`On`/`no`/`off` 等**不再**被当作布尔，按关闭处理并告警；`y`、数字 `1`/`0`、加引号的 `'yes'` 同样按关闭处理并告警。加引号的字符串与环境变量规则一致（先 strip 再 lower），`'true'`/`' TRUE '` 视为开启。注意：不加引号但大小写混写的 `tRUE`、`tRue`、`fALSE` 等不是 YAML 原生布尔，会先被读成字符串，再按环境变量规则（strip + 不区分大小写）判定，因此 `tRUE` 视为**开启**、`fALSE` 视为关闭，且不告警；建议统一写成 `true`/`false`。
+  - **YAML**：开关字段使用专门的严格解析（不认 YAML 1.1 的布尔别名），只有不加引号的 `true`/`True`/`TRUE` 为开启、`false`/`False`/`FALSE` 为关闭。不加引号的 `yes`/`Yes`/`on`/`On`/`no`/`off` 等**不再**被当作布尔，按关闭处理并告警；`y`、数字 `1`/`0`、加引号的 `'yes'` 同样按关闭处理并告警。加引号的字符串与环境变量规则一致（先 strip 再 lower），`'true'`/`' TRUE '` 视为开启。注意：不加引号但大小写混写的 `tRUE`、`tRue`、`fALSE` 等不是 YAML 原生布尔，会先被读成字符串，再按环境变量规则（strip + 不区分大小写）判定，因此 `tRUE` 视为**开启**、`fALSE` 视为关闭，且不告警；建议统一写成 `true`/`false`。显式标签 `!!bool` 只接受不加引号的 `true`/`True`/`TRUE`/`false`/`False`/`FALSE`（如 `!!bool true`）；其它写法（`!!bool yes`、`!!bool 'true'`、`!!bool tRuE`、`!!bool 1` 等）一律按关闭处理并告警，告警只含开关名与配置文件路径，不含取值（SEC-26 P3-d）。
   - 告警日志只输出字段名和值的类型（如 `类型 str`、`类型 int`），不输出值本身；白名单告警只输出条目序号（第 N 项）。
   - 严格解析只作用于 `autofix.auto_execute_enabled`、`autofix.repair_enabled`、`autofix.bootstrap_enabled` 这三个字段，以及沿用同一解析函数的 SEC-33 开关 `mcp.write_tools_enabled`、`mcp.secret_read_enabled`；其它配置项（如 `app.debug`、`dev.auto_reload`）仍按原有 YAML 1.1 规则解析，行为不变。
 - `allowed_namespaces` **大小写敏感、按字面精确匹配**，不做大小写归一；Kubernetes 命名空间均为小写，写成 `Staging` 不会匹配 `staging`。
@@ -119,13 +119,25 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 | 403/404/409 | `WORKFLOW_APPROVAL_ERROR` | 确认相关：见下文 403 与 409 区别；计划不存在或已过期为 404 |
 | 409 | `WORKFLOW_APPROVAL_ERROR` | 确认时重新校验发现目标资源已不存在（`resource_exists=false`）：尚未执行任何动作，需重新诊断 |
 | 500 | `AUTOFIX_INTERNAL_ERROR` | 自动修复服务内部未预期异常（非上游错误；固定文案，异常仅记服务端日志） |
-| 502 | `AUTOFIX_ERROR` | 上游错误：Kubernetes API 返回错误（`ApiException`）或上游超时（固定文案，异常仅记服务端日志） |
-| 503 | `SERVICE_UNAVAILABLE` | 依赖不可用（就绪检查失败时 `details` 不含异常文本） |
+| 502 | `AUTOFIX_ERROR` | 仅 repair / bootstrap：上游错误，即 Kubernetes API 返回错误（`ApiException`）或上游超时（固定文案，异常仅记服务端日志）；diagnose 不再返回 502，见下文「diagnose 错误映射」 |
+| 503 | `SERVICE_UNAVAILABLE` | 依赖不可用（就绪检查失败时 `details` 不含异常文本）；diagnose 的上游超时 / Kubernetes 不可用（`details` 为空） |
 | 504 | `REQUEST_TIMEOUT` | 路由级整体超时（如 repair/diagnose 总耗时超限） |
 
 所有响应均不包含原始异常文本（`str(e)`）；完整堆栈只通过 `logger.exception` 记录在服务端。
 
-`/autofix/diagnose` 同样使用上述统一映射：只有 `VALIDATION_ERROR` 返回 400；`AUTOFIX_ERROR` 等服务域错误（Kubernetes `ApiException`、上游超时）返回 502、上游明确不可用（`SERVICE_UNAVAILABLE`）返回 503、其它未分类领域异常返回 500；**未知异常（非领域异常，如 `RuntimeError`）返回 500 `AUTOFIX_INTERNAL_ERROR`**（Tech Lead 裁决，不是 502），均不拼接异常文本。
+#### diagnose 错误映射
+
+`/autofix/diagnose`（SEC-26 P3-e）：
+
+- 只有 `VALIDATION_ERROR` 返回 400（如 `namespace` 为空）。
+- **上游超时与上游不可用返回 503 `SERVICE_UNAVAILABLE`**（不再是 502）：包括 Kubernetes 调用超过 `AUTOFIX_K8S_TIMEOUT`、`urllib3` 连接/读取超时、`TimeoutError`，以及表示上游不可用的 Kubernetes `ApiException`（无状态码 / 0、429、5xx）。服务层会去掉 `details`（原 `details.error` 可能含异常文本）后上抛，响应不含异常文本。
+- 读取 Deployment 时其它 `ApiException`（如 404/403）与原行为一致：视为查不到，`diagnosis.deployment` 为 `null`，整体仍返回 200。
+- **未知异常（非领域异常，如 `RuntimeError`）返回 500 `AUTOFIX_INTERNAL_ERROR`**（Tech Lead 裁决），文案固定。
+- 已脱敏的领域异常（`AUTOFIX_FEATURE_DISABLED`、`AUTOFIX_NAMESPACE_NOT_ALLOWED`、`WORKFLOW_APPROVAL_ERROR`、`REQUEST_TIMEOUT` 等）原样上抛，按上表映射；路由级整体超时仍为 504 `REQUEST_TIMEOUT`。
+- 仍可能出现的 502：diagnose 自身不再产生 `AUTOFIX_ERROR`；只有当下游组件显式抛出已脱敏的 `AutoFixError` / `RCAError` 领域异常时，才按统一映射返回 502（表示“上游返回了错误结果”，与“上游不可用”区分）。repair / bootstrap 的 Kubernetes `ApiException` / 上游超时仍为 502（本次未改，见上表）。
+- 注意：Kubernetes 调用经 `execute_with_timeout` 包装，调用过程中出现的任何异常都会被视为上游不可用（503），而不是 500。
+
+均不拼接异常文本。
 
 #### 前端契约
 

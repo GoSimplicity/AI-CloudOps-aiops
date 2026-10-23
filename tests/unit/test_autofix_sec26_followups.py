@@ -36,20 +36,20 @@ class LeakyError(RuntimeError):
     pass
 
 
-# ---------------------------------------------------------------- s1：上游错误 502 / 其它 500
+# ---------------------------------------------------------------- s1：上游错误 502 / 其它 500（diagnose 经 SEC-26 P3-e 改为上游 503）
 
 
 @pytest.mark.parametrize(
     "error,status,error_code",
     [
-        (api_exception(500, "Internal Server Error"), 502, "AUTOFIX_ERROR"),
-        (urllib3.exceptions.ReadTimeoutError(None, "/api", SECRET), 502, "AUTOFIX_ERROR"),
-        (urllib3.exceptions.ConnectTimeoutError(SECRET), 502, "AUTOFIX_ERROR"),
+        (api_exception(500, "Internal Server Error"), 503, "SERVICE_UNAVAILABLE"),
+        (urllib3.exceptions.ReadTimeoutError(None, "/api", SECRET), 503, "SERVICE_UNAVAILABLE"),
+        (urllib3.exceptions.ConnectTimeoutError(SECRET), 503, "SERVICE_UNAVAILABLE"),
         (LeakyError(SECRET), 500, "AUTOFIX_INTERNAL_ERROR"),
         (KeyError(SECRET), 500, "AUTOFIX_INTERNAL_ERROR"),
     ],
 )
-def test_s1_diagnose_maps_upstream_to_502_and_others_to_500(monkeypatch, error, status, error_code) -> None:
+def test_s1_diagnose_maps_upstream_to_503_and_others_to_500(monkeypatch, error, status, error_code) -> None:
     monkeypatch.setattr(config, "debug", False)
     service = make_service(mock_k8s())
     monkeypatch.setattr(service, "initialize", AsyncMock())

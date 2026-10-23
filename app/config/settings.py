@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
-from app.config.base import BaseAppSettings
+from app.config.base import BaseAppSettings, InvalidExplicitBool
 
 ROOT_DIR = Path(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -771,9 +771,20 @@ def _parse_autofix_bool(env_key: str, config_path: str) -> bool:
     其它任何值（含空串、0/1、yes/no/on/off、YAML 数字 1/0）按关闭处理并告警。
     YAML 中只有原生布尔 true/True/TRUE 为开（SEC-26 第二层审查 P2-2）；不加引号的 yes/on/On 不再按
     YAML 1.1 视为 true。SEC-33 的 mcp.write_tools_enabled / mcp.secret_read_enabled 沿用同一规则。
+    显式 !!bool 标签只接受不加引号的 true/false（SEC-26 复审 P3-d）：!!bool yes / !!bool on / !!bool 'true'
+    由 StrictBoolSafeLoader 构造为 InvalidExplicitBool 哨兵，这里按关闭处理并告警。
     """
     value = _get_autofix_switch_value(env_key, config_path)
     if value is None:
+        return False
+    if isinstance(value, InvalidExplicitBool):
+        # 哨兵不保存原值；告警只给字段名与类别提示
+        _autofix_config_logger.warning(
+            "开关 %s / %s 使用了显式 !!bool 标签，但值不是不加引号的 true/false，已按 false（关闭）处理；"
+            "显式 !!bool 标签只接受不加引号的 true/false",
+            env_key,
+            config_path,
+        )
         return False
     if value is True or value is False:
         return value

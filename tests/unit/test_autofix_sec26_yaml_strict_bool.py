@@ -127,3 +127,84 @@ def test_quoted_true_string_matches_env_rule(yaml_root, literal) -> None:
     """加引号的 'true' 是字符串，与环境变量规则一致（大小写不敏感）视为开启；见 docs/autofix_guide.md"""
     yaml_root(f"autofix:\n  repair_enabled: {literal}\n")
     assert AutoFixConfig().repair_enabled is True
+
+
+# ---------- SEC-26 复审 P3-d：显式 !!bool 标签 ----------
+
+FIVE_SWITCHES = [
+    ("AutoFixConfig", "AUTOFIX_AUTO_EXECUTE_ENABLED", "autofix", "auto_execute_enabled"),
+    ("AutoFixConfig", "AUTOFIX_REPAIR_ENABLED", "autofix", "repair_enabled"),
+    ("AutoFixConfig", "AUTOFIX_BOOTSTRAP_ENABLED", "autofix", "bootstrap_enabled"),
+    ("MCPConfig", "MCP_WRITE_TOOLS_ENABLED", "mcp", "write_tools_enabled"),
+    ("MCPConfig", "MCP_SECRET_READ_ENABLED", "mcp", "secret_read_enabled"),
+]
+VALID_EXPLICIT = [("!!bool true", True), ("!!bool True", True), ("!!bool TRUE", True), ("!!bool false", False), ("!!bool False", False), ("!!bool FALSE", False)]
+INVALID_EXPLICIT = ["!!bool yes", "!!bool on", "!!bool On", "!!bool 'true'", '!!bool "TRUE"', "!!bool tRuE", "!!bool 1", "!!bool y", "!!bool [true]", "!!bool {a: true}", "!!bool ''"]
+
+
+def _read_switch(cls_name, section, field_name, env_key, monkeypatch):
+    monkeypatch.delenv(env_key, raising=False)
+    return getattr(getattr(settings, cls_name)(), field_name)
+
+
+@pytest.mark.parametrize(("cls_name", "env_key", "section", "field_name"), FIVE_SWITCHES)
+@pytest.mark.parametrize(("literal", "expected"), VALID_EXPLICIT)
+def test_explicit_bool_tag_plain_true_false_accepted_for_all_switches(yaml_root, monkeypatch, caplog, cls_name, env_key, section, field_name, literal, expected) -> None:
+    yaml_root(f"{section}:\n  {field_name}: {literal}\n")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        assert _read_switch(cls_name, section, field_name, env_key, monkeypatch) is expected
+    assert _switch_warnings(caplog, f"{section}.{field_name}") == []
+
+
+@pytest.mark.parametrize(("cls_name", "env_key", "section", "field_name"), FIVE_SWITCHES)
+@pytest.mark.parametrize("literal", INVALID_EXPLICIT)
+def test_explicit_bool_tag_other_values_are_off_and_warned_without_value(yaml_root, monkeypatch, caplog, cls_name, env_key, section, field_name, literal) -> None:
+    yaml_root(f"{section}:\n  {field_name}: {literal}\n")
+    assert isinstance(settings.AUTOFIX_SWITCH_CONFIG[section][field_name], base.InvalidExplicitBool)
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        assert _read_switch(cls_name, section, field_name, env_key, monkeypatch) is False
+    records = _switch_warnings(caplog, f"{section}.{field_name}")
+    assert len(records) == 1
+    assert records[0].args == (env_key, f"{section}.{field_name}")  # 只有字段名，不带值
+    raw = literal.removeprefix("!!bool ").strip()
+    message = records[0].getMessage()
+    assert "!!bool" in message
+    if raw not in ("1", "y", "On", "on", "''"):  # 这些短串可能碰巧出现在固定文案里，靠上面的 args 断言保证
+        assert raw not in message
+    assert "INVALID_EXPLICIT_BOOL" not in message
+
+
+def test_explicit_bool_tag_env_still_overrides(yaml_root, monkeypatch) -> None:
+    yaml_root("autofix:\n  repair_enabled: !!bool yes\n")
+    monkeypatch.setenv("AUTOFIX_REPAIR_ENABLED", "true")
+    assert AutoFixConfig().repair_enabled is True
+
+
+def test_invalid_explicit_bool_sentinel_keeps_no_value() -> None:
+    value = yaml.load("a: !!bool 'secret-looking-true'", Loader=base.StrictBoolSafeLoader)["a"]
+    assert value is base.INVALID_EXPLICIT_BOOL and not value
+    assert "secret-looking" not in repr(value)
+    assert not hasattr(value, "__dict__")
+
+
+def test_explicit_bool_constructor_only_on_strict_loader_global_safe_load_unchanged() -> None:
+    tag = "tag:yaml.org,2002:bool"
+    assert yaml.SafeLoader.yaml_constructors[tag] is yaml.constructor.SafeConstructor.construct_yaml_bool
+    assert base.StrictBoolSafeLoader.yaml_constructors[tag] is base._construct_strict_bool
+    text = "a: !!bool yes\nb: !!bool on\nc: !!bool true\nd: yes\ne: !!bool off\n"
+    assert yaml.safe_load(text) == {"a": True, "b": True, "c": True, "d": True, "e": False}
+    loaded = yaml.load(text, Loader=base.StrictBoolSafeLoader)
+    assert loaded["a"] is base.INVALID_EXPLICIT_BOOL and loaded["c"] is True and loaded["d"] == "yes"
+    assert yaml.safe_load(text) == {"a": True, "b": True, "c": True, "d": True, "e": False}
+    assert yaml.safe_load("a: !!bool 'true'") == {"a": True}  # 全局 safe_load 对加引号的 !!bool 仍按 PyYAML 原逻辑
+    with pytest.raises(KeyError):
+        yaml.safe_load("a: !!bool maybe")  # PyYAML 原行为：未知写法 KeyError；严格 loader 则返回哨兵
+    assert yaml.load("a: !!bool maybe", Loader=base.StrictBoolSafeLoader)["a"] is base.INVALID_EXPLICIT_BOOL
+
+
+def test_global_config_with_explicit_bool_unchanged(yaml_root) -> None:
+    text = "app:\n  debug: !!bool yes\nautofix:\n  repair_enabled: !!bool yes\n"
+    yaml_root(text)
+    assert settings.CONFIG == yaml.safe_load(text)
+    assert settings.CONFIG["autofix"]["repair_enabled"] is True
+    assert AutoFixConfig().repair_enabled is False

@@ -51,6 +51,10 @@ class StrictBoolSafeLoader(yaml.SafeLoader):
     SEC-26 第二层审查 P2-2：只用于经 settings._parse_autofix_bool 解析的布尔开关（见 settings.AUTOFIX_SWITCH_CONFIG）：
     autofix.auto_execute_enabled / repair_enabled / bootstrap_enabled，以及 SEC-33 的
     mcp.write_tools_enabled / mcp.secret_read_enabled。全局 CONFIG 仍用 yaml.safe_load，其它配置的解析结果不变。
+
+    SEC-26 复审 P3-d：显式 !!bool 标签同样只接受不加引号的 true/True/TRUE、false/False/FALSE；
+    !!bool yes / !!bool on / !!bool 'true' 等构造为 INVALID_EXPLICIT_BOOL 哨兵，由调用方按关闭处理并告警。
+    构造器只注册在本子类上（add_constructor 会把表复制到子类），yaml.SafeLoader 不受影响。
     """
 
 
@@ -60,6 +64,32 @@ StrictBoolSafeLoader.add_implicit_resolver(
     re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
     list("tTfF"),
 )
+
+
+class InvalidExplicitBool:
+    """显式 !!bool 标签下非法取值的哨兵：不保存原值，布尔上下文中为 False（fail-closed）"""
+
+    __slots__ = ()
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __repr__(self) -> str:
+        return "INVALID_EXPLICIT_BOOL"
+
+
+INVALID_EXPLICIT_BOOL = InvalidExplicitBool()
+_STRICT_BOOL_VALUES = {"true": True, "True": True, "TRUE": True, "false": False, "False": False, "FALSE": False}
+
+
+def _construct_strict_bool(loader: yaml.SafeLoader, node: yaml.Node) -> Any:
+    """tag:yaml.org,2002:bool 构造器：只有不加引号的 true/false 三种大小写写法有效，其它返回哨兵"""
+    if isinstance(node, yaml.ScalarNode) and node.style is None and node.value in _STRICT_BOOL_VALUES:
+        return _STRICT_BOOL_VALUES[node.value]
+    return INVALID_EXPLICIT_BOOL
+
+
+StrictBoolSafeLoader.add_constructor(_YAML_BOOL_TAG, _construct_strict_bool)
 
 
 def _load_yaml(loader: Type[yaml.SafeLoader] = yaml.SafeLoader) -> Dict[str, Any]:

@@ -69,6 +69,14 @@ def _upstream_or_internal(error: BaseException, message: str) -> AIOpsException:
     return AutoFixInternalError(message)
 
 
+def _diagnose_unavailable_or_internal(error: BaseException, message: str) -> AIOpsException:
+    """SEC-26 P3-e：diagnose 的上游超时 / K8s ApiException → ServiceUnavailableError(503)；
+    其它 → AutoFixInternalError(500)。文案固定，不拼接 str(error)。"""
+    if isinstance(error, _UPSTREAM_ERRORS):
+        return ServiceUnavailableError("autofix")
+    return AutoFixInternalError(message)
+
+
 async def require_autofix_principal() -> None:
     require_principal()
 
@@ -604,12 +612,12 @@ async def diagnose_k8s(
         raise he
     except (AIOpsException, DomainValidationError):
         # 承接 SEC-26 s6 / 第二层审查 P3-3：领域异常原样交给 api_response，按异常类型映射状态码并带 error_code
-        # （ValidationError→400、AutoFixError→502、ServiceUnavailable→503 ...）；5xx 由错误处理器统一脱敏，
-        # 不再统一改写为 400 + str(e)
+        # （ValidationError→400、ServiceUnavailable→503、AutoFixInternalError→500 ...）；5xx 由错误处理器统一脱敏，
+        # 不再统一改写为 400 + str(e)。SEC-26 P3-e：服务层已把上游超时 / K8s 不可用映射为 503
         raise
     except Exception as e:
         logger.exception(f"诊断失败 - 部署: {request.deployment}, 错误类型: {type(e).__name__}")
-        raise _upstream_or_internal(e, "诊断操作失败") from e
+        raise _diagnose_unavailable_or_internal(e, "诊断操作失败") from e
 
 
 @router.get(

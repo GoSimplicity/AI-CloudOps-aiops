@@ -132,6 +132,7 @@ realpath 会被**固定**下来，之后文件工具一直使用这个值，root
   `ingress`、`namespace`、`node`、`pv`、`pvc` 这些原名；门禁额外认识复数和简称等别名，只是为了在无法判定时拒绝请求（fail-closed），
   用别名调用会通过门禁，但工具仍不支持。
 - 生产环境 `MCP_FILE_ROOT` 配置不安全时 MCP 服务将无法启动。
+- 同一发布中 `/autofix/diagnose`（SEC-26 P3-e）：diagnose 未知异常返回 500 `AUTOFIX_INTERNAL_ERROR`；上游超时与 Kubernetes 不可用返回 503 `SERVICE_UNAVAILABLE`（不再是 502）。详见 [autofix_guide.md「diagnose 错误映射」](../autofix_guide.md#diagnose-错误映射)。
 
 ## 回滚
 
