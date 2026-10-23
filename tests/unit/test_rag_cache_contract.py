@@ -6,7 +6,6 @@ import pickle
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-
 from app.core.agents.enterprise_assistant import RAGAssistant
 from app.core.vector import redis_vector_store
 
