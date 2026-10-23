@@ -727,14 +727,46 @@ def _parse_namespace_list(value: Any) -> List[str]:
     return result
 
 
+_autofix_config_logger = logging.getLogger("aiops.config.autofix")
+
+
+def _parse_autofix_bool(env_key: str, config_path: str) -> bool:
+    """autofix 开关只认 true（大小写不敏感）；false 为关闭；其它任何值（含空串、0/1、yes/no、YAML 数字）按关闭处理并告警"""
+    value = get_env_or_config(env_key, config_path, False)
+    if value is True or value is False:
+        return value
+    if isinstance(value, str) and value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    _autofix_config_logger.warning(
+        "autofix 开关 %s / %s 的值 %r 不是 true/false，已按 false（关闭）处理；只有 true 会开启",
+        env_key,
+        config_path,
+        value,
+    )
+    return False
+
+
+def _warn_suspicious_namespaces(namespaces: List[str]) -> None:
+    """白名单大小写敏感且不支持通配符：出现 * 或含大写字母的条目时告警（不改写，按字面匹配）"""
+    for name in namespaces:
+        if "*" in name:
+            _autofix_config_logger.warning(
+                "autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 含 %r：* 不是通配符，只会按字面匹配（实际不会匹配任何命名空间）",
+                name,
+            )
+        if any(ch.isupper() for ch in name):
+            _autofix_config_logger.warning(
+                "autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 含大写条目 %r：白名单大小写敏感，Kubernetes 命名空间均为小写，该条目不会匹配",
+                name,
+            )
+
+
 @dataclass
 class AutoFixConfig:
     """自动修复执行边界配置；默认全部关闭（fail-closed）"""
 
     auto_execute_enabled: bool = field(
-        default_factory=lambda: get_env_or_config(
-            "AUTOFIX_AUTO_EXECUTE_ENABLED", "autofix.auto_execute_enabled", False, bool
-        )
+        default_factory=lambda: _parse_autofix_bool("AUTOFIX_AUTO_EXECUTE_ENABLED", "autofix.auto_execute_enabled")
     )
     allowed_namespaces: List[str] = field(
         default_factory=lambda: _parse_namespace_list(
@@ -742,15 +774,14 @@ class AutoFixConfig:
         )
     )
     repair_enabled: bool = field(
-        default_factory=lambda: get_env_or_config(
-            "AUTOFIX_REPAIR_ENABLED", "autofix.repair_enabled", False, bool
-        )
+        default_factory=lambda: _parse_autofix_bool("AUTOFIX_REPAIR_ENABLED", "autofix.repair_enabled")
     )
     bootstrap_enabled: bool = field(
-        default_factory=lambda: get_env_or_config(
-            "AUTOFIX_BOOTSTRAP_ENABLED", "autofix.bootstrap_enabled", False, bool
-        )
+        default_factory=lambda: _parse_autofix_bool("AUTOFIX_BOOTSTRAP_ENABLED", "autofix.bootstrap_enabled")
     )
+
+    def __post_init__(self) -> None:
+        _warn_suspicious_namespaces(list(self.allowed_namespaces or []))
 
 
 @dataclass
