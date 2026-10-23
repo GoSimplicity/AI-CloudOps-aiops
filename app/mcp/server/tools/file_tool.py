@@ -15,6 +15,7 @@ import stat as stat_mode
 from typing import Any, Dict, Tuple
 
 from app.utils.file_boundary import (
+    NoFollowUnsupportedError,
     PathChangedError,
     display_path,
     file_root,
@@ -34,6 +35,8 @@ def _failure(prefix: str, raw: Any, resolved: Any, error: Exception) -> FileTool
     shown = display_path(raw, resolved)
     if isinstance(error, FileToolError):
         return FileToolError(f"{prefix}: {error}")
+    if isinstance(error, NoFollowUnsupportedError):
+        return FileToolError(f"{prefix}: {error}（{shown}）")
     if isinstance(error, PathChangedError):
         return FileToolError(f"{prefix}: 路径在校验后发生变化（可能被替换为符号链接），已拒绝（{shown}）")
     if isinstance(error, ValueError) and str(error) == "Path is outside MCP_FILE_ROOT":

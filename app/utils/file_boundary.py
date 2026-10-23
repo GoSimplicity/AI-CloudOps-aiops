@@ -67,7 +67,19 @@ class PathChangedError(OSError):
         super().__init__("Path changed after MCP_FILE_ROOT validation")
 
 
-_NOFOLLOW_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | getattr(os, "O_NONBLOCK", 0)
+class NoFollowUnsupportedError(OSError):
+    """SEC-33 L3 P3-a：平台没有 O_NOFOLLOW 时文件工具一律拒绝（不影响模块导入与 MCP 启动）；消息固定，不含路径"""
+
+    def __init__(self) -> None:
+        super().__init__("当前平台不支持 O_NOFOLLOW，文件工具已禁用")
+
+
+def _nofollow_flags() -> int:
+    """每次调用时读取 os.O_NOFOLLOW：缺失则抛 NoFollowUnsupportedError，而不是在导入时 AttributeError 拖垮启动"""
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise NoFollowUnsupportedError()
+    return os.O_RDONLY | nofollow | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
 
 
 def validated_identity(path: str) -> os.stat_result:
@@ -88,11 +100,12 @@ def open_in_root(path: str, expected: Optional[os.stat_result] = None, *, direct
         raise ValueError("Path is outside MCP_FILE_ROOT") from None
     if any(part in ("", ".", "..") for part in parts):
         raise PathChangedError()
-    current = os.open(root, _NOFOLLOW_FLAGS | os.O_DIRECTORY)
+    nofollow_flags = _nofollow_flags()
+    current = os.open(root, nofollow_flags | os.O_DIRECTORY)
     try:
         for index, part in enumerate(parts):
             last = index == len(parts) - 1
-            flags = _NOFOLLOW_FLAGS | (os.O_DIRECTORY if (not last or directory) else 0)
+            flags = nofollow_flags | (os.O_DIRECTORY if (not last or directory) else 0)
             try:
                 child = os.open(part, flags, dir_fd=current)
             except OSError as error:
