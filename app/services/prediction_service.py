@@ -1262,7 +1262,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
     def _detect_trend(self, predictions: List[PredictionDataPoint]) -> str:
         """检测趋势"""
-        if not predictions:
+        if len(predictions) < 2:
             return "stable"
 
         values = [p.predicted_value for p in predictions]
@@ -1270,6 +1270,14 @@ class PredictionService(BaseService, HealthCheckMixin):
         second_half_avg = sum(values[len(values) // 2 :]) / (
             len(values) - len(values) // 2
         )
+
+        # 零起点只判断方向，不构造无定义的相对百分比
+        if first_half_avg == 0:
+            if second_half_avg > 0:
+                return "increasing"
+            if second_half_avg < 0:
+                return "decreasing"
+            return "stable"
 
         diff_percent = (second_half_avg - first_half_avg) / first_half_avg * 100
 
@@ -1337,6 +1345,7 @@ class PredictionService(BaseService, HealthCheckMixin):
             cache_params = {
                 "type": prediction_type,
                 "data_contract": "observed-hourly-v1",
+                "time_contract": "utc-v1",
                 "current": round(current_value, 2),  # 避免浮点数精度问题
                 "query": metric_query or "default",
                 "hours": prediction_hours,
@@ -1369,7 +1378,7 @@ class PredictionService(BaseService, HealthCheckMixin):
             self.logger.error(f"生成缓存键失败: {str(e)}")
             # 降级到简单键
             return (
-                f"prediction:{prediction_type}:{int(current_value)}:{prediction_hours}"
+                f"prediction:{prediction_type}:utc-v1:{int(current_value)}:{prediction_hours}"
             )
 
     async def _get_from_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:

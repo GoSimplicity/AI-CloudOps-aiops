@@ -9,7 +9,7 @@ License: Apache 2.0
 Description: AI-CloudOps统一预测引擎 - 支持多种资源类型预测
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any, Dict, List
 
@@ -72,7 +72,7 @@ class UnifiedPredictor:
                 )
 
             predictions = []
-            current_time = datetime.now()
+            current_time = datetime.now(timezone.utc)
 
             # 计算预测点数
             if granularity == PredictionGranularity.MINUTE:
@@ -91,7 +91,8 @@ class UnifiedPredictor:
 
                 # 提取特征
                 features = await self.feature_extractor.extract_features(
-                    timestamp=future_time,
+                    # 特征保持既有本地无时区时间，输出时间单独使用UTC
+                    timestamp=future_time.astimezone().replace(tzinfo=None),
                     current_value=current_value,
                     historical_data=historical_data,
                     prediction_type=prediction_type,
@@ -163,7 +164,7 @@ class UnifiedPredictor:
         """基于规则的预测（降级方案）"""
 
         predictions = []
-        current_time = datetime.now()
+        current_time = datetime.now(timezone.utc)
 
         # 计算预测点数
         if granularity == PredictionGranularity.MINUTE:
@@ -192,8 +193,10 @@ class UnifiedPredictor:
             future_time = current_time + delta * (i + 1)
 
             # 简单的线性增长模型，加入时间因素
-            hour_of_day = future_time.hour
-            day_of_week = future_time.weekday()
+            # 工作时间因子沿用部署时区，不改变现有规则数值语义
+            calendar_time = future_time.astimezone()
+            hour_of_day = calendar_time.hour
+            day_of_week = calendar_time.weekday()
 
             # 时间因子（工作时间负载更高）
             time_factor = 1.0
