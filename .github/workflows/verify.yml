@@ -26,6 +26,9 @@ jobs:
       - run: pip check
       - run: pip install pip-audit
       - run: pip-audit -r requirements.txt --no-deps --disable-pip
+      - run: pip install ruff==0.15.0
+      - run: ruff check app tests
+      - run: python -m compileall -q app
       - run: python -m pytest -q
       - run: cp env.example .env
       - run: docker compose config --quiet

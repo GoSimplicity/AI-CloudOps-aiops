@@ -9,7 +9,7 @@ License: Apache 2.0
 Description: 自动修复模块模型定义
 """
 
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 

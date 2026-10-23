@@ -24,9 +24,9 @@ from .assistant_models import (
     UploadKnowledgeResponse,
 )
 from .autofix_models import (
-    AutoFixWorkflowConfirmRequest,
     AutoFixRequest,
     AutoFixResponse,
+    AutoFixWorkflowConfirmRequest,
 )
 from .base import BaseResponse, ErrorResponse, ListResponse
 from .data_models import AgentState, AnomalyResult, CorrelationResult, MetricData
