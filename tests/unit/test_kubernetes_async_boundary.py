@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 from kubernetes.client.rest import ApiException
 import pytest
 
+from app.config.settings import config
 from app.core.agents.k8s_fixer import K8sFixerAgent
 from app.services import kubernetes
 from app.utils.workload_context import model_workload_context
@@ -128,7 +129,10 @@ async def test_model_context_masks_inline_environment_and_last_applied_copy(reso
 
 
 @pytest.mark.asyncio
-async def test_fixer_sends_only_model_copy_and_keeps_internal_workload_for_repairs():
+async def test_fixer_sends_only_model_copy_and_keeps_internal_workload_for_repairs(monkeypatch):
+    # SEC-26：K8sFixerAgent 写入口受 repair_enabled + allowed_namespaces 门禁，此处显式放行 owned
+    monkeypatch.setattr(config.autofix, "repair_enabled", True)
+    monkeypatch.setattr(config.autofix, "allowed_namespaces", ["owned"])
     deployment = {
         "metadata": {"creation_timestamp": datetime(2026, 10, 23, tzinfo=timezone.utc), "annotations": {"kubectl.kubernetes.io/last-applied-configuration": "private-copy-marker"}},
         "spec": {"template": {"spec": {"containers": [{"name": "owned", "env": [{"name": "TOKEN", "value": "private-env-marker"}]}]}}},

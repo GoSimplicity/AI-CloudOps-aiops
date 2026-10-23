@@ -18,13 +18,19 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from ..common.constants import ServiceConstants
-from ..common.exceptions import AutoFixError, FeatureDisabledError, NamespaceNotAllowedError, ValidationError, WorkflowApprovalError
+from ..common.exceptions import AutoFixError, FeatureDisabledError, ValidationError, WorkflowApprovalError
 from ..common.identity import require_principal
 from ..config.settings import config
 from ..core.agents.k8s_fixer import K8sFixerAgent
 from ..core.agents.ops_workflow import OpsMultiAgentWorkflow
 from ..core.agents.supervisor import SupervisorAgent
 from ..core.autofix import AutoFixRemediationEngine
+from ..core.autofix.policy import (  # noqa: F401  ensure_repair_enabled / REPAIR_DISABLED_MESSAGE 保持从本模块导出
+    REPAIR_DISABLED_MESSAGE,
+    build_namespace_policy,
+    ensure_namespace_allowed,
+    ensure_repair_enabled,
+)
 from ..core.interfaces.k8s_client import K8sClient
 from ..core.interfaces.llm_client import NullLLMClient
 from .base import BaseService
@@ -32,15 +38,9 @@ from .workflow_approvals import CONFIRM_ENDPOINT, WorkflowApproval, WorkflowAppr
 
 logger = logging.getLogger("aiops.services.autofix")
 
-REPAIR_DISABLED_MESSAGE = "自动修复入口 /autofix/repair 已关闭（autofix.repair_enabled / AUTOFIX_REPAIR_ENABLED=false）；请使用 /autofix/workflow 生成计划并经 /autofix/workflow/confirm 确认"
 BOOTSTRAP_DISABLED_MESSAGE = "测试资源引导入口 /autofix/bootstrap 已关闭（autofix.bootstrap_enabled / AUTOFIX_BOOTSTRAP_ENABLED=false）"
 # /autofix/bootstrap 创建故障演示资源的目标命名空间
 BOOTSTRAP_NAMESPACE = "test"
-
-
-def ensure_repair_enabled() -> None:
-    if not config.autofix.repair_enabled:
-        raise FeatureDisabledError(REPAIR_DISABLED_MESSAGE, switch="autofix.repair_enabled")
 
 
 def ensure_bootstrap_enabled() -> None:
@@ -54,18 +54,11 @@ def ensure_bootstrap_namespace_allowed() -> None:
     复用 run/confirm 的同一判定（AutoFixRemediationEngine._namespace_allowed + 相同配置注入），
     只构造策略对象、不传 k8s 客户端，因此拒绝时不会初始化 Kubernetes 或创建任何资源。
     """
-    namespace = BOOTSTRAP_NAMESPACE
-    policy = AutoFixService._build_remediation_engine(k8s_client=None)
-    if policy._namespace_allowed(namespace):
-        return
-    prefix = f"测试资源引导入口 /autofix/bootstrap 已开启，但目标命名空间 {namespace} "
-    if namespace in policy.restricted_namespaces:
-        reason = "属于受限命名空间，即使写入 autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 也不允许执行"
-    elif not policy.allowed_namespaces:
-        reason = f"不在白名单内：autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 为空（fail-closed），请将 {namespace} 加入 AUTOFIX_ALLOWED_NAMESPACES"
-    else:
-        reason = f"不在 autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 白名单内，请将 {namespace} 加入 AUTOFIX_ALLOWED_NAMESPACES"
-    raise NamespaceNotAllowedError(f"{prefix}{reason}；已拒绝创建测试资源", namespace=namespace)
+    ensure_namespace_allowed(
+        BOOTSTRAP_NAMESPACE,
+        subject="测试资源引导入口 /autofix/bootstrap 已开启",
+        outcome="已拒绝创建测试资源",
+    )
 
 
 class AutoFixService(BaseService):
@@ -102,11 +95,7 @@ class AutoFixService(BaseService):
     @staticmethod
     def _build_remediation_engine(k8s_client: Any) -> AutoFixRemediationEngine:
         """按 autofix 配置构造执行引擎：白名单为空即 fail-closed，默认不自动执行"""
-        return AutoFixRemediationEngine(
-            k8s_client=k8s_client,
-            allowed_namespaces=list(config.autofix.allowed_namespaces or []),
-            auto_execute=bool(config.autofix.auto_execute_enabled),
-        )
+        return build_namespace_policy(k8s_client)
 
     async def initialize(self) -> None:
         if self._closing:
