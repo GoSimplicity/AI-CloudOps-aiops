@@ -191,3 +191,84 @@ async def test_stats_of_directory_still_aggregates(root):
     (root / "sub" / "b.md").write_text("12345")
     result = await FileStatsTool().execute({"path": "sub"})
     assert result["type"] == "directory" and result["total_files"] == 1 and result["total_size_bytes"] == 5
+
+
+# ---------------------------------------------------------------- P3-B：普通文件 st_nlink==1，root 目录 fd 启动时固定
+
+HARDLINK_MARKER = "sec33-l3-P3B-HARDLINK-MARKER-90417"
+
+
+@pytest.fixture
+def hardlink(root, tmp_path):
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text(HARDLINK_MARKER * 3)
+    os.link(outside, root / "linked.md")
+    return root / "linked.md"
+
+
+async def test_read_file_rejects_hardlink(hardlink):
+    with pytest.raises(RuntimeError) as failed:
+        await FileReadTool().execute({"file_path": "linked.md"})
+    assert "硬链接" in str(failed.value)
+    assert HARDLINK_MARKER not in str(failed.value)
+
+
+async def test_stats_rejects_hardlink(hardlink):
+    with pytest.raises(RuntimeError) as failed:
+        await FileStatsTool().execute({"path": "linked.md"})
+    assert "硬链接" in str(failed.value)
+    assert str(len(HARDLINK_MARKER * 3)) not in str(failed.value)
+
+
+async def test_list_and_directory_stats_hide_hardlink_size(hardlink, root):
+    listed = await FileListTool().execute({"directory_path": "."})
+    entry = next(item for item in listed["items"] if item["name"] == "linked.md")
+    assert entry["size_bytes"] == 0
+    stats = await FileStatsTool().execute({"path": "."})
+    assert stats["total_size_bytes"] == len("inside\n")
+
+
+def test_open_in_root_rejects_hardlinked_regular_file(hardlink):
+    with pytest.raises(file_boundary.HardLinkError):
+        file_boundary.open_in_root(str(hardlink))
+
+
+async def test_single_link_files_still_readable(root):
+    result = await FileReadTool().execute({"file_path": "a.md"})
+    assert result["content"] == "inside\n"
+
+
+ROOT_SWAP_MARKER = "sec33-l3-P3B-ROOT-SWAP-MARKER-31337"
+
+
+async def test_root_replaced_after_startup_is_not_followed(root):
+    """启动时固定 root 目录 fd：之后 root 路径被换成另一个目录（rename 旧目录 + 新建同名目录），工具不得读到新目录内容"""
+    file_boundary.ensure_file_root_safe("development")
+    assert (await FileReadTool().execute({"file_path": "a.md"}))["content"] == "inside\n"
+    os.rename(root, str(root) + ".old")
+    root.mkdir()
+    (root / "a.md").write_text(ROOT_SWAP_MARKER)
+    try:
+        result = await FileReadTool().execute({"file_path": "a.md"})
+    except RuntimeError as error:
+        assert ROOT_SWAP_MARKER not in str(error)
+    else:
+        assert ROOT_SWAP_MARKER not in result["content"]
+    listed = None
+    try:
+        listed = await FileListTool().execute({"directory_path": "."})
+    except RuntimeError:
+        pass
+    if listed is not None:
+        assert all(item["size_bytes"] != len(ROOT_SWAP_MARKER) for item in listed["items"])
+
+
+def test_pin_file_root_holds_directory_fd(root):
+    file_boundary.pin_file_root()
+    fd = file_boundary.pinned_root_fd()
+    assert fd is not None
+    info = os.fstat(fd)
+    assert (info.st_dev, info.st_ino) == (os.stat(root).st_dev, os.stat(root).st_ino)
+    file_boundary.reset_file_root_cache()
+    with pytest.raises(OSError):
+        os.fstat(fd)

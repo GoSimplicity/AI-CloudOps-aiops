@@ -15,39 +15,81 @@ logger = logging.getLogger("aiops.mcp.file_boundary")
 
 
 # SEC-33 P3：MCP_FILE_ROOT 的 realpath 在启动时（ensure_file_root_safe）解析一次并固定，
-# 之后每次调用直接复用，避免 root 本身（或其路径上的符号链接）在检查后被替换（TOCTOU）
+# 之后每次调用直接复用，避免 root 本身（或其路径上的符号链接）在检查后被替换（TOCTOU）。
+# SEC-33 L3 P3-B：同时固定 root 目录的 fd，open_in_root 从这个 fd 出发；root 路径之后被换成别的目录也不会跟过去
 _pinned_root: Optional[Path] = None
-_pin_lock = threading.Lock()
+_pinned_root_fd: Optional[int] = None
+_pin_lock = threading.RLock()
 
 
 def _resolve_file_root() -> Path:
     return Path(os.path.realpath(os.getenv("MCP_FILE_ROOT", DEFAULT_FILE_ROOT)))
 
 
+def _open_root_fd(root: Path) -> Optional[int]:
+    """root 不存在或打不开时返回 None（启动不因此失败），首次使用时再尝试固定"""
+    try:
+        return os.open(root, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return None
+
+
+def _close_pinned_fd() -> None:
+    global _pinned_root_fd
+    fd, _pinned_root_fd = _pinned_root_fd, None
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
 def pin_file_root() -> Path:
-    """重新解析 MCP_FILE_ROOT 并固定（启动检查时调用）"""
-    global _pinned_root
+    """重新解析 MCP_FILE_ROOT 并固定路径与目录 fd（启动检查时调用）"""
+    global _pinned_root, _pinned_root_fd
     with _pin_lock:
+        _close_pinned_fd()
         _pinned_root = _resolve_file_root()
+        _pinned_root_fd = _open_root_fd(_pinned_root)
         return _pinned_root
 
 
 def file_root() -> Path:
     """返回已固定的 root；未经启动检查直接使用工具时，首次调用解析并固定"""
-    global _pinned_root
+    global _pinned_root, _pinned_root_fd
     root = _pinned_root
     if root is None:
         with _pin_lock:
             if _pinned_root is None:
                 _pinned_root = _resolve_file_root()
+                _pinned_root_fd = _open_root_fd(_pinned_root)
             root = _pinned_root
     return root
 
 
+def pinned_root_fd() -> Optional[int]:
+    """已固定的 root 目录 fd（启动时 root 尚不存在则在首次使用时补固定）；调用方不得关闭"""
+    global _pinned_root_fd
+    root = file_root()
+    with _pin_lock:
+        if _pinned_root_fd is None:
+            _pinned_root_fd = _open_root_fd(root)
+        return _pinned_root_fd
+
+
+def _dup_root_fd() -> int:
+    with _pin_lock:
+        fd = pinned_root_fd()
+        if fd is None:
+            raise FileNotFoundError(errno.ENOENT, "MCP_FILE_ROOT is not available")
+        return os.dup(fd)
+
+
 def reset_file_root_cache() -> None:
-    """仅供测试：清除已固定的 root，下次 file_root() 重新读取 MCP_FILE_ROOT"""
+    """仅供测试：清除已固定的 root 与目录 fd，下次 file_root() 重新读取 MCP_FILE_ROOT"""
     global _pinned_root
     with _pin_lock:
+        _close_pinned_fd()
         _pinned_root = None
 
 
@@ -65,6 +107,18 @@ class PathChangedError(OSError):
 
     def __init__(self) -> None:
         super().__init__("Path changed after MCP_FILE_ROOT validation")
+
+
+class HardLinkError(OSError):
+    """SEC-33 L3 P3-B：普通文件 st_nlink != 1（可能是指向 root 外文件的硬链接），拒绝；消息固定，不含路径"""
+
+    def __init__(self) -> None:
+        super().__init__("文件存在多个硬链接，已拒绝")
+
+
+def is_single_link(info: os.stat_result) -> bool:
+    """非普通文件不受限；普通文件必须 st_nlink == 1"""
+    return not stat.S_ISREG(info.st_mode) or info.st_nlink == 1
 
 
 class NoFollowUnsupportedError(OSError):
@@ -101,7 +155,7 @@ def open_in_root(path: str, expected: Optional[os.stat_result] = None, *, direct
     if any(part in ("", ".", "..") for part in parts):
         raise PathChangedError()
     nofollow_flags = _nofollow_flags()
-    current = os.open(root, nofollow_flags | os.O_DIRECTORY)
+    current = _dup_root_fd()
     try:
         for index, part in enumerate(parts):
             last = index == len(parts) - 1
@@ -117,6 +171,8 @@ def open_in_root(path: str, expected: Optional[os.stat_result] = None, *, direct
         info = os.fstat(current)
         if expected is not None and (info.st_dev, info.st_ino) != (expected.st_dev, expected.st_ino):
             raise PathChangedError()
+        if not is_single_link(info):
+            raise HardLinkError()
         fd, current = current, -1
         return fd
     finally:
@@ -137,6 +193,8 @@ def stat_in_root(path: str, expected: os.stat_result) -> os.stat_result:
         os.close(parent_fd)
     if stat.S_ISLNK(info.st_mode) or (info.st_dev, info.st_ino) != (expected.st_dev, expected.st_ino):
         raise PathChangedError()
+    if not is_single_link(info):
+        raise HardLinkError()
     return info
 
 

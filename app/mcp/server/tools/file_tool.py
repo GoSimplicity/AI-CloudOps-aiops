@@ -15,10 +15,12 @@ import stat as stat_mode
 from typing import Any, Dict, Tuple
 
 from app.utils.file_boundary import (
+    HardLinkError,
     NoFollowUnsupportedError,
     PathChangedError,
     display_path,
     file_root,
+    is_single_link,
     open_in_root,
     resolve_tool_path,
     stat_in_root,
@@ -36,6 +38,8 @@ def _failure(prefix: str, raw: Any, resolved: Any, error: Exception) -> FileTool
     shown = display_path(raw, resolved)
     if isinstance(error, FileToolError):
         return FileToolError(f"{prefix}: {error}")
+    if isinstance(error, HardLinkError):
+        return FileToolError(f"{prefix}: {error}（{shown}）")
     if isinstance(error, NoFollowUnsupportedError):
         return FileToolError(f"{prefix}: {error}（{shown}）")
     if isinstance(error, PathChangedError):
@@ -209,7 +213,8 @@ class FileListTool(BaseTool):
                             "name": item,
                             "type": item_type,
                             # root 外的符号链接 size 记 0（lstat 的 size 是目标路径长度），mtime 为链接自身
-                            "size_bytes": info.st_size if item_type == "file" else 0,
+                            # SEC-33 L3 P3-B：多硬链接的普通文件不展示大小
+                            "size_bytes": info.st_size if item_type == "file" and is_single_link(info) else 0,
                             "modified_time": info.st_mtime,
                         }
                     )
@@ -277,7 +282,8 @@ class FileStatsTool(BaseTool):
                                 item_type, info = _entry_stat_at(root_fd, os.path.join(path, root), file)
                             except OSError:
                                 continue
-                            if item_type == "file":  # root 外的符号链接不计入，避免泄露目标大小
+                            # root 外的符号链接与多硬链接普通文件不计入，避免泄露目标大小
+                            if item_type == "file" and is_single_link(info):
                                 total_size += info.st_size
 
                     result.update(
