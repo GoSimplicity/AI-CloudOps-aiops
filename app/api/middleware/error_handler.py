@@ -21,7 +21,7 @@ from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.common.constants import HttpStatusCodes, ServiceConstants
-from app.common.exceptions import AIOpsException
+from app.common.exceptions import APPROVAL_STATES, AIOpsException
 from app.config.envmode import debug_details_allowed
 from app.config.settings import config
 from app.models import BaseResponse
@@ -62,6 +62,7 @@ async def custom_http_exception_handler(
             error_details = getattr(exc, "error_details", None)
             if error_details and (exc.status_code < 500 or _debug_details()):
                 error_data["details"] = error_details
+        _attach_approval_state(error_data, getattr(exc, "approval_state", None))
         error_response = BaseResponse(
             code=exc.status_code,
             message=str(exc.detail) if exc.status_code < 500 or _debug_details() else ServiceConstants.INTERNAL_SERVER_ERROR_MESSAGE,
@@ -113,10 +114,14 @@ async def validation_exception_handler(
         logger.warning(f"验证异常: {details}")
         logger.warning(f"请求信息 - URL: {request.url}, Method: {request.method}")
 
+        error_data = _build_error_data(request, status_code, details)
+        if path_str.endswith(CONFIRM_PATH_SUFFIX):
+            # SEC-44 二次修正 Q6：确认请求体校验失败时尚未触碰审批
+            _attach_approval_state(error_data, "pending")
         error_response = BaseResponse(
             code=status_code,
             message=ServiceConstants.VALIDATION_ERROR_MESSAGE,
-            data=_build_error_data(request, status_code, details),
+            data=error_data,
         )
 
         return JSONResponse(status_code=status_code, content=error_response.dict())
@@ -176,6 +181,7 @@ async def aiops_exception_handler(
         error_data["error_code"] = getattr(exc, "error_code", "AIOPS_ERROR")
         if getattr(exc, "details", None) and (status_code < 500 or _debug_details()):
             error_data["details"] = exc.details
+        _attach_approval_state(error_data, getattr(exc, "approval_state", None))
 
         error_response = BaseResponse(
             code=status_code,
@@ -264,6 +270,15 @@ def _sanitize_error_details(errors):
     except Exception as e:
         logger.warning(f"清理错误详情时出错: {e}")
         return "错误详情清理失败"
+
+
+CONFIRM_PATH_SUFFIX = "/autofix/workflow/confirm"
+
+
+def _attach_approval_state(error_data: Dict[str, Any], approval_state: Any) -> None:
+    """SEC-44 二次修正 Q6：只写入白名单内的审批状态；与状态码无关（5xx 也写），不含其它审批细节"""
+    if approval_state in APPROVAL_STATES:
+        error_data["approval_state"] = approval_state
 
 
 def _build_error_data(

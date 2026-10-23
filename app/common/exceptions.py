@@ -11,6 +11,9 @@ Description: 异常类定义模块
 
 from typing import Any, Dict, Optional
 
+# SEC-44 二次修正 Q6：确认接口错误响应里的审批状态（对前端只暴露这三个值，不含其它审批细节）
+APPROVAL_STATES = frozenset({"pending", "voided", "consumed"})
+
 
 class AIOpsException(Exception):
     """AIOps平台基础异常类"""
@@ -24,7 +27,19 @@ class AIOpsException(Exception):
         self.message = message
         self.error_code = error_code
         self.details = details or {}
+        self._approval_state: Optional[str] = None
         super().__init__(self.message)
+
+    @property
+    def approval_state(self) -> Optional[str]:
+        """确认接口在错误返回前写入的审批状态；None 表示与审批无关（不写入响应）"""
+        return getattr(self, "_approval_state", None)
+
+    @approval_state.setter
+    def approval_state(self, value: Optional[str]) -> None:
+        if value is not None and value not in APPROVAL_STATES:
+            raise ValueError("approval_state 只能是 pending / voided / consumed")
+        self._approval_state = value
 
 
 class SessionAccessError(AIOpsException):
@@ -38,9 +53,19 @@ class SessionAccessError(AIOpsException):
 class WorkflowApprovalError(AIOpsException):
     """工作流审批归属、状态或容量不允许当前动作"""
 
-    def __init__(self, status_code: int, message: str) -> None:
-        super().__init__(message=message, error_code="WORKFLOW_APPROVAL_ERROR")
+    def __init__(
+        self,
+        status_code: int,
+        message: str,
+        *,
+        error_code: str = "WORKFLOW_APPROVAL_ERROR",
+        release_approval: bool = False,
+    ) -> None:
+        super().__init__(message=message, error_code=error_code)
         self.status_code = status_code
+        # SEC-44 二次修正 Q1：为 True 表示“确定没有执行任何动作、可以把审批释放回 pending”，
+        # 是否真正释放仍由 WorkflowApprovals.release 的 CAS 条件决定
+        self.release_approval = release_approval
 
 
 class FeatureDisabledError(AIOpsException):

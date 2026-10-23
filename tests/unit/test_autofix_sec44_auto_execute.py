@@ -789,8 +789,9 @@ def test_successful_audit_reports_recorded_true(monkeypatch, switches, sink) -> 
     assert data["execution"]["audit_result_recorded"] is True
 
 
-def test_confirm_without_user_identity_is_refused_with_401(monkeypatch, switches, sink) -> None:
-    """缺少 X-CloudOps-User-ID（中间件记为 service:internal）的确认：401，记一条 refused 审计，0 写入"""
+def test_confirm_without_user_identity_is_refused_with_403(monkeypatch, switches, sink) -> None:
+    """缺少 X-CloudOps-User-ID（中间件记为 service:internal）的确认：403 + confirm_principal_required
+    （SEC-44 二次修正 Q7：不用 401，避免前端误判为 token 过期），记一条 refused 审计，0 写入"""
     from fastapi.testclient import TestClient
 
     from tests.unit.test_autofix_sec26_repair_bootstrap import KEY
@@ -804,7 +805,8 @@ def test_confirm_without_user_identity_is_refused_with_401(monkeypatch, switches
 
     response = internal.post("/autofix/workflow/confirm", json={"plan_id": data["plan"]["plan_id"], "approved_action_ids": [restart["action_id"]]})
 
-    assert response.status_code == 401, response.text
+    assert response.status_code == 403, response.text
+    assert response.json()["data"]["error_code"] == "confirm_principal_required"
     assert sdk.writes() == []
     assert [(r["phase"], r["result"], r["reason"], r["principal"], r["auto_executed"]) for r in sink.records] == [
         ("refused", "refused", "principal missing", "service:internal", False)
@@ -845,7 +847,7 @@ async def test_engine_confirm_requires_user_principal(switches, sink, principal)
     assert sink.records[0]["principal"] == (principal or "unknown")
 
 
-async def test_service_maps_principal_refusal_to_401() -> None:
+async def test_service_maps_principal_refusal_to_403() -> None:
     from app.common.identity import principal_scope
     from tests.unit.test_autofix_approval_isolation import ACTION, create_plan, pending_result
 
@@ -864,7 +866,8 @@ async def test_service_maps_principal_refusal_to_401() -> None:
     with principal_scope("user:1"):
         with pytest.raises(AIOpsException) as raised:
             await service.confirm_multi_agent_workflow(plan_id, [ACTION])
-    assert raised.value.status_code == 401
+    assert raised.value.status_code == 403
+    assert raised.value.error_code == "confirm_principal_required"
 
 
 # ---------------------------------------------------------------- SEC-44 修正（03:33 TL Review P2/P3）

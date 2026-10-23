@@ -32,10 +32,19 @@ except Exception:
 class AIOpsHTTPException(HTTPException):
     """携带领域 error_code / details 的 HTTPException（api_response 用来保留 AIOpsException 的错误码）"""
 
-    def __init__(self, status_code: int, detail: Any, error_code: str, error_details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        detail: Any,
+        error_code: str,
+        error_details: Optional[Dict[str, Any]] = None,
+        approval_state: Optional[str] = None,
+    ) -> None:
         super().__init__(status_code=status_code, detail=detail)
         self.error_code = error_code
         self.error_details = error_details or {}
+        # SEC-44 二次修正 Q6：确认接口的审批状态（pending/voided/consumed），由错误处理器写入 data.approval_state
+        self.approval_state = approval_state
 
 
 def api_response(operation_name: str = "操作") -> Callable:
@@ -65,6 +74,7 @@ def api_response(operation_name: str = "操作") -> Callable:
                     detail=e.message,
                     error_code=e.error_code,
                     error_details=e.details,
+                    approval_state=e.approval_state,
                 ) from e
             except Exception as e:
                 logger.error(f"{operation_name}发生未处理异常: {str(e)}", exc_info=True)

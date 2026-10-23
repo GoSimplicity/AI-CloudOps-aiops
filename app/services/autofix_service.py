@@ -267,6 +267,7 @@ class AutoFixService(BaseService):
         if not isinstance(plan_id, str) or not plan_id.strip():
             raise ValidationError("plan_id", "计划ID不能为空")
         record = self._approvals.claim(plan_id.strip(), approved_action_ids)
+        claim_token = record.claim_token
         normalized_ids = [action_id.strip() for action_id in approved_action_ids]
         try:
             await self.initialize()
@@ -279,6 +280,10 @@ class AutoFixService(BaseService):
             self._approvals.fail(record, "审批执行已中断，可能已产生副作用，不能重试同一计划，请人工核对")
             raise
         except Exception as error:
+            # SEC-44 二次修正 Q1：仅“意图审计写入失败、确定没有执行任何动作”时把审批释放回 pending（CAS，见
+            # WorkflowApprovals.release）；其它任何失败照旧作废（invalidated）或标记结果不确定（uncertain）
+            if isinstance(error, WorkflowApprovalError) and error.release_approval and self._approvals.release(record, claim_token):
+                raise
             if record.effects_started:
                 reason = "审批执行结果不确定，可能已产生副作用，禁止重试同一计划，请人工核对"
             else:
@@ -442,11 +447,26 @@ class AutoFixService(BaseService):
                 # 可确认尚未产生副作用，回退 effects_started，使审批记录进入 invalidated
                 record.effects_started = False
             if execution.get("refusal") == "audit":
-                # SEC-44 G4：意图审计写入失败，未执行任何写操作
-                raise WorkflowApprovalError(503, "审计记录写入失败，未执行任何动作，请稍后重新生成计划")
+                # SEC-44 G4：意图审计写入失败，未执行任何写操作。
+                # SEC-44 二次修正 Q1：effects_started 已回退为 False 时由 _confirm_owned_workflow 释放审批回 pending，
+                # 可用同一 plan_id 重试；未能证明无副作用（effects_started 仍为 True）时不释放，按 uncertain 处理
+                releasable = not record.effects_started
+                raise WorkflowApprovalError(
+                    503,
+                    "审计记录写入失败，未执行任何动作，审批仍有效，请稍后重试确认"
+                    if releasable
+                    else "审计记录写入失败，无法确认是否已产生副作用，不能重试原计划，请人工核对",
+                    error_code="confirm_audit_unavailable",
+                    release_approval=releasable,
+                )
             if execution.get("refusal") == "principal":
-                # SEC-44 修正：确认缺少可信用户主体（无 X-CloudOps-User-ID）→ 401，与 require_principal / 鉴权中间件的身份缺失约定一致
-                raise WorkflowApprovalError(401, "确认执行需要可信用户身份（X-CloudOps-User-ID），未执行任何动作")
+                # SEC-44 二次修正 Q7：确认缺少可信用户主体（计划属于 service:internal 等非 user:<id> 主体）→ 403。
+                # 不用 401：前端把 401 当成 token 失效去刷新重放/登出，而这里与 token 无关，重放也不会成功
+                raise WorkflowApprovalError(
+                    403,
+                    "确认执行需要可信用户身份（X-CloudOps-User-ID），未执行任何动作",
+                    error_code="confirm_principal_required",
+                )
             if execution.get("refusal") == "mutation_gate":
                 raise WorkflowApprovalError(403, "写操作门禁未放行（开关或命名空间限制），未执行任何动作，请重新诊断")
             raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")

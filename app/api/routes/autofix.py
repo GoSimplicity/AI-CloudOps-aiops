@@ -205,15 +205,40 @@ async def confirm_workflow(
         },
     ),
 ) -> Dict[str, Any]:
-    require_principal()
-    service = await get_autofix_service()
+    service = None
     try:
-        return await asyncio.wait_for(
-            service.confirm_multi_agent_workflow(request.plan_id, request.approved_action_ids),
-            timeout=ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT,
-        )
-    except asyncio.TimeoutError as error:
-        raise WorkflowApprovalError(409, "审批执行超时，可能已产生副作用，禁止重试同一计划，请人工核对") from error
+        require_principal()
+        service = await get_autofix_service()
+        try:
+            return await asyncio.wait_for(
+                service.confirm_multi_agent_workflow(request.plan_id, request.approved_action_ids),
+                timeout=ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT,
+            )
+        except asyncio.TimeoutError as error:
+            raise WorkflowApprovalError(409, "审批执行超时，可能已产生副作用，禁止重试同一计划，请人工核对") from error
+    except AIOpsException as error:
+        # SEC-44 二次修正 Q6：所有确认错误都带上请求结束时该审批对当前请求者的状态（pending/voided/consumed）
+        error.approval_state = _confirm_approval_state(service, request.plan_id)
+        raise
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.error("确认自动修复工作流发生未处理异常: 错误类型=%s", type(error).__name__)
+        wrapped = WorkflowApprovalError(500, "确认自动修复工作流失败: 服务器内部错误", error_code="confirm_internal_error")
+        wrapped.approval_state = _confirm_approval_state(service, request.plan_id)
+        raise wrapped from error
+
+
+def _confirm_approval_state(service: Any, plan_id: Any) -> str:
+    """服务未就绪（尚未拿到审批存储）时本请求没有触碰审批 → pending；查询本身出错时保守返回 voided"""
+    approvals = getattr(service, "_approvals", None)
+    if approvals is None:
+        return "pending"
+    try:
+        return approvals.approval_state(plan_id)
+    except Exception as error:
+        logger.error("查询审批状态失败: 错误类型=%s", type(error).__name__)
+        return "voided"
 
 
 @router.post(
