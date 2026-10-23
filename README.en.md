@@ -14,6 +14,10 @@ The service depends on Prometheus, Kubernetes, Redis and an LLM provider in your
 
 Version 1.0 accepts non-empty UTF-8 `.md` and `.txt` files only, up to 10 MiB including generated title text. Convert Word/PDF files to text before upload. Identity and file validation run before index initialization. Successful ingestion includes the new document's required indexing; rebuilding the full corpus is a separate explicit action and may call the embedding provider.
 
+## Workflow approval scope
+
+Only the trusted owner may approve selected actions from their original workflow plan. Random plan IDs are locators, not authorization. Conflicting confirmations, changed targets/parameters, hard permission or namespace restrictions, expired plans and replays fail closed. Timeouts or failures can leave side effects; inspect actual cluster state before any further diagnosis or retry. Approval state is volatile and limited to one process/replica; it is not a distributed exactly-once guarantee. See [the production contract](docs/production.md).
+
 ## Project Components
 
 AI-CloudOps is made up of three repositories that are deployed together:

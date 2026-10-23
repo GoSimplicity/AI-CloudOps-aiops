@@ -46,6 +46,7 @@ class FakeBlockedRemediationEngine:
                         "allowed": False,
                         "risk_level": "high",
                         "requires_human_confirmation": True,
+                        "namespace_allowed": True, "permission_allowed": True, "resource_exists": True,
                     },
                 }
             ],
@@ -59,6 +60,7 @@ class FakeBlockedRemediationEngine:
                         "allowed": False,
                         "risk_level": "high",
                         "requires_human_confirmation": True,
+                        "namespace_allowed": True, "permission_allowed": True, "resource_exists": True,
                     },
                 }
             ],
@@ -67,7 +69,7 @@ class FakeBlockedRemediationEngine:
     async def execute_plan(self, plan):
         return {
             "status": "completed",
-            "executed_actions": plan["allowed_actions"],
+            "executed_actions": [{**action, "status": "succeeded"} for action in plan["allowed_actions"]],
             "blocked_actions": plan["blocked_actions"],
             "post_check": {"ready": True},
         }
@@ -101,6 +103,7 @@ class FakeAutoFixService:
         self.initialized = True
 
     async def execute_multi_agent_workflow(self, request):
+        await self.initialize()
         return {
             "status": "completed",
             "workflow_engine": "langgraph",
@@ -109,6 +112,7 @@ class FakeAutoFixService:
         }
 
     async def confirm_multi_agent_workflow(self, plan_id, approved_action_ids):
+        await self.initialize()
         return {
             "status": "completed",
             "workflow_engine": "langgraph",
@@ -146,7 +150,8 @@ async def test_autofix_service_confirms_human_review_actions() -> None:
     service = AutoFixService()
     service._initialized = True
     service._remediation_engine = FakeBlockedRemediationEngine()
-    service._pending_workflows["autofix-default-api-123"] = {
+    approval = service._approvals.reserve()
+    workflow_result = {
         "status": "needs_human_confirmation",
         "next_action": "human_confirm",
         "diagnosis": {
@@ -165,7 +170,7 @@ async def test_autofix_service_confirms_human_review_actions() -> None:
                     "action_id": "patch-image-pull-policy",
                     "action_type": "patch_image_pull_policy",
                     "executable": True,
-                    "risk_assessment": {"allowed": False, "risk_level": "high"},
+                    "risk_assessment": {"allowed": False, "risk_level": "high", "namespace_allowed": True, "permission_allowed": True, "resource_exists": True},
                 }
             ],
             "allowed_actions": [],
@@ -179,7 +184,7 @@ async def test_autofix_service_confirms_human_review_actions() -> None:
                     "action_id": "patch-image-pull-policy",
                     "action_type": "patch_image_pull_policy",
                     "executable": True,
-                    "risk_assessment": {"allowed": False, "risk_level": "high"},
+                    "risk_assessment": {"allowed": False, "risk_level": "high", "namespace_allowed": True, "permission_allowed": True, "resource_exists": True},
                 }
             ],
             "blocked_actions": [
@@ -187,7 +192,7 @@ async def test_autofix_service_confirms_human_review_actions() -> None:
                     "action_id": "patch-image-pull-policy",
                     "action_type": "patch_image_pull_policy",
                     "executable": True,
-                    "risk_assessment": {"allowed": False, "risk_level": "high"},
+                    "risk_assessment": {"allowed": False, "risk_level": "high", "namespace_allowed": True, "permission_allowed": True, "resource_exists": True},
                 }
             ],
         },
@@ -195,8 +200,9 @@ async def test_autofix_service_confirms_human_review_actions() -> None:
         "messages": [],
     }
 
+    service._approvals.publish(approval, workflow_result)
     result = await service.confirm_multi_agent_workflow(
-        "autofix-default-api-123",
+        approval.plan_id,
         ["patch-image-pull-policy"],
     )
 

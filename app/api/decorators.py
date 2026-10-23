@@ -144,9 +144,10 @@ def _get_http_status_for_aiops_exception(exc: AIOpsException) -> int:
         ServiceUnavailableError,
         SessionAccessError,
         ValidationError,
+        WorkflowApprovalError,
     )
 
-    if isinstance(exc, SessionAccessError):
+    if isinstance(exc, (SessionAccessError, WorkflowApprovalError)):
         return exc.status_code
     if isinstance(exc, HistoricalDataError):
         return HttpStatusCodes.UNPROCESSABLE_ENTITY

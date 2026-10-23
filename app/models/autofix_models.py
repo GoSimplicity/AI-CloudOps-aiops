@@ -44,7 +44,7 @@ class AutoFixResponse(BaseModel):
 class AutoFixWorkflowConfirmRequest(BaseModel):
     """人工确认后继续执行自动修复工作流请求模型"""
 
-    plan_id: str = Field(..., min_length=1, description="待确认工作流的计划ID")
+    plan_id: str = Field(..., min_length=1, description="当前调用方workflow响应中的plan.plan_id；旧无归属或过期ID不能认领")
     approved_action_ids: List[str] = Field(
         default_factory=list,
         description="人工确认允许继续执行的动作ID列表，必须显式传入",

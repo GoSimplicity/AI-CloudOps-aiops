@@ -301,8 +301,8 @@ class AutoFixRemediationEngine:
             reasons.append("resource missing")
         if not namespace_allowed:
             reasons.append("namespace not allowed")
-        if permission_allowed is False:
-            reasons.append("permission denied")
+        if permission_allowed is not True:
+            reasons.append("permission denied" if permission_allowed is False else "permission unavailable")
         if affects_multiple_replicas:
             reasons.append("multiple replicas")
         if not rollback_available:
@@ -310,7 +310,7 @@ class AutoFixRemediationEngine:
 
         risk_level = "low"
         requires_human_confirmation = False
-        if not resource_exists or not namespace_allowed or permission_allowed is False or not rollback_available:
+        if not resource_exists or not namespace_allowed or permission_allowed is not True or not rollback_available:
             risk_level = "high"
             requires_human_confirmation = True
         elif affects_multiple_replicas:

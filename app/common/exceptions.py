@@ -35,6 +35,14 @@ class SessionAccessError(AIOpsException):
         self.status_code = status_code
 
 
+class WorkflowApprovalError(AIOpsException):
+    """工作流审批归属、状态或容量不允许当前动作"""
+
+    def __init__(self, status_code: int, message: str) -> None:
+        super().__init__(message=message, error_code="WORKFLOW_APPROVAL_ERROR")
+        self.status_code = status_code
+
+
 class ServiceUnavailableError(AIOpsException):
     """服务不可用异常"""
 

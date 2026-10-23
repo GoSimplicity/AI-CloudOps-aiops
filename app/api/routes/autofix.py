@@ -14,7 +14,7 @@ from datetime import datetime
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
 
 from app.api.decorators import api_response, log_api_call
 from app.common.constants import (
@@ -30,7 +30,9 @@ from app.common.exceptions import (
     ResourceNotFoundError,
     ServiceUnavailableError,
     ValidationError as DomainValidationError,
+    WorkflowApprovalError,
 )
+from app.common.identity import require_principal
 from app.models import (
     AutoFixRequest,
     AutoFixWorkflowConfirmRequest,
@@ -45,7 +47,11 @@ from app.services.notification import NotificationService
 
 logger = logging.getLogger("aiops.api.autofix")
 
-router = APIRouter(tags=["autofix"])
+async def require_autofix_principal() -> None:
+    require_principal()
+
+
+router = APIRouter(tags=["autofix"], dependencies=[Depends(require_autofix_principal)])
 autofix_service = None
 notification_service = None
 
@@ -131,6 +137,7 @@ async def execute_workflow(
         },
     ),
 ) -> Dict[str, Any]:
+    require_principal()
     description = (request or {}).get("problem_description")
     if not description or not isinstance(description, str):
         raise HTTPException(
@@ -139,12 +146,13 @@ async def execute_workflow(
         )
 
     service = await get_autofix_service()
-    await service.initialize()
-    result = await asyncio.wait_for(
-        service.execute_multi_agent_workflow(request),
-        timeout=ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT,
-    )
-    return result
+    try:
+        return await asyncio.wait_for(
+            service.execute_multi_agent_workflow(request),
+            timeout=ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT,
+        )
+    except asyncio.TimeoutError as error:
+        raise WorkflowApprovalError(409, "工作流执行超时，可能已产生副作用，禁止盲目重试，请人工核对") from error
 
 
 @router.post(
@@ -159,20 +167,22 @@ async def confirm_workflow(
         examples={
             "default": {
                 "value": {
-                    "plan_id": "autofix-default-payment-service-1234567890",
+                    "plan_id": "7b2707c228ca48189ebf0f6986550a76",
                     "approved_action_ids": ["patch-image-pull-policy"],
                 }
             }
         },
     ),
 ) -> Dict[str, Any]:
+    require_principal()
     service = await get_autofix_service()
-    await service.initialize()
-    result = await asyncio.wait_for(
-        service.confirm_multi_agent_workflow(request.plan_id, request.approved_action_ids),
-        timeout=ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT,
-    )
-    return result
+    try:
+        return await asyncio.wait_for(
+            service.confirm_multi_agent_workflow(request.plan_id, request.approved_action_ids),
+            timeout=ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT,
+        )
+    except asyncio.TimeoutError as error:
+        raise WorkflowApprovalError(409, "审批执行超时，可能已产生副作用，禁止重试同一计划，请人工核对") from error
 
 
 @router.post(
@@ -250,7 +260,7 @@ async def send_notification(
 async def get_autofix_service() -> AutoFixService:
     global autofix_service
     if autofix_service is None:
-        autofix_service = await ServiceFactory.get_service("autofix", AutoFixService)
+        autofix_service = await ServiceFactory.get_service("autofix", AutoFixService, initialize=False)
     return autofix_service
 
 

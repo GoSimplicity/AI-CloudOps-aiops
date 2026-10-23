@@ -10,6 +10,8 @@ Description: AI-CloudOps智能自动修复服务
 """
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime
 import logging
@@ -17,7 +19,8 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ..common.constants import ServiceConstants
-from ..common.exceptions import AutoFixError, ResourceNotFoundError, ValidationError
+from ..common.exceptions import AutoFixError, ResourceNotFoundError, ValidationError, WorkflowApprovalError
+from ..common.identity import require_principal
 from ..core.agents.k8s_fixer import K8sFixerAgent
 from ..core.agents.ops_workflow import OpsMultiAgentWorkflow
 from ..core.agents.supervisor import SupervisorAgent
@@ -25,6 +28,7 @@ from ..core.autofix import AutoFixRemediationEngine
 from ..core.interfaces.k8s_client import K8sClient
 from ..core.interfaces.llm_client import NullLLMClient
 from .base import BaseService
+from .workflow_approvals import WorkflowApproval, WorkflowApprovals
 
 logger = logging.getLogger("aiops.services.autofix")
 
@@ -38,9 +42,36 @@ class AutoFixService(BaseService):
         self._supervisor: Optional[SupervisorAgent] = None
         self._remediation_engine: Optional[AutoFixRemediationEngine] = None
         self._ops_workflow: Optional[OpsMultiAgentWorkflow] = None
-        self._pending_workflows: Dict[str, Dict[str, Any]] = {}
+        self._approvals = WorkflowApprovals()
+        self._closing = False
+        self._active_operations: dict[asyncio.Task[Any], str] = {}
+
+    @asynccontextmanager
+    async def _operation(self) -> AsyncIterator[None]:
+        owner = require_principal()
+        if self._closing:
+            raise WorkflowApprovalError(503, "自动修复服务已关闭")
+        task = asyncio.current_task()
+        nested = task in self._active_operations
+        if not nested:
+            if len(self._active_operations) >= 64 or sum(value == owner for value in self._active_operations.values()) >= 4:
+                raise WorkflowApprovalError(429, "自动修复正在处理较多任务，请稍后重试")
+            if task is not None:
+                self._active_operations[task] = owner
+        try:
+            yield
+        finally:
+            if not nested and task is not None:
+                self._active_operations.pop(task, None)
+
+    async def initialize(self) -> None:
+        if self._closing:
+            raise WorkflowApprovalError(503, "自动修复服务已关闭")
+        await super().initialize()
 
     async def _do_initialize(self) -> None:
+        if self._closing:
+            raise WorkflowApprovalError(503, "自动修复服务已关闭")
         try:
             # 初始化K8s修复代理（注入K8s和LLM依赖）
             from .kubernetes import KubernetesService
@@ -87,6 +118,37 @@ class AutoFixService(BaseService):
             return False
 
     async def execute_multi_agent_workflow(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """在可信身份、容量与生命周期边界内执行工作流"""
+        async with self._operation():
+            return await self._execute_owned_workflow(request)
+
+    async def _execute_owned_workflow(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        require_principal()
+        if not isinstance(request, dict) or not isinstance(request.get("problem_description"), str) or not request["problem_description"].strip():
+            raise ValidationError("problem_description", "问题描述不能为空")
+        reservation = self._approvals.reserve()
+        try:
+            await self.initialize()
+        except BaseException:
+            self._approvals.discard(reservation)
+            raise
+        try:
+            # 工作流内部可能执行低风险动作，异常后不能假定没有副作用
+            reservation.effects_started = True
+            result = await self._run_multi_agent_workflow(request)
+            if result.get("status") == "failed" or (result.get("execution") or {}).get("status") == "failed":
+                raise WorkflowApprovalError(409, "工作流执行失败，可能已产生副作用，禁止盲目重试，请人工核对")
+            self._approvals.publish(reservation, result)
+            return result
+        except asyncio.CancelledError:
+            self._approvals.fail(reservation, "工作流已中断，可能已产生副作用，不能盲目重试，请人工核对")
+            raise
+        except Exception as error:
+            reason = "工作流结果不确定，可能已产生副作用，禁止盲目重试，请人工核对"
+            self._approvals.fail(reservation, reason)
+            raise WorkflowApprovalError(409, reason) from error
+
+    async def _run_multi_agent_workflow(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """执行基于LangGraph的多智能体自动修复工作流。"""
         self._ensure_initialized()
 
@@ -127,35 +189,42 @@ class AutoFixService(BaseService):
             "Reviewer",
             "Executor",
         ]
-        plan_id = result.get("plan", {}).get("plan_id")
-        if plan_id:
-            if result.get("status") == "needs_human_confirmation":
-                self._pending_workflows[plan_id] = deepcopy(result)
-            else:
-                self._pending_workflows.pop(plan_id, None)
         return result
 
-    async def confirm_multi_agent_workflow(
-        self, plan_id: str, approved_action_ids: List[str]
-    ) -> Dict[str, Any]:
-        """人工确认后继续执行多智能体工作流中被阻断的动作。"""
-        self._ensure_initialized()
+    async def confirm_multi_agent_workflow(self, plan_id: str, approved_action_ids: List[str]) -> Dict[str, Any]:
+        """原子领取当前主体的原计划动作后再执行"""
+        async with self._operation():
+            return await self._confirm_owned_workflow(plan_id, approved_action_ids)
 
-        normalized_plan_id = str(plan_id or "").strip()
-        if not normalized_plan_id:
+    async def _confirm_owned_workflow(self, plan_id: str, approved_action_ids: List[str]) -> Dict[str, Any]:
+        require_principal()
+        if not isinstance(plan_id, str) or not plan_id.strip():
             raise ValidationError("plan_id", "计划ID不能为空")
+        record = self._approvals.claim(plan_id.strip(), approved_action_ids)
+        normalized_ids = [action_id.strip() for action_id in approved_action_ids]
+        try:
+            await self.initialize()
+            result = await self._confirm_claimed_workflow(record, normalized_ids)
+            if (result.get("execution") or {}).get("status") != "completed":
+                raise WorkflowApprovalError(409, "动作执行未全部确认成功，可能已产生副作用，禁止重试同一计划，请人工核对")
+            self._approvals.publish(record, result)
+            return result
+        except asyncio.CancelledError:
+            self._approvals.fail(record, "审批执行已中断，可能已产生副作用，不能重试同一计划，请人工核对")
+            raise
+        except Exception as error:
+            if record.effects_started:
+                reason = "审批执行结果不确定，可能已产生副作用，禁止重试同一计划，请人工核对"
+            else:
+                reason = "审批已失效，尚未执行确认动作，请重新生成计划，不能重试原审批"
+            self._approvals.fail(record, reason)
+            if isinstance(error, WorkflowApprovalError):
+                raise
+            raise WorkflowApprovalError(409, reason) from error
 
-        workflow_result = deepcopy(self._pending_workflows.get(normalized_plan_id) or {})
-        if not workflow_result:
-            raise ValidationError("plan_id", "待确认工作流不存在或已过期")
-
-        if workflow_result.get("status") != "needs_human_confirmation":
-            raise ValidationError("plan_id", "当前工作流不处于待人工确认状态")
-
-        normalized_action_ids = [str(action_id).strip() for action_id in approved_action_ids if str(action_id).strip()]
-        if not normalized_action_ids:
-            raise ValidationError("approved_action_ids", "至少选择一个待确认动作")
-
+    async def _confirm_claimed_workflow(self, record: WorkflowApproval, normalized_action_ids: List[str]) -> Dict[str, Any]:
+        normalized_plan_id = record.plan_id
+        workflow_result = deepcopy(record.result or {})
         if self._remediation_engine is None:
             if not self._k8s_fixer:
                 raise AutoFixError("自动修复执行引擎未初始化")
@@ -167,8 +236,22 @@ class AutoFixService(BaseService):
         if not diagnosis:
             raise ValidationError("plan_id", "工作流结果缺少诊断上下文")
 
-        plan = await self._remediation_engine.build_plan(diagnosis)
+        current_plan = await self._remediation_engine.build_plan(diagnosis)
+        plan = deepcopy(workflow_result.get("plan") or {})
+        if any(current_plan.get(key) != plan.get(key) for key in ("namespace", "deployment")):
+            raise WorkflowApprovalError(409, "重新校验的目标与原计划不一致，请重新生成计划")
         plan["plan_id"] = normalized_plan_id
+        current_by_id = {action.get("action_id"): action for action in current_plan.get("candidate_actions", [])}
+        original_by_id = {action.get("action_id"): action for action in plan.get("candidate_actions", [])}
+        for action_id in normalized_action_ids:
+            current = current_by_id.get(action_id)
+            original = original_by_id.get(action_id)
+            if current is None or original is None or any(current.get(key) != original.get(key) for key in ("action_id", "action_type", "target", "parameters", "executable", "rollback_available")):
+                raise WorkflowApprovalError(409, "原计划动作或目标参数已变化，请重新生成计划")
+            risk = current.get("risk_assessment") or {}
+            if any(risk.get(key) is not True for key in ("namespace_allowed", "permission_allowed", "resource_exists")):
+                raise WorkflowApprovalError(409, "当前资源、权限或命名空间限制未通过，审批不能覆盖，请重新诊断")
+
         review = deepcopy(workflow_result.get("review") or {})
         previous_executed_actions = deepcopy(workflow_result.get("executed_actions") or [])
         previous_approved_action_ids = [
@@ -187,12 +270,7 @@ class AutoFixService(BaseService):
             for action in (plan.get("blocked_actions") or [])
             if str(action.get("action_id") or "") not in previous_executed_action_ids
         ]
-        allowed_actions = deepcopy(plan.get("allowed_actions") or [])
-        allowed_actions = [
-            action
-            for action in allowed_actions
-            if str(action.get("action_id") or "") not in previous_executed_action_ids
-        ]
+        allowed_actions = []
         candidate_actions = deepcopy(plan.get("candidate_actions") or [])
 
         blocked_by_id = {
@@ -206,7 +284,7 @@ class AutoFixService(BaseService):
         if invalid_action_ids:
             raise ValidationError(
                 "approved_action_ids",
-                f"存在无效动作ID: {', '.join(invalid_action_ids)}",
+                "选择了不属于原计划或已经确认的动作",
             )
 
         approved_actions = []
@@ -248,8 +326,12 @@ class AutoFixService(BaseService):
         plan["allowed_actions"] = allowed_actions + approved_actions
         plan["blocked_actions"] = remaining_blocked_actions
 
+        record.effects_started = True
         execution = await self._remediation_engine.execute_plan(plan)
         current_executed_actions = execution.get("executed_actions", [])
+        executed_ids = [action.get("action_id") for action in current_executed_actions]
+        if set(executed_ids) != set(normalized_action_ids) or len(executed_ids) != len(normalized_action_ids) or any(action.get("status") != "succeeded" for action in current_executed_actions):
+            raise WorkflowApprovalError(409, "执行记录未确认所有选中动作成功，可能已产生副作用，不能重试原计划，请人工核对")
         cumulative_executed_actions = previous_executed_actions + current_executed_actions
         execution_payload = deepcopy(execution)
         execution_payload["executed_actions"] = cumulative_executed_actions
@@ -264,7 +346,7 @@ class AutoFixService(BaseService):
         messages.append(
             {
                 "agent": "HumanConfirm",
-                "action": f"人工批准 {len(approved_actions)} 个高风险动作继续执行",
+                "action": f"人工批准 {len(approved_actions)} 个原计划动作继续执行",
                 "timestamp": datetime.now().isoformat(),
             }
         )
@@ -327,13 +409,13 @@ class AutoFixService(BaseService):
                 "Executor",
             ],
         }
-        if remaining_blocked_count > 0:
-            self._pending_workflows[normalized_plan_id] = deepcopy(response)
-        else:
-            self._pending_workflows.pop(normalized_plan_id, None)
         return response
 
-    async def fix_kubernetes_deployment(
+    async def fix_kubernetes_deployment(self, deployment: str, namespace: str = "default", force_fix: bool = False, dry_run: bool = False) -> Dict[str, Any]:
+        async with self._operation():
+            return await self._fix_kubernetes_deployment(deployment, namespace, force_fix, dry_run)
+
+    async def _fix_kubernetes_deployment(
         self,
         deployment: str,
         namespace: str = "default",
@@ -341,6 +423,7 @@ class AutoFixService(BaseService):
         dry_run: bool = False,
     ) -> Dict[str, Any]:
         """修复K8s部署问题"""
+        require_principal()
         self._ensure_initialized()
 
         # 验证输入参数
@@ -515,7 +598,12 @@ class AutoFixService(BaseService):
             raise AutoFixError(f"修复失败: {str(e)}")
 
     async def bootstrap_test_resources(self) -> Dict[str, Any]:
+        async with self._operation():
+            return await self._bootstrap_test_resources()
+
+    async def _bootstrap_test_resources(self) -> Dict[str, Any]:
         """在test命名空间创建用于自愈演示的故障资源"""
+        require_principal()
         self._ensure_initialized()
         try:
             k8s = self._k8s_fixer.k8s_service
@@ -538,7 +626,11 @@ class AutoFixService(BaseService):
         except Exception as e:
             raise AutoFixError(f"引导测试资源失败: {str(e)}")
 
-    async def diagnose_kubernetes_issues(
+    async def diagnose_kubernetes_issues(self, deployment: Optional[str] = None, namespace: str = "default", include_pods: bool = True, include_logs: bool = False, include_events: bool = True) -> Dict[str, Any]:
+        async with self._operation():
+            return await self._diagnose_kubernetes_issues(deployment, namespace, include_pods, include_logs, include_events)
+
+    async def _diagnose_kubernetes_issues(
         self,
         deployment: Optional[str] = None,
         namespace: str = "default",
@@ -547,6 +639,7 @@ class AutoFixService(BaseService):
         include_events: bool = True,
     ) -> Dict[str, Any]:
         """诊断Kubernetes问题"""
+        require_principal()
         self._ensure_initialized()
 
         # 验证命名空间
@@ -810,6 +903,15 @@ class AutoFixService(BaseService):
     async def cleanup(self) -> None:
         """清理自动修复服务资源"""
         try:
+            self._closing = True
+            current = asyncio.current_task()
+            tasks = [task for task in self._active_operations if task is not current and not task.done()]
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            self._active_operations.clear()
+            self._approvals.clear()
             self.logger.info("开始清理自动修复服务资源...")
 
             # 清理K8s修复代理
