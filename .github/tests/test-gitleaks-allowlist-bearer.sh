@@ -13,14 +13,19 @@ scan() { # scan <名称> <期望: allow|detect> <bearer 值> [路径]
     local name="$1" want="$2" val="$3" path="${4:-data/knowledge_base/deployment_configuration_guide.md}"
     local d="$GL_TMP/s$RANDOM$RANDOM"; mkdir -p "$d/$(dirname "$path")"
     { echo '# guide'; echo '```bash'; line "$val"; echo '```'; } >"$d/$path"
-    local n
-    # 在扫描根目录内以 "." 扫描，使 File 为相对路径，与 allowlist 的 ^data/... 路径条件一致（同 CI 行为）
-    n="$(cd "$d" && gitleaks dir --no-banner --redact --exit-code 0 --config "$GL_TMP/gitleaks.toml" \
-        --report-format json --report-path /dev/stdout . 2>/dev/null | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')"
+    local n rep="$GL_TMP/report-$RANDOM$RANDOM.json"
+    # 在扫描根目录内以 "." 扫描，使 File 为相对路径，与 allowlist 的 ^data/... 路径条件一致（同 CI 行为）。
+    # 报告写临时文件再解析（不用 /dev/stdout：macOS 上与管道/日志混用不可靠）；gitleaks 出错（无报告）时判 FAIL。
+    (cd "$d" && gitleaks dir --no-banner --redact --exit-code 0 --config "$GL_TMP/gitleaks.toml" \
+        --report-format json --report-path "$rep" . >/dev/null 2>&1) || true
+    if [ ! -s "$rep" ]; then
+        echo "FAIL [$name] gitleaks 未生成报告（扫描出错）"; GL_FAILS=$((GL_FAILS+1)); return 0
+    fi
+    n="$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1])) or []))' "$rep")"
     if { [ "$want" = allow ] && [ "$n" -eq 0 ]; } || { [ "$want" = detect ] && [ "$n" -gt 0 ]; }; then
-        echo "PASS [$name] 期望 $want，命中 $n 条"
+        echo "PASS [$name] 期望 ${want}，命中 ${n} 条"
     else
-        echo "FAIL [$name] 期望 $want，命中 $n 条"; GL_FAILS=$((GL_FAILS+1))
+        echo "FAIL [$name] 期望 ${want}，命中 ${n} 条"; GL_FAILS=$((GL_FAILS+1))
     fi
 }
 # 合成随机值（运行时生成，不含任何真实密钥）
