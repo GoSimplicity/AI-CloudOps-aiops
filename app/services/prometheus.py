@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 import requests
 
-from app.common.constants import ServiceConstants
+from app.common.constants import HttpStatusCodes
 from app.config.settings import config
 from app.services.base import BaseService
 
@@ -54,7 +54,7 @@ class PrometheusService(BaseService):
                 params={"query": "up"},
                 timeout=self.timeout,
             )
-            return response.status_code == ServiceConstants.HTTP_OK
+            return response.status_code == HttpStatusCodes.OK
         except Exception:
             return False
 

@@ -9,6 +9,7 @@ License: Apache 2.0
 Description: AI-CloudOps智能通知服务
 """
 
+import asyncio
 from datetime import datetime
 import json
 import logging
@@ -16,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from app.common.constants import ServiceConstants
+from app.common.constants import HttpStatusCodes
 from app.config.settings import config
 from app.core.interfaces.notification_client import NotificationClient
 from app.services.base import BaseService
@@ -91,7 +92,8 @@ class NotificationService(BaseService, NotificationClient):
             }
 
             logger.debug(f"发送飞书消息: {title}")
-            response = requests.post(
+            response = await asyncio.to_thread(
+                requests.post,
                 self.feishu_webhook,
                 headers=headers,
                 data=json.dumps(card_data),
@@ -101,7 +103,7 @@ class NotificationService(BaseService, NotificationClient):
             return self._handle_response(response)
 
         except Exception as e:
-            logger.error(f"发送飞书消息失败：{str(e)}")
+            logger.error("发送飞书消息失败，异常类型: %s", type(e).__name__)
             return False
 
     async def send_rca_alert(
@@ -306,7 +308,7 @@ class NotificationService(BaseService, NotificationClient):
     def _handle_response(self, response: requests.Response) -> bool:
         """处理HTTP响应"""
         try:
-            if response.status_code == ServiceConstants.HTTP_OK:
+            if response.status_code == HttpStatusCodes.OK:
                 response_data = response.json()
                 if response_data.get("code") == 0:
                     logger.info("飞书消息发送成功")

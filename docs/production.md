@@ -38,3 +38,17 @@ MCP 文件工具仅能访问 `MCP_FILE_ROOT`（默认 `data/knowledge_base`）�
 Prometheus 的异步查询、连接测试与健康检查将阻塞 HTTP I/O 放入工作线程，保留 `PROMETHEUS_TIMEOUT` 超时；预测历史数据读取使用异步健康检查。指标源缓慢或不可达时，事件循环仍能处理存活检查和其他请求。该隔离不代表系统具有无限并发能力，部署时仍需限制并发请求并配置合理超时；取消协程不会中止已经开始的同步 HTTP 请求。
 
 回归命令：`python -m pytest tests/unit/test_prometheus_concurrency.py -q`。测试以离线模拟的慢指标源验证 HTTP `/health` 在指标请求尚未完成时仍返回，不访问实际监控系统。
+
+## 通知投递与真实依赖验收
+
+`POST /api/v1/autofix/notify` 仅在飞书 HTTP 状态为 200 且响应 `code=0` 时返回成功；禁用、未配置、网络错误、供应商拒绝或解析失败均返回 HTTP 503。通知请求在线程执行，10 秒网络超时仍有效，不阻塞事件循环。供应商确认接收不等于最终用户已阅读；网络超时后是否已接收无法保证，人工重试可能导致重复消息。
+
+真实业务验收至少需要以下配置，离线测试不替代这些验收：
+
+- 内部访问：一致且不少于 32 字符的 `AIOPS_API_KEY`，隔离的验收网络
+- 模型推理：可访问的 `LLM_BASE_URL`、`LLM_MODEL`、`LLM_TASK_MODEL` 与供应商密钥 `LLM_API_KEY`；使用本地 Ollama 时需配置 `LLM_PROVIDER=ollama`、`OLLAMA_BASE_URL` 和已经下载的 `OLLAMA_MODEL`
+- 知识库：所选模型服务可用的嵌入模型、`RAG_OPENAI_EMBEDDING_MODEL` 或 `RAG_OLLAMA_EMBEDDING_MODEL`，可写的 `RAG_VECTOR_DB_PATH` 与 `RAG_KNOWLEDGE_BASE_PATH`，以及对应 `REDIS_HOST`、`REDIS_PORT`、`REDIS_DB`、`REDIS_PASSWORD`
+- 指标和集群：可达的 `PROMETHEUS_HOST` 与真实指标数据、只读测试或经授权的验收集群 kubeconfig；执行变更另需最小 RBAC 权限与明确的验收目标
+- 通知：`NOTIFICATION_ENABLED=true`、独立测试群机器人的 `FEISHU_WEBHOOK`，以及明确允许向该群发送验收消息的授权；不向真实生产群进行自动试投递
+
+本 AIOps 仓库没有 SSH 会话或 SSH 远程命令执行实现，其集群操作通过 Kubernetes API。SSH 联调所需的主机、端口、账号、密钥及主机指纹应在实际提供该能力的 Go 后端单独配置与验收。

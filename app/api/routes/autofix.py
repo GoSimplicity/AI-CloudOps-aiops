@@ -229,20 +229,22 @@ async def send_notification(
 
     try:
         # 使用通用通知接口，避免参数不匹配
-        await (await get_notification_service()).send_notification(
+        delivered = await (await get_notification_service()).send_notification(
             title or "自动修复通知",
             message,
             (request or {}).get("type", "info"),
         )
-        return {
-            "success": True,
-            "type": (request or {}).get("type", "info"),
-            "timestamp": datetime.now().isoformat(),
-        }
     except Exception as e:
-        logger.error(f"发送通知失败: {str(e)}")
-        # 仍返回成功，以通过测试
-        return {"success": True, "type": (request or {}).get("type", "info")}
+        logger.error("发送通知失败，异常类型: %s", type(e).__name__)
+        raise ServiceUnavailableError("notification") from e
+
+    if not delivered:
+        raise ServiceUnavailableError("notification")
+    return {
+        "success": True,
+        "type": (request or {}).get("type", "info"),
+        "timestamp": datetime.now().isoformat(),
+    }
 
 
 async def get_autofix_service() -> AutoFixService:
@@ -266,42 +268,39 @@ logger = logging.getLogger("aiops.api.autofix")
 
 async def send_fix_notification(
     deployment: str, namespace: str, status: str, actions_taken: list
-):
-    """发送修复通知"""
+) -> bool:
+    """按真实投递结果重试修复通知"""
     max_retries = ServiceConstants.DEFAULT_REQUEST_TIMEOUT // 10
     retry_delay = ServiceConstants.DEFAULT_RETRY_DELAY
 
     for attempt in range(max_retries):
         try:
-            await asyncio.wait_for(
-                notification_service.send_notification(
+            service = await get_notification_service()
+            delivered = await asyncio.wait_for(
+                service.send_notification(
                     title=f"AI-CloudOps自动修复完成: {deployment}",
-                    message=f"AI-CloudOps在命名空间 {namespace} 中的部署 {deployment} 修复状态: {status}",
-                    severity="info" if status == "completed" else "warning",
-                    metadata={
-                        "deployment": deployment,
-                        "namespace": namespace,
-                        "status": status,
-                        "actions_taken": actions_taken,
-                        "attempt": attempt + 1,
-                        "timestamp": datetime.now().isoformat(),
-                    },
+                    message=(
+                        f"AI-CloudOps在命名空间 {namespace} 中的部署 {deployment} 修复状态: {status}\n"
+                        f"执行操作: {', '.join(str(action) for action in actions_taken)}"
+                    ),
+                    notification_type="info" if status == "completed" else "warning",
                 ),
                 timeout=ServiceConstants.DEFAULT_REQUEST_TIMEOUT,
             )
-            logger.info(f"通知发送成功 - 部署: {deployment}")
-            return
+            if delivered:
+                logger.info(f"通知发送成功 - 部署: {deployment}")
+                return True
+            logger.warning(f"通知未投递 - 尝试 {attempt + 1}/{max_retries}")
         except asyncio.TimeoutError:
             logger.warning(f"通知发送超时 - 尝试 {attempt + 1}/{max_retries}")
         except Exception as e:
-            logger.warning(
-                f"发送修复通知失败 - 尝试 {attempt + 1}/{max_retries}: {str(e)}"
-            )
+            logger.warning("发送修复通知失败 - 尝试 %s/%s，异常类型: %s", attempt + 1, max_retries, type(e).__name__)
 
         if attempt < max_retries - 1:
             await asyncio.sleep(retry_delay * (attempt + 1))
 
     logger.error(f"通知发送最终失败 - 部署: {deployment}")
+    return False
 
 
 @router.post(

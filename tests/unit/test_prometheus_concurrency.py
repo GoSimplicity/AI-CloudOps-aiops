@@ -80,3 +80,8 @@ async def test_async_health_preserves_unavailable_result(monkeypatch):
 
     monkeypatch.setattr(requests, "get", unavailable)
     assert await PrometheusService().health_check() is False
+
+
+async def test_successful_prometheus_health_is_true(monkeypatch):
+    monkeypatch.setattr(requests, "get", Mock(return_value=Mock(status_code=200)))
+    assert await PrometheusService()._do_health_check() is True
