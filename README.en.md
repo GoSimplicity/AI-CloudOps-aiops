@@ -10,6 +10,10 @@ The service depends on Prometheus, Kubernetes, Redis and an LLM provider in your
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.159+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
+## Knowledge file scope
+
+Version 1.0 accepts non-empty UTF-8 `.md` and `.txt` files only, up to 10 MiB including generated title text. Convert Word/PDF files to text before upload. Identity and file validation run before index initialization. Successful ingestion includes the new document's required indexing; rebuilding the full corpus is a separate explicit action and may call the embedding provider.
+
 ## Project Components
 
 AI-CloudOps is made up of three repositories that are deployed together:

@@ -551,55 +551,26 @@ class OptimizedAssistantService(BaseService):
             }
 
     async def upload_knowledge_file(self, file) -> Dict[str, Any]:
+        require_principal()
         try:
-            # 在读取内容和初始化模型前验证上传对象
             if not file:
                 raise ValidationError("file", "文件不能为空")
+            original_filename = file.filename
+            self._resolve_filename_conflict(config.rag.knowledge_base_path, original_filename)
+            file_extension = original_filename.rsplit(".", 1)[-1].lower()
+            if file_extension not in {"md", "txt"}:
+                raise ValidationError("file", "仅支持 UTF-8 编码的 .md 和 .txt 文件")
 
-            # 最多读取限制加一个字节，避免先加载整个超大文件
             max_file_size = self.MAX_KNOWLEDGE_FILE_SIZE
             content = await file.read(max_file_size + 1)
-
-            # 检查文件大小
             if len(content) > max_file_size:
-                raise ValidationError(
-                    "file", f"文件大小不能超过{max_file_size // (1024 * 1024)}MB"
-                )
-
-            # 获取原始文件名
-            original_filename = file.filename or "unknown.txt"
-            file_extension = (
-                original_filename.split(".")[-1].lower()
-                if "." in original_filename
-                else "txt"
-            )
-
-            # 验证文件格式
-            supported_formats = ["md", "txt", "doc", "docx"]
-            if file_extension not in supported_formats:
-                raise ValidationError(
-                    "file",
-                    f"不支持的文件格式: {file_extension}。支持的格式: {', '.join(supported_formats)}",
-                )
-
-            # 解析文件内容
+                raise ValidationError("file", f"文件大小不能超过{max_file_size // (1024 * 1024)}MB")
             try:
-                if file_extension in ["txt", "md", "markdown"]:
-                    file_content = content.decode("utf-8")
-                elif file_extension in ["doc", "docx"]:
-                    # 暂时作为文本处理，后续可以集成python-docx库
-                    try:
-                        file_content = content.decode("utf-8")
-                    except UnicodeDecodeError:
-                        raise ValidationError(
-                            "file", "Word文档内容解析暂不支持，请转换为文本格式上传"
-                        )
-                else:
-                    file_content = content.decode("utf-8")
+                file_content = content.decode("utf-8-sig")
             except UnicodeDecodeError:
-                raise ValidationError(
-                    "file", "文件编码不支持，请使用UTF-8编码的文本文件"
-                )
+                raise ValidationError("file", "文件编码不支持，请使用UTF-8编码的文本文件")
+            if not file_content.strip() or "\x00" in file_content:
+                raise ValidationError("file", "文件内容不能为空或包含空字符")
 
             # 无效上传不得初始化模型与外部依赖
             await self._ensure_ready()
@@ -666,8 +637,16 @@ class OptimizedAssistantService(BaseService):
 
     def _resolve_filename_conflict(self, directory: str, filename: str) -> str:
         """解决文件名冲突，如果文件已存在则添加UUID"""
-        if not filename or filename in {".", ".."} or os.path.basename(filename) != filename or "\\" in filename or "\x00" in filename:
+        if not isinstance(filename, str) or not filename.strip() or filename in {".", ".."}:
+            raise ValidationError("file_name", "文件名不能为空")
+        if os.path.basename(filename) != filename or "\\" in filename or any(ord(character) < 32 or ord(character) == 127 for character in filename):
             raise ValidationError("file_name", "文件名不能包含路径或控制字符")
+        try:
+            filename_size = len(filename.encode("utf-8"))
+        except UnicodeEncodeError:
+            raise ValidationError("file_name", "文件名必须使用有效UTF-8字符")
+        if filename_size > 255:
+            raise ValidationError("file_name", "文件名不能超过255字节")
         candidate = os.path.join(directory, filename)
         if os.path.islink(candidate):
             raise ValidationError("file_name", "不允许写入符号链接")
@@ -684,12 +663,10 @@ class OptimizedAssistantService(BaseService):
         return new_filename
 
     async def add_document(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        require_principal()
         try:
-            # 确保服务就绪
-            await self._ensure_ready()
-
             # 验证payload
-            if not payload:
+            if not isinstance(payload, dict) or not payload:
                 raise ValidationError("payload", "文档数据不能为空")
 
             # 验证必要字段
@@ -697,7 +674,7 @@ class OptimizedAssistantService(BaseService):
             content = payload.get("content")
             file_name = payload.get("file_name")
 
-            if not title or not content or not file_name:
+            if any(not isinstance(value, str) or not value.strip() for value in (title, content, file_name)):
                 raise ValidationError(
                     "required_fields", "title、content和file_name字段不能为空"
                 )
@@ -714,22 +691,21 @@ class OptimizedAssistantService(BaseService):
                     f"不支持的文件扩展名: {file_extension}。支持的格式: {', '.join(supported_formats)}",
                 )
 
-            # 获取知识库根路径
             knowledge_base_path = config.rag.knowledge_base_path
+            self._resolve_filename_conflict(knowledge_base_path, file_name)
+            file_content = f"# {title}\n\n{content}" if file_extension == "md" else f"{title}\n\n{content}"
+            try:
+                encoded_content = file_content.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValidationError("content", "文档内容必须使用有效UTF-8字符")
+            if "\x00" in file_content:
+                raise ValidationError("content", "文档内容不能包含空字符")
+            if len(encoded_content) > self.MAX_KNOWLEDGE_FILE_SIZE:
+                raise ValidationError("content", "文档大小不能超过10 MiB")
 
-            # 确保知识库目录存在
+            await self._ensure_ready()
             os.makedirs(knowledge_base_path, exist_ok=True)
-
-            # 处理文件名冲突
-            final_filename = self._resolve_filename_conflict(
-                knowledge_base_path, file_name
-            )
-
-            # 构建文件内容（将title作为一级标题，然后是content）
-            if file_extension == "md":
-                file_content = f"# {title}\n\n{content}"
-            else:  # txt格式
-                file_content = f"{title}\n\n{content}"
+            final_filename = self._resolve_filename_conflict(knowledge_base_path, file_name)
 
             # 文件完整路径
             file_path = os.path.join(knowledge_base_path, final_filename)

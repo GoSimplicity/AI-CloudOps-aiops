@@ -298,8 +298,6 @@ async def clear_cache() -> Dict[str, Any]:
 async def upload_knowledge_file(
     file: UploadFile = File(...),
 ) -> Dict[str, Any]:
-    await (await get_assistant_service()).initialize()
-
     upload_result = await (await get_assistant_service()).upload_knowledge_file(
         file=file
     )
@@ -322,14 +320,17 @@ async def upload_knowledge_file(
 )
 @api_response("添加知识库文档")
 async def add_document(request: Dict[str, Any]) -> Dict[str, Any]:
-    await (await get_assistant_service()).initialize()
     # 兼容测试payload: { content, metadata }
     payload: Dict[str, Any] = {}
     if isinstance(request, dict) and "content" in request:
         content = request.get("content")
-        metadata = request.get("metadata") or {}
-        title = request.get("title") or metadata.get("title") or metadata.get("source") or "用户文档"
-        file_name = request.get("file_name") or metadata.get("filename") or f"{uuid.uuid4().hex[:8]}.md"
+        metadata = request.get("metadata")
+        if metadata is None:
+            metadata = {}
+        if not isinstance(metadata, dict):
+            raise DomainValidationError("metadata", "文档元数据必须为对象")
+        title = request.get("title", metadata.get("title", metadata.get("source", "用户文档")))
+        file_name = request.get("file_name", metadata.get("filename", f"{uuid.uuid4().hex[:8]}.md"))
         payload = {"title": title, "content": content, "file_name": file_name}
     else:
         payload = request
