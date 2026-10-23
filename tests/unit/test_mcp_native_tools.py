@@ -45,7 +45,7 @@ async def test_native_tool_calls_execute_and_return_model_answer(result, answer)
     assert calls[0].kwargs["tools"][0]["function"]["name"] == "calculate"
     assert calls[1].kwargs["messages"][-1]["role"] == "tool"
     assert calls[1].kwargs["messages"][-1]["tool_call_id"] == "call-1"
-    assert assistant._history["session"][-1]["a"] == answer
+    assert assistant._history["service:internal:session"][-1]["a"] == answer
 
 
 @pytest.mark.parametrize("name,arguments", [("not-advertised", "{}"), ("calculate", "not json"), ("calculate", "[]")])

@@ -10,7 +10,7 @@ Description: AI-CloudOps智能助手服务
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -22,11 +22,13 @@ import uuid
 from pydantic import BaseModel
 from starlette.websockets import WebSocket
 
-from ..common.exceptions import AssistantError, ServiceUnavailableError, ValidationError
+from ..common.exceptions import AssistantError, ServiceUnavailableError, SessionAccessError, ValidationError
+from ..common.identity import conversation_context, require_principal
 from ..config.settings import config
 from ..core.agents.enterprise_assistant import get_enterprise_assistant
 from ..models import AssistantRequest
 from ..models.assistant_models import StreamResponse
+from .assistant_sessions import AssistantSessions, OwnedSession
 from .base import BaseService
 from .factory import ServiceFactory
 
@@ -44,6 +46,7 @@ class OptimizedAssistantService(BaseService):
     def __init__(self) -> None:
         super().__init__("assistant")
         self._assistant = None
+        self._sessions = AssistantSessions(on_expire=self._remove_session_state)
         self._performance_monitor = PerformanceMonitor()
         self.websocket = WebSocketManager(self.handle_ws_answer, AssistantRequest)
 
@@ -61,6 +64,12 @@ class OptimizedAssistantService(BaseService):
                 timestamp=datetime.now().isoformat(),
             ).dict())
 
+        except SessionAccessError as error:
+            await websocket.send_json(StreamResponse(
+                success=False, data={"code": error.status_code},
+                timestamp=datetime.now().isoformat(), message=error.message,
+            ).model_dump())
+            await websocket.close(code=1008)
         except Exception as e:
 
             await websocket.send_json(StreamResponse(
@@ -93,82 +102,33 @@ class OptimizedAssistantService(BaseService):
         session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """获取回答"""
-        # 会话管理（若未提供则自动创建）
-        if not session_id:
-            session_id = str(uuid.uuid4())
-            logger.info(f"为请求创建新会话: {session_id}")
-
-        # 参数验证
+        require_principal()
         self._validate_question(question)
         self._validate_mode(mode)
-
-        # 根据模式选择处理方式
-        if mode == 2:  # MCP模式
-            return await self._handle_mcp_mode(question, session_id)
-        else:  # RAG模式 (mode == 1 或其他值默认为RAG)
-            return await self._handle_rag_mode(question, session_id)
-
-    async def _use_fallback_response(
-        self, question: str, session_id: Optional[str], error_reason: str
-    ) -> Dict[str, Any]:
+        created = not session_id
+        if created:
+            session_id = self._sessions.create(mode)
+        session = self._sessions.get(session_id)
         try:
-            logger.warning(f"使用备用实现: {error_reason}")
-
-            from app.core.agents.fallback_models import (
-                ResponseContext,
-                SessionManager,
-                generate_fallback_answer,
-                sanitize_input,
-            )
-
-            cleaned_question = sanitize_input(question)
-            session_manager = SessionManager()
-            session = None
-            if session_id:
-                session = session_manager.get_session(session_id)
-                if not session:
-                    session = session_manager.create_session(session_id)
-
-            context = ResponseContext(
-                user_input=cleaned_question,
-                session=session,
-                additional_context={
-                    "error_reason": error_reason,
-                    "service": "assistant_service",
-                },
-            )
-
-            fallback_answer = generate_fallback_answer(context)
-
-            if session:
-                session_manager.update_session(session_id, cleaned_question)
-
-            return {
-                "answer": fallback_answer,
-                "confidence_score": config.rag.similarity_threshold * 0.4,
-                "source_documents": [],
-                "cache_hit": False,
-                "processing_time": 0.1,
-                "session_id": session_id,
-                "success": True,
-                "fallback_used": True,
-                "fallback_reason": error_reason,
-                "timestamp": datetime.now().isoformat(),
-            }
-
-        except Exception as fallback_e:
-            logger.error(f"备用实现失败: {fallback_e}")
-            return {
-                "answer": "抱歉，当前服务不可用，请稍后重试或联系技术支持。",
-                "confidence_score": 0.0,
-                "source_documents": [],
-                "cache_hit": False,
-                "processing_time": 0.0,
-                "session_id": session_id,
-                "success": False,
-                "error": f"主要服务: {error_reason}, 备用服务: {str(fallback_e)}",
-                "timestamp": datetime.now().isoformat(),
-            }
+            async with session.turn():
+                token = conversation_context.set((session.owner, session_id, session.revision))
+                try:
+                    if mode == 2:
+                        result = await self._handle_mcp_mode(question, session_id)
+                    else:
+                        result = await self._handle_rag_mode(question, session_id)
+                    session.revision += 1
+                    session.message_count += 2
+                    session.mode = mode
+                    session.last_activity = datetime.now(timezone.utc).isoformat()
+                    session.last_access = self._sessions.clock()
+                    return result
+                finally:
+                    conversation_context.reset(token)
+        except (Exception, asyncio.CancelledError):
+            if created:
+                self._sessions.discard(session_id)
+            raise
 
     async def refresh_knowledge_base(self) -> Dict[str, Any]:
         self._ensure_initialized()
@@ -220,164 +180,32 @@ class OptimizedAssistantService(BaseService):
             }
 
     async def create_session(self, request) -> Dict[str, Any]:
-        """创建会话"""
-        try:
-            # 确保服务就绪
-            await self._ensure_ready()
+        """创建明确绑定可信主体的会话，无需调用模型"""
+        self._validate_mode(request.mode)
+        session_id = self._sessions.create(request.mode)
+        return {
+            "session_id": session_id, "created": True,
+            "message": "会话创建成功", "timestamp": datetime.now().isoformat(),
+        }
 
-            session_id = str(uuid.uuid4())
-
-            # 如果助手支持会话创建，调用助手方法
-            if self._assistant and hasattr(self._assistant, "create_session"):
-                result = await self._assistant.create_session(
-                    session_id,
-                    {
-                        "mode": request.mode,
-                        "question": (
-                            request.question if hasattr(request, "question") else None
-                        ),
-                        "chat_history": (
-                            request.chat_history
-                            if hasattr(request, "chat_history")
-                            else None
-                        ),
-                        "created_time": datetime.now().isoformat(),
-                    },
-                )
-                return {
-                    "session_id": result.get("session_id", session_id),
-                    "created": True,
-                    "message": "会话创建成功",
-                    "timestamp": datetime.now().isoformat(),
-                }
-            else:
-                # 使用备用会话管理器
-                from app.core.agents.fallback_models import SessionManager
-
-                session_manager = SessionManager()
-                session_manager.create_session(session_id)
-
-                return {
-                    "session_id": session_id,
-                    "created": True,
-                    "message": "会话创建成功（使用备用实现）",
-                    "timestamp": datetime.now().isoformat(),
-                }
-
-        except Exception as e:
-            logger.error(f"创建会话失败: {str(e)}")
-            raise AssistantError(f"创建会话失败: {str(e)}")
-
-    async def create_or_get_session(
-        self, user_id: str, mode: int = 1
-    ) -> Dict[str, Any]:
-        """根据用户ID创建或获取会话"""
-        try:
-            # 确保服务就绪
-            await self._ensure_ready()
-
-            # 生成基于用户ID的会话ID
-            import hashlib
-
-            session_id = f"user_{user_id}_{hashlib.md5(f'{user_id}_{mode}'.encode()).hexdigest()[:8]}"
-
-            # 检查是否已存在会话
-            session_info = None
-            try:
-                if self._assistant:
-                    session_info = await self._assistant.get_session_info(session_id)
-                    if session_info.get("success") and session_info.get("session_id"):
-                        # 会话已存在，更新最后活动时间
-                        if hasattr(self._assistant, "context_manager"):
-                            self._assistant.context_manager.update_context(
-                                session_id,
-                                {
-                                    "mode": mode,
-                                    "last_access": datetime.now().isoformat(),
-                                },
-                            )
-
-                        session_details = (
-                            self._assistant.context_manager.get_session_details(
-                                session_id
-                            )
-                        )
-                        return {
-                            "session_id": session_id,
-                            "created": False,
-                            "status": "active",
-                            "created_time": session_details.get("created_time", ""),
-                            "message": "会话已存在，返回现有会话",
-                            "timestamp": datetime.now().isoformat(),
-                        }
-            except Exception as e:
-                logger.debug(f"获取现有会话失败，将创建新会话: {str(e)}")
-
-            # 创建新会话
-            if self._assistant and hasattr(self._assistant, "create_session"):
-                await self._assistant.create_session(
-                    session_id,
-                    {
-                        "mode": mode,
-                        "user_id": user_id,
-                        "created_time": datetime.now().isoformat(),
-                    },
-                )
-
-                session_details = self._assistant.context_manager.get_session_details(
-                    session_id
-                )
-                return {
-                    "session_id": session_id,
-                    "created": True,
-                    "status": "active",
-                    "created_time": session_details.get(
-                        "created_time", datetime.now().isoformat()
-                    ),
-                    "message": "新会话创建成功",
-                    "timestamp": datetime.now().isoformat(),
-                }
-            else:
-                # 使用备用会话管理器
-                from app.core.agents.fallback_models import SessionManager
-
-                session_manager = SessionManager()
-                session = session_manager.get_session(session_id)
-
-                if not session:
-                    session = session_manager.create_session(session_id)
-                    created = True
-                    message = "新会话创建成功（使用备用实现）"
-                else:
-                    created = False
-                    message = "会话已存在，返回现有会话（使用备用实现）"
-
-                return {
-                    "session_id": session_id,
-                    "created": created,
-                    "status": "active",
-                    "created_time": (
-                        session.created_at.isoformat()
-                        if session
-                        else datetime.now().isoformat()
-                    ),
-                    "message": message,
-                    "timestamp": datetime.now().isoformat(),
-                }
-
-        except Exception as e:
-            logger.error(f"创建或获取会话失败: {str(e)}")
-            raise AssistantError(f"创建或获取会话失败: {str(e)}")
+    async def create_or_get_session(self, user_id: str, mode: int = 1) -> Dict[str, Any]:
+        """旧内部入口保留，但 user_id 必须与已认证网关主体一致"""
+        principal = require_principal()
+        if principal != f"user:{user_id}":
+            raise SessionAccessError(403, "不能为其他身份创建或读取会话")
+        self._validate_mode(mode)
+        key = (principal, mode)
+        session_id = self._sessions.user_sessions.get(key)
+        created = session_id is None
+        if session_id is None:
+            session_id = self._sessions.create(mode)
+            self._sessions.user_sessions[key] = session_id
+        info = self._sessions.info(session_id)
+        return {**info, "created": created, "timestamp": datetime.now().isoformat()}
 
     async def get_session_info(self, session_id: str) -> Dict[str, Any]:
-        """获取会话信息"""
-        self._ensure_initialized()
-
-        try:
-            return await self._assistant.get_session_info(session_id)
-        except Exception as e:
-            logger.error(f"获取会话信息失败: {str(e)}")
-            raise AssistantError(f"获取会话失败: {str(e)}")
+        """只读取当前主体拥有的会话，未知或旧无归属会话不自动认领"""
+        return self._sessions.info(session_id)
 
     async def get_service_health_info(self) -> Dict[str, Any]:
         """获取详细健康信息"""
@@ -656,6 +484,25 @@ class OptimizedAssistantService(BaseService):
         from .mcp_service import MCPService
 
         return await ServiceFactory.get_service("mcp", MCPService)
+
+    def _remove_session_state(self, session_id: str, session: OwnedSession) -> None:
+        if self._assistant is not None:
+            context = getattr(self._assistant, "context_manager", None)
+            if context is not None:
+                context.session_contexts.pop(session_id, None)
+            from langgraph.checkpoint.memory import MemorySaver
+
+            checkpoint = getattr(getattr(self._assistant, "graph", None), "checkpointer", None)
+            if isinstance(checkpoint, MemorySaver):
+                checkpoint.delete_thread(f"{session.owner}:{session_id}")
+        mcp = ServiceFactory.peek("mcp")
+        assistant = getattr(mcp, "_mcp_assistant", None) if mcp else None
+        if assistant is not None:
+            assistant._history.pop(f"{session.owner}:{session_id}", None)
+
+    async def cleanup(self) -> None:
+        self._sessions.clear()
+        await super().cleanup()
 
     def _validate_mode(self, mode: int) -> None:
         """验证模式参数"""
@@ -1014,10 +861,16 @@ class WebSocketManager:
         self.checker = self.Checker(interval=heartbeat_interval)
 
     async def handle_connection(self, websocket: WebSocket, **kwargs) -> None:
-        await websocket.accept()
+        try:
+            require_principal()
+        except SessionAccessError:
+            await websocket.close(code=1008)
+            return
+        protocols = websocket.scope.get("subprotocols", [])
+        await websocket.accept(subprotocol="cloudops-v1" if "cloudops-v1" in protocols else None)
         await self.checker.start(websocket)
 
-        message_queue = asyncio.Queue()
+        message_queue = asyncio.Queue(maxsize=32)
         receiver_task = asyncio.create_task(
             self.websocket_receiver(websocket, message_queue)
         )
@@ -1040,7 +893,7 @@ class WebSocketManager:
         try:
             while True:
                 msg = await websocket.receive()
-                logger.debug(f"Received raw WebSocket message: {msg}")
+                logger.debug("收到WebSocket消息，类型: %s", msg.get("type"))
                 if "text" in msg and msg["text"] is not None:
                     txt = msg["text"]
                     await self.checker.on_message(websocket, txt)
@@ -1048,11 +901,13 @@ class WebSocketManager:
                 elif "bytes" in msg and msg["bytes"] is not None:
                     await message_queue.put(msg["bytes"])
                 else:
-                    logger.warning(f"Unknown or empty message: {msg}")
+                    logger.debug("WebSocket接收结束或空消息")
         except Exception as e:
             logger.error(f"WebSocket receiver error: {str(e)}")
         finally:
-            await message_queue.put(None)
+            task = asyncio.current_task()
+            if task is None or not task.cancelling():
+                await message_queue.put(None)
 
     async def websocket_handler(self, websocket: WebSocket, message_queue: asyncio.Queue, **kwargs) -> None:
         """循环消费消息队列并调用业务处理器"""
@@ -1067,6 +922,9 @@ class WebSocketManager:
             # 调用业务逻辑
             if self.message_handler:
                 await self.message_handler(websocket, parsed, **kwargs)
+                from starlette.websockets import WebSocketState
+                if websocket.application_state != WebSocketState.CONNECTED:
+                    break
 
     async def _parse_message(self, info_raw: Union[str, bytes], websocket: WebSocket) -> Optional[BaseModel] | None:
         """解析原始数据"""

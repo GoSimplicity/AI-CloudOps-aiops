@@ -142,9 +142,12 @@ def _get_http_status_for_aiops_exception(exc: AIOpsException) -> int:
         RequestTimeoutError,
         ResourceNotFoundError,
         ServiceUnavailableError,
+        SessionAccessError,
         ValidationError,
     )
 
+    if isinstance(exc, SessionAccessError):
+        return exc.status_code
     if isinstance(exc, HistoricalDataError):
         return HttpStatusCodes.UNPROCESSABLE_ENTITY
     if isinstance(exc, ServiceUnavailableError):

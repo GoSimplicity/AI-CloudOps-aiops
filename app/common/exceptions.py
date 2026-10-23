@@ -27,6 +27,14 @@ class AIOpsException(Exception):
         super().__init__(self.message)
 
 
+class SessionAccessError(AIOpsException):
+    """会话身份、归属或存在性验证失败"""
+
+    def __init__(self, status_code: int, message: str) -> None:
+        super().__init__(message=message, error_code="SESSION_ACCESS_ERROR")
+        self.status_code = status_code
+
+
 class ServiceUnavailableError(AIOpsException):
     """服务不可用异常"""
 

@@ -27,6 +27,7 @@ import numpy as np
 import redis
 
 from app.common.constants import ServiceConstants
+from app.common.identity import cache_identity
 
 # MD文档处理器导入
 try:
@@ -1098,7 +1099,7 @@ class EnhancedRedisVectorStore:
 
     def _get_search_cache_key(self, query: str, k: int, config: SearchConfig) -> str:
         """生成搜索缓存键"""
-        params = f"{query}:{k}:{config.semantic_weight}:{config.lexical_weight}"
+        params = f"{cache_identity()}:{query}:{k}:{config.semantic_weight}:{config.lexical_weight}"
         return hashlib.md5(params.encode()).hexdigest()
 
     def _tokenize_text(self, text: str) -> List[str]:

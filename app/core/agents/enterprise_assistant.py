@@ -26,6 +26,7 @@ from langgraph.graph import END, StateGraph
 
 from app.common.constants import ServiceConstants
 from app.common.exceptions import AssistantError
+from app.common.identity import INTERNAL_PRINCIPAL, cache_identity, principal_context
 
 logger = logging.getLogger("aiops.rag_assistant")
 
@@ -352,7 +353,7 @@ class DocumentRetriever:
         # 简化的缓存检查
         cache_key = None
         if self.strategy.enable_cache and len(queries) == 1:  # 只为单查询缓存
-            cache_key = hashlib.md5(f"{queries[0]}:{weight}".encode()).hexdigest()
+            cache_key = hashlib.md5(f"{cache_identity()}:{queries[0]}:{weight}".encode()).hexdigest()
             if cache_key in self._cache:
                 cached_time, cached_docs = self._cache[cache_key]
                 if time.time() - cached_time < self.strategy.cache_ttl:
@@ -645,7 +646,9 @@ class RAGAssistant:
 
         try:
             if self.cache_manager:
-                cache_input = f"{ServiceConstants.KNOWLEDGE_CACHE_VERSION}:{self.vector_store.collection_name}:{question}"
+                history = self.context_manager.get_session_details(session_id).get("conversation_history", []) if session_id else []
+                scope = cache_identity(session_id, history)
+                cache_input = f"{ServiceConstants.KNOWLEDGE_CACHE_VERSION}:{self.vector_store.collection_name}:{scope}:{question}"
                 cache_key = hashlib.md5(cache_input.encode()).hexdigest()
                 cached = await asyncio.to_thread(self.cache_manager.get, cache_key)
                 if cached:
@@ -660,7 +663,8 @@ class RAGAssistant:
                 )
 
             initial_state = EnhancedRAGState(question=question, session_id=session_id)
-            config = {"thread_id": session_id or "default"}
+            owner = principal_context.get() or INTERNAL_PRINCIPAL
+            config = {"configurable": {"thread_id": f"{owner}:{session_id or 'stateless'}"}}
 
             result = await self.graph.ainvoke(initial_state, config=config)
 
@@ -1186,7 +1190,7 @@ class DocumentReranker:
 
         # 缓存检查
         query_key_length = 50
-        cache_key = f"{query[:query_key_length]}_{len(docs)}_{top_k}"
+        cache_key = f"{cache_identity()}:{query[:query_key_length]}_{len(docs)}_{top_k}"
         if cache_key in self._rerank_cache:
             cached_ids = self._rerank_cache[cache_key]
             id_to_doc = {id(doc): doc for doc in docs}

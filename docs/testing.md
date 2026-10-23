@@ -48,3 +48,5 @@ AIOPS_RUN_EXTERNAL_TESTS=1 AIOPS_RUN_MODEL_TESTS=1 python -m pytest tests/extern
 原 `tests/` 根目录中返回布尔值的打印脚本、真实服务测试与旧全量调度脚本已移入 `scripts/manual_checks/`。它们保留有用诊断场景，但含历史的字段、根路由和通知等断言，不能据其打印的成功字样宣称 1.0 验收通过。旧 Flask fixture、未使用的占位 service fixture 和收集函数名特判已移除。
 
 这些资料没有计入默认通过数，也没有通过 skip 隐藏单元测试失败。只有明确审阅隔离目标与具体动作后，才能设置 `AIOPS_RUN_LEGACY_CHECKS=1` 并选择某个脚本；默认执行会在业务模块导入前拒绝。不建议运行历史全量脚本，也不能把它连接到生产集群或真实通知群。
+
+会话隔离用两个可信 principal 的真实 ASGI HTTP/WebSocket 交叉请求验证，包括已知其他用户 SID、旧无 owner SID、请求体伪报身份、非法/重复网关头、服务主体隔离、相同问题跨用户/历史缓存、并发 contextvars、取消锁释放、容量/TTL 与底层状态清理。服务层直接单测在 `tests/unit/conftest.py` 中显式绑定内部服务主体，鉴权和越权回归仍使用真实服务认证中间件覆盖该上下文。

@@ -73,7 +73,6 @@ async def get_assistant_service() -> OptimizedAssistantService:
 )
 @api_response("创建会话")
 async def create_session() -> Dict[str, Any]:
-    await (await get_assistant_service()).initialize()
     # 复用服务层的创建逻辑（不需要请求体）
     result = await (await get_assistant_service()).create_session(
         request=AssistantRequest(question="placeholder")
@@ -182,7 +181,6 @@ async def assistant_query(
 )
 @api_response("获取会话信息")
 async def get_session_info(session_id: str) -> Dict[str, Any]:
-    await (await get_assistant_service()).initialize()
 
     session_info = await (await get_assistant_service()).get_session_info(session_id)
 
@@ -474,9 +472,7 @@ async def assistant_info() -> Dict[str, Any]:
     return data
 
 @router.websocket("/stream", name="AI-CloudOps智能助手服务流式交互")
-@api_response("AI-CloudOps智能助手服务流式交互")
 async def ws_query(ws: WebSocket):
-    await (await get_assistant_service()).initialize()
     await (await get_assistant_service()).websocket.handle_connection(ws)
 
 __all__ = ["router"]

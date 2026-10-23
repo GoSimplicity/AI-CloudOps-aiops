@@ -21,6 +21,7 @@ from openai.types.chat import (
 )
 
 from app.common.exceptions import AssistantError
+from app.common.identity import INTERNAL_PRINCIPAL, principal_context
 
 logger = logging.getLogger("aiops.mcp.client")
 
@@ -136,7 +137,8 @@ class MCPAssistant:
         """将会话历史拼接为可读文本块，便于作为提示注入。"""
         if not session_id:
             return ""
-        records = self._history.get(session_id)
+        owner = principal_context.get() or INTERNAL_PRINCIPAL
+        records = self._history.get(f"{owner}:{session_id}")
         if not records:
             return ""
         # 仅取最近 _max_history_turns 条
@@ -156,13 +158,15 @@ class MCPAssistant:
         if not session_id:
             return
         pair = {"q": question, "a": answer}
-        bucket = self._history.get(session_id)
+        owner = principal_context.get() or INTERNAL_PRINCIPAL
+        key = f"{owner}:{session_id}"
+        bucket = self._history.get(key)
         if bucket is None:
-            self._history[session_id] = [pair]
+            self._history[key] = [pair]
         else:
             bucket.append(pair)
             if len(bucket) > self._max_history_turns:
-                self._history[session_id] = bucket[-self._max_history_turns :]
+                self._history[key] = bucket[-self._max_history_turns :]
 
     async def process_query(self, question: str, session_id: Optional[str] = None) -> str:
         """由模型的原生 tool_calls 选择工具，再将实际结果交回模型"""
