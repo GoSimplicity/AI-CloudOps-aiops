@@ -1054,7 +1054,7 @@ class PredictionService(BaseService, HealthCheckMixin):
         prom_service = PrometheusService()
 
         # 检查Prometheus连接
-        if not prom_service.is_healthy():
+        if not await prom_service.health_check():
             self.logger.warning("Prometheus服务不可用")
             return None
 

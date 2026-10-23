@@ -9,6 +9,7 @@ License: Apache 2.0
 Description: Prometheus监控数据服务
 """
 
+import asyncio
 from datetime import datetime
 import logging
 from typing import Any, Dict, List, Optional
@@ -47,7 +48,8 @@ class PrometheusService(BaseService):
     async def _do_health_check(self) -> bool:
         """健康检查"""
         try:
-            response = requests.get(
+            response = await asyncio.to_thread(
+                requests.get,
                 f"{self.base_url}{self.API_QUERY}",
                 params={"query": "up"},
                 timeout=self.timeout,
@@ -59,7 +61,8 @@ class PrometheusService(BaseService):
     async def _test_connection(self) -> None:
         """测试Prometheus连接"""
         try:
-            response = requests.get(
+            response = await asyncio.to_thread(
+                requests.get,
                 f"{self.base_url}{self.API_QUERY}",
                 params={"query": "up"},
                 timeout=self.timeout,
@@ -83,7 +86,7 @@ class PrometheusService(BaseService):
             }
 
             self.logger.debug(f"查询Prometheus: {query}")
-            response = requests.get(url, params=params, timeout=self.timeout)
+            response = await asyncio.to_thread(requests.get, url, params=params, timeout=self.timeout)
             response.raise_for_status()
 
             data = response.json()
@@ -151,7 +154,7 @@ class PrometheusService(BaseService):
                 params["time"] = timestamp.timestamp()
 
             self.logger.debug(f"即时查询Prometheus: {query}")
-            response = requests.get(url, params=params, timeout=self.timeout)
+            response = await asyncio.to_thread(requests.get, url, params=params, timeout=self.timeout)
             response.raise_for_status()
 
             data = response.json()
@@ -185,7 +188,7 @@ class PrometheusService(BaseService):
         """获取可用的监控指标"""
         try:
             url = f"{self.base_url}/api/v1/label/__name__/values"
-            response = requests.get(url, timeout=self.timeout)
+            response = await asyncio.to_thread(requests.get, url, timeout=self.timeout)
             response.raise_for_status()
 
             data = response.json()
@@ -214,7 +217,7 @@ class PrometheusService(BaseService):
 
     async def health_check(self) -> bool:
         """异步健康检查方法 - 为RCA模块提供兼容接口"""
-        return self.is_healthy()
+        return await asyncio.to_thread(self.is_healthy)
 
     async def get_metric_metadata(self, metric_name: str) -> Optional[Dict[str, Any]]:
         """获取指标元数据"""
@@ -222,7 +225,7 @@ class PrometheusService(BaseService):
             url = f"{self.base_url}/api/v1/metadata"
             params = {"metric": metric_name}
 
-            response = requests.get(url, params=params, timeout=self.timeout)
+            response = await asyncio.to_thread(requests.get, url, params=params, timeout=self.timeout)
             response.raise_for_status()
 
             data = response.json()
