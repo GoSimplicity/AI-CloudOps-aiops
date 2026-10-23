@@ -11,6 +11,8 @@ import uuid
 from app.common.exceptions import ValidationError, WorkflowApprovalError
 from app.common.identity import require_principal
 
+CONFIRM_ENDPOINT = "/api/v1/autofix/workflow/confirm"
+
 
 @dataclass
 class WorkflowApproval:
@@ -122,6 +124,11 @@ class WorkflowApprovals:
         self._deadline(record)
         state = "pending" if result.get("status") == "needs_human_confirmation" and self._blocked(result) else "completed"
         result["approval"] = {"expires_at": record.expires_at, "state": state, "retry_safe": False}
+        if state == "pending":
+            # SEC-26 前端契约：待确认动作与确认入口
+            result["approval"]["confirmation_required"] = True
+            result["approval"]["confirm_endpoint"] = CONFIRM_ENDPOINT
+            result["approval"]["pending_action_ids"] = [action.get("action_id") for action in self._blocked(result) if action.get("action_id")]
         if len(json.dumps(result, ensure_ascii=True, allow_nan=False).encode()) > 1024 * 1024:
             raise WorkflowApprovalError(409, "计划上下文超过1 MiB，请缩小范围重新诊断，禁止重试原计划")
         if state == "pending":

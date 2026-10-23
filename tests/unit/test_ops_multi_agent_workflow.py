@@ -84,20 +84,40 @@ class FakeLLMClient:
 
 
 @pytest.mark.asyncio
-async def test_workflow_runs_analyzer_planner_reviewer_executor_for_safe_action() -> None:
-    engine = FakeRemediationEngine(
-        {
-            "fault_type": "image_pull_failure",
-            "candidate_actions": [
-                {
-                    "action_id": "patch-image-pull-policy",
-                    "action_type": "patch_image_pull_policy",
-                    "risk_assessment": {"allowed": True, "risk_level": "low", "requires_human_confirmation": False},
-                }
-            ],
-        }
-    )
+def safe_plan():
+    return {
+        "fault_type": "image_pull_failure",
+        "candidate_actions": [
+            {
+                "action_id": "patch-image-pull-policy",
+                "action_type": "patch_image_pull_policy",
+                "risk_assessment": {"allowed": True, "risk_level": "low", "requires_human_confirmation": False},
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_workflow_default_only_plans_even_low_risk_action() -> None:
+    engine = FakeRemediationEngine(safe_plan())
     workflow = OpsMultiAgentWorkflow(remediation_engine=engine)
+
+    result = await workflow.run({"problem_description": "deployment api ImagePullBackOff", "deployment": "api", "namespace": "default"})
+
+    assert result["status"] == "needs_human_confirmation"
+    assert result["next_action"] == "human_confirm"
+    assert "Executor" not in result["agents_used"]
+    assert engine.executed is False
+    assert result["review"]["confirmation_required"] is True
+    assert [action["action_id"] for action in result["blocked_actions"]] == ["patch-image-pull-policy"]
+    assert result["plan"]["allowed_actions"] == []
+    assert result["plan"]["candidate_actions"][0]["risk_assessment"]["allowed"] is False
+
+
+@pytest.mark.asyncio
+async def test_workflow_legacy_auto_execute_switch_runs_executor_for_safe_action() -> None:
+    engine = FakeRemediationEngine(safe_plan())
+    workflow = OpsMultiAgentWorkflow(remediation_engine=engine, auto_execute=True)
 
     result = await workflow.run({"problem_description": "deployment api ImagePullBackOff", "deployment": "api", "namespace": "default"})
 

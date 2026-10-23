@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 from ..common.constants import ServiceConstants
 from ..common.exceptions import AutoFixError, ResourceNotFoundError, ValidationError, WorkflowApprovalError
 from ..common.identity import require_principal
+from ..config.settings import config
 from ..core.agents.k8s_fixer import K8sFixerAgent
 from ..core.agents.ops_workflow import OpsMultiAgentWorkflow
 from ..core.agents.supervisor import SupervisorAgent
@@ -64,6 +65,15 @@ class AutoFixService(BaseService):
             if not nested and task is not None:
                 self._active_operations.pop(task, None)
 
+    @staticmethod
+    def _build_remediation_engine(k8s_client: Any) -> AutoFixRemediationEngine:
+        """按 autofix 配置构造执行引擎：白名单为空即 fail-closed，默认不自动执行"""
+        return AutoFixRemediationEngine(
+            k8s_client=k8s_client,
+            allowed_namespaces=list(config.autofix.allowed_namespaces or []),
+            auto_execute=bool(config.autofix.auto_execute_enabled),
+        )
+
     async def initialize(self) -> None:
         if self._closing:
             raise WorkflowApprovalError(503, "自动修复服务已关闭")
@@ -88,10 +98,11 @@ class AutoFixService(BaseService):
             self._supervisor = SupervisorAgent(llm_client=llm_client)
             self.logger.info("监督代理初始化完成")
 
-            self._remediation_engine = AutoFixRemediationEngine(k8s_client=k8s_client)
+            self._remediation_engine = self._build_remediation_engine(k8s_client)
             self._ops_workflow = OpsMultiAgentWorkflow(
                 remediation_engine=self._remediation_engine,
                 llm_client=llm_client,
+                auto_execute=bool(config.autofix.auto_execute_enabled),
             )
             self.logger.info("自动修复执行引擎和多智能体工作流初始化完成")
 
@@ -160,9 +171,7 @@ class AutoFixService(BaseService):
             if self._remediation_engine is None:
                 if not self._k8s_fixer:
                     raise AutoFixError("自动修复执行引擎未初始化")
-                self._remediation_engine = AutoFixRemediationEngine(
-                    k8s_client=self._k8s_fixer.k8s_service
-                )
+                self._remediation_engine = self._build_remediation_engine(self._k8s_fixer.k8s_service)
             llm_client = (
                 self._k8s_fixer.llm_service
                 if self._k8s_fixer and getattr(self._k8s_fixer, "llm_service", None)
@@ -171,6 +180,7 @@ class AutoFixService(BaseService):
             self._ops_workflow = OpsMultiAgentWorkflow(
                 remediation_engine=self._remediation_engine,
                 llm_client=llm_client,
+                auto_execute=bool(config.autofix.auto_execute_enabled),
             )
 
         workflow_input = {
@@ -228,9 +238,7 @@ class AutoFixService(BaseService):
         if self._remediation_engine is None:
             if not self._k8s_fixer:
                 raise AutoFixError("自动修复执行引擎未初始化")
-            self._remediation_engine = AutoFixRemediationEngine(
-                k8s_client=self._k8s_fixer.k8s_service
-            )
+            self._remediation_engine = self._build_remediation_engine(self._k8s_fixer.k8s_service)
 
         diagnosis = deepcopy(workflow_result.get("diagnosis") or {})
         if not diagnosis:

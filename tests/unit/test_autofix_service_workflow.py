@@ -89,8 +89,29 @@ async def test_autofix_service_executes_multi_agent_workflow() -> None:
         }
     )
 
-    assert result["status"] == "completed"
+    # SEC-26：默认只出计划，低风险动作也进入待确认
+    assert result["status"] == "needs_human_confirmation"
     assert result["workflow_engine"] == "langgraph"
+    assert result["agents_used"] == ["Coordinator", "Analyzer", "Planner", "Reviewer"]
+    assert result["candidate_actions"][0]["risk_assessment"]["allowed"] is False
+    assert result["approval"]["state"] == "pending"
+    assert result["approval"]["pending_action_ids"] == ["patch-image-pull-policy"]
+
+
+@pytest.mark.asyncio
+async def test_autofix_service_legacy_auto_execute_switch(monkeypatch) -> None:
+    from app.config.settings import config
+
+    monkeypatch.setattr(config.autofix, "auto_execute_enabled", True)
+    service = AutoFixService()
+    service._initialized = True
+    service._remediation_engine = FakeRemediationEngine()
+
+    result = await service.execute_multi_agent_workflow(
+        {"problem_description": "deployment api ImagePullBackOff", "deployment": "api", "namespace": "default"}
+    )
+
+    assert result["status"] == "completed"
     assert result["agents_used"] == ["Coordinator", "Analyzer", "Planner", "Reviewer", "Executor"]
     assert result["candidate_actions"][0]["risk_assessment"]["allowed"] is True
 

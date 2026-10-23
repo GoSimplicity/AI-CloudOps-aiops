@@ -161,7 +161,7 @@ async def run(kubeconfig: Path) -> dict:
         phase = 'initial_rollout'
         before = await strict_rollout()
         old_generation = before.metadata.generation
-        engine = AutoFixRemediationEngine(service, allowed_namespaces=[namespace], rollout_timeout_seconds=30)
+        engine = AutoFixRemediationEngine(service, allowed_namespaces=[namespace], rollout_timeout_seconds=30, auto_execute=True)
         diagnosis = {'deployment': NAME, 'namespace': namespace, 'diagnosis': {'summary': 'Controlled local CrashLoopBackOff diagnosis'}}
         phase = 'build_restart_plan'
         plan = await engine.build_plan(diagnosis)
@@ -206,7 +206,7 @@ async def run(kubeconfig: Path) -> dict:
                 break
             await asyncio.sleep(0.25)
         ensure(result['bad_probe_observed'])
-        failed_engine = AutoFixRemediationEngine(service, allowed_namespaces=[namespace], rollout_timeout_seconds=1)
+        failed_engine = AutoFixRemediationEngine(service, allowed_namespaces=[namespace], rollout_timeout_seconds=1, auto_execute=True)
         phase = 'build_unready_plan'
         bad_plan = await failed_engine.build_plan(diagnosis)
         ensure([action['action_type'] for action in bad_plan['allowed_actions']] == ['restart_deployment'])

@@ -48,6 +48,9 @@ class OpsMultiAgentWorkflow:
 
     Coordinator 负责识别任务与调度；Analyzer 规整实时诊断上下文；Planner 生成修复计划；
     Reviewer 执行风险门禁；Executor 只执行 Reviewer 放行的动作。
+
+    SEC-26：``auto_execute`` 默认 False，Reviewer 不再放行任何动作，所有可执行动作
+    进入 needs_human_confirmation，必须经 /workflow/confirm 显式确认后执行。
     """
 
     def __init__(
@@ -55,8 +58,10 @@ class OpsMultiAgentWorkflow:
         remediation_engine: Any,
         llm_client: Optional[LLMClient] = None,
         max_iterations: int = 6,
+        auto_execute: bool = False,
     ) -> None:
         self.remediation_engine = remediation_engine
+        self.auto_execute = bool(auto_execute)
         self.llm_client: LLMClient = llm_client or NullLLMClient()
         self.max_iterations = max_iterations
         self.graph = self._build_graph()
@@ -210,15 +215,44 @@ class OpsMultiAgentWorkflow:
         executable_actions = [action for action in plan.get("candidate_actions", []) if action.get("executable", True)]
         blocked_actions = [action for action in executable_actions if not action.get("risk_assessment", {}).get("allowed")]
         allowed_actions = [action for action in executable_actions if action.get("risk_assessment", {}).get("allowed")]
+        confirmation_by_policy = bool(allowed_actions) and not self.auto_execute
+        if confirmation_by_policy:
+            # 默认只出计划：即便风险评估放行，也全部转为待确认，Executor 不会被调度
+            allowed_ids = {action.get("action_id") for action in allowed_actions}
+            pending = []
+            for action in allowed_actions:
+                action = deepcopy(action)
+                risk = action.setdefault("risk_assessment", {})
+                risk["allowed"] = False
+                risk["requires_human_confirmation"] = True
+                reasons = list(risk.get("reasons") or [])
+                if "explicit confirmation required" not in reasons:
+                    reasons.append("explicit confirmation required")
+                risk["reasons"] = reasons
+                pending.append(action)
+            pending_by_id = {action.get("action_id"): action for action in pending}
+            blocked_actions = blocked_actions + pending
+            allowed_actions = []
+            plan = deepcopy(plan)
+            plan["candidate_actions"] = [
+                deepcopy(pending_by_id[action.get("action_id")]) if action.get("action_id") in allowed_ids and action.get("executable", True) else action
+                for action in plan.get("candidate_actions", [])
+            ]
+            plan["allowed_actions"] = []
+            plan["blocked_actions"] = deepcopy(blocked_actions)
+            state["plan"] = plan
         ai_review = await self._review_with_ai(state, blocked_actions, allowed_actions)
 
         review_reason = self._extract_review_reason(
             ai_review,
             "存在高风险或未授权动作，需要人工确认",
         )
+        if confirmation_by_policy:
+            review_reason = "默认只生成计划，所有可执行动作需经 /workflow/confirm 显式确认后执行"
         if blocked_actions:
             review = {
                 "approved": False,
+                "confirmation_required": True,
                 "reason": review_reason,
                 "blocked_actions": blocked_actions,
                 "allowed_actions": allowed_actions,
@@ -510,6 +544,11 @@ class OpsMultiAgentWorkflow:
 
     async def _executor(self, state: OpsWorkflowState) -> OpsWorkflowState:
         state = self._copy_state(state)
+        if not self.auto_execute:
+            # 防御：默认配置下任何路径都不得在未确认时调用执行引擎
+            state["status"] = "needs_human_confirmation"
+            state["next_action"] = "human_confirm"
+            return state
         self._mark_agent(state, "Executor", "执行允许范围内的工具操作")
         execution = await self.remediation_engine.execute_plan(state.get("plan") or {})
         state["execution"] = execution

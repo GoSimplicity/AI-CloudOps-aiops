@@ -20,7 +20,11 @@ logger = logging.getLogger("aiops.autofix.remediation")
 
 
 class AutoFixRemediationEngine:
-    """将诊断结果转换为修复计划，并只执行风险可控的动作。"""
+    """将诊断结果转换为修复计划，并只执行风险可控的动作。
+
+    SEC-26：默认只出计划。``auto_execute=False`` 时所有可执行动作（含 low）都标记为
+    需要人工确认；``allowed_namespaces`` 为空时命名空间一律不允许执行（fail-closed）。
+    """
 
     DEFAULT_RESTRICTED_NAMESPACES = {"kube-system", "kube-public", "kube-node-lease"}
 
@@ -31,9 +35,12 @@ class AutoFixRemediationEngine:
         restricted_namespaces: Optional[List[str]] = None,
         max_auto_replicas: int = 1,
         rollout_timeout_seconds: int = 120,
+        auto_execute: bool = False,
     ) -> None:
         self.k8s_client = k8s_client
-        self.allowed_namespaces = set(allowed_namespaces or [])
+        # 空白名单即不允许任何命名空间执行（fail-closed），不再表示“全部允许”
+        self.allowed_namespaces = {str(ns).strip() for ns in (allowed_namespaces or []) if str(ns).strip()}
+        self.auto_execute = bool(auto_execute)
         self.restricted_namespaces = set(restricted_namespaces or self.DEFAULT_RESTRICTED_NAMESPACES)
         self.max_auto_replicas = max(1, max_auto_replicas)
         self.rollout_timeout_seconds = rollout_timeout_seconds
@@ -100,6 +107,23 @@ class AutoFixRemediationEngine:
                 for action in plan.get("candidate_actions", [])
                 if action.get("executable") and not action.get("risk_assessment", {}).get("allowed")
             ]
+
+        if actions and not dry_run:
+            refused = self._namespace_refusal(namespace, actions)
+            if refused:
+                return {
+                    "status": "blocked",
+                    "deployment": deployment,
+                    "namespace": namespace,
+                    "fault_type": plan.get("fault_type", "unknown"),
+                    "executed_actions": [],
+                    "blocked_actions": list(blocked_actions) + deepcopy(actions),
+                    "post_check": None,
+                    "not_attempted_actions": deepcopy(actions),
+                    "error": refused,
+                    "dry_run": dry_run,
+                    "timestamp": datetime.now().isoformat(),
+                }
 
         if not actions:
             return {
@@ -329,6 +353,11 @@ class AutoFixRemediationEngine:
         elif action.get("action_type") in {"scale_deployment", "adjust_resource_requests"}:
             risk_level = "medium"
 
+        if not requires_human_confirmation and not self.auto_execute:
+            # SEC-26：默认只出计划，风险可控的动作也必须经 /workflow/confirm 显式确认
+            requires_human_confirmation = True
+            reasons.append("explicit confirmation required")
+
         allowed = not requires_human_confirmation and risk_level in {"low", "medium"}
         return {
             "allowed": allowed,
@@ -361,11 +390,25 @@ class AutoFixRemediationEngine:
             return False
 
     def _namespace_allowed(self, namespace: str) -> bool:
-        if namespace in self.restricted_namespaces:
+        if not namespace or namespace in self.restricted_namespaces:
             return False
-        if self.allowed_namespaces and namespace not in self.allowed_namespaces:
-            return False
-        return True
+        # 未配置 allowed_namespaces 时 fail-closed
+        return namespace in self.allowed_namespaces
+
+    def _namespace_refusal(self, namespace: str, actions: List[Dict[str, Any]]) -> Optional[str]:
+        """执行前硬校验：计划及每个动作的目标命名空间都必须在白名单内"""
+        targets = {namespace}
+        for action in actions:
+            target_ns = (action.get("target") or {}).get("namespace")
+            if target_ns:
+                targets.add(target_ns)
+        if len(targets) > 1:
+            return "动作目标命名空间与计划不一致，拒绝执行"
+        if not self._namespace_allowed(namespace):
+            if not self.allowed_namespaces:
+                return "未配置 autofix.allowed_namespaces，自动修复不允许在任何命名空间执行"
+            return f"命名空间 {namespace} 不在 autofix.allowed_namespaces 白名单内，拒绝执行"
+        return None
 
     def _affects_multiple_replicas(self, action: Dict[str, Any], deployment: Optional[Dict[str, Any]]) -> bool:
         if action.get("action_type") not in {"restart_deployment", "scale_deployment", "adjust_resource_requests"}:

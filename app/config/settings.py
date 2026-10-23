@@ -714,6 +714,35 @@ class DevConfig:
     )
 
 
+def _parse_namespace_list(value: Any) -> List[str]:
+    """把逗号分隔字符串或 YAML 列表规范化为去重后的命名空间列表"""
+    if value is None:
+        return []
+    items = value.split(",") if isinstance(value, str) else list(value) if isinstance(value, (list, tuple, set)) else []
+    result: List[str] = []
+    for item in items:
+        name = str(item).strip()
+        if name and name not in result:
+            result.append(name)
+    return result
+
+
+@dataclass
+class AutoFixConfig:
+    """自动修复执行边界配置；默认全部关闭（fail-closed）"""
+
+    auto_execute_enabled: bool = field(
+        default_factory=lambda: get_env_or_config(
+            "AUTOFIX_AUTO_EXECUTE_ENABLED", "autofix.auto_execute_enabled", False, bool
+        )
+    )
+    allowed_namespaces: List[str] = field(
+        default_factory=lambda: _parse_namespace_list(
+            get_env_or_config("AUTOFIX_ALLOWED_NAMESPACES", "autofix.allowed_namespaces", [])
+        )
+    )
+
+
 @dataclass
 class AppConfig:
     """应用程序主配置类"""
@@ -749,6 +778,7 @@ class AppConfig:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     dev: DevConfig = field(default_factory=DevConfig)
     inspection: InspectionConfig = field(default_factory=InspectionConfig)
+    autofix: AutoFixConfig = field(default_factory=AutoFixConfig)
 
 
 config = AppConfig()
