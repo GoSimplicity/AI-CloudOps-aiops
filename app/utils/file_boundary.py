@@ -1,8 +1,10 @@
 """Restrict model-accessible files to a dedicated, configured data directory."""
 
+import errno
 import logging
 import os
 from pathlib import Path
+import stat
 import threading
 from typing import Any, List, Optional
 
@@ -56,6 +58,57 @@ def resolve_tool_path(value: str) -> str:
     if not path.is_relative_to(root):
         raise ValueError("Path is outside MCP_FILE_ROOT")
     return str(path)
+
+
+class PathChangedError(OSError):
+    """SEC-33 L2 P3-2：路径在校验后被替换（符号链接、不同 inode），拒绝访问；消息固定，不含任何路径"""
+
+    def __init__(self) -> None:
+        super().__init__("Path changed after MCP_FILE_ROOT validation")
+
+
+_NOFOLLOW_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | getattr(os, "O_NONBLOCK", 0)
+
+
+def validated_identity(path: str) -> os.stat_result:
+    """校验时刻的身份（lstat）；resolve 后的路径本身不应是符号链接"""
+    info = os.lstat(path)
+    if stat.S_ISLNK(info.st_mode):
+        raise PathChangedError()
+    return info
+
+
+def open_in_root(path: str, expected: Optional[os.stat_result] = None, *, directory: bool = False) -> int:
+    """从固定 root 的目录 fd 出发，逐级 openat(O_NOFOLLOW) 打开 resolve 后的路径。
+    任一组件在校验后变成符号链接（ELOOP/ENOTDIR）或最终 fstat 的 dev/ino 与校验时不一致都拒绝。返回 fd，调用方负责关闭。"""
+    root = file_root()
+    try:
+        parts = Path(path).relative_to(root).parts
+    except ValueError:
+        raise ValueError("Path is outside MCP_FILE_ROOT") from None
+    if any(part in ("", ".", "..") for part in parts):
+        raise PathChangedError()
+    current = os.open(root, _NOFOLLOW_FLAGS | os.O_DIRECTORY)
+    try:
+        for index, part in enumerate(parts):
+            last = index == len(parts) - 1
+            flags = _NOFOLLOW_FLAGS | (os.O_DIRECTORY if (not last or directory) else 0)
+            try:
+                child = os.open(part, flags, dir_fd=current)
+            except OSError as error:
+                if error.errno in (errno.ELOOP, errno.ENOTDIR, errno.EMLINK):
+                    raise PathChangedError() from None
+                raise
+            os.close(current)
+            current = child
+        info = os.fstat(current)
+        if expected is not None and (info.st_dev, info.st_ino) != (expected.st_dev, expected.st_ino):
+            raise PathChangedError()
+        fd, current = current, -1
+        return fd
+    finally:
+        if current != -1:
+            os.close(current)
 
 
 def display_path(raw: Any, resolved: Optional[str] = None) -> str:

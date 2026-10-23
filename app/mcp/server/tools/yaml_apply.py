@@ -12,6 +12,8 @@ from typing import Any
 from kubernetes.dynamic import DynamicClient
 import yaml
 
+from .k8s_base_tool import K8sToolInputError
+
 MAX_YAML_BYTES = 1024 * 1024
 MAX_DOCUMENTS = 20
 FIELD_MANAGER = "ai-cloudops-mcp"
@@ -40,7 +42,7 @@ class BoundedDynamicClient(DynamicClient):
         return super().request(*args, **kwargs)
 
 
-class ApplyValidationError(ValueError):
+class ApplyValidationError(K8sToolInputError):
     pass
 
 
@@ -177,7 +179,7 @@ async def apply_yaml(tool, clients: dict[str, Any] | None, parameters: dict[str,
         # 远端异常body或str(error)可能含Secret文档，不回传、不写日志
         identity = identities[index]
         reason = API_STATUS_REASONS.get(status, UNCERTAIN_API_REASON)
-        if isinstance(error, ApplyValidationError):
+        if isinstance(error, K8sToolInputError):  # 含 ApplyValidationError 与客户端来源绑定拒绝，均为固定文本
             reason = str(error)
         elif type(error).__name__ in {"ResourceNotFoundError", "ResourceNotUniqueError"}:
             reason = "apiVersion/kind未知或不能唯一发现"

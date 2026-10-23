@@ -11,10 +11,9 @@ Description: Kubernetes集群检查工具
 
 import asyncio
 from datetime import datetime, timedelta
-import os
 from typing import Any, Dict, List, Optional
 
-from kubernetes import client, config
+from kubernetes import client
 
 from .k8s_base_tool import K8sBaseTool
 
@@ -52,28 +51,13 @@ class K8sClusterCheckTool(K8sBaseTool):
             "required": [],
         }
 
-    def _create_api_clients(
-        self, config_path: Optional[str] = None
-    ) -> Dict[str, client.ApiClient]:
-        """创建Kubernetes API客户端"""
-        try:
-            # 尝试不同的配置加载方式
-            if config_path and os.path.exists(config_path):
-                config.load_kube_config(config_file=config_path)
-            elif os.path.exists(os.path.expanduser("~/.kube/config")):
-                config.load_kube_config()
-            else:
-                # 尝试集群内配置
-                config.load_incluster_config()
-
-            return {
-                "v1": client.CoreV1Api(),
-                "apps_v1": client.AppsV1Api(),
-                "version": client.VersionApi(),
-            }
-
-        except Exception as e:
-            raise Exception(f"无法加载Kubernetes配置: {str(e)}")
+    def _create_api_clients(self, api_client: client.ApiClient) -> Dict[str, Any]:
+        """用绑定配置来源的 api_client 创建Kubernetes API客户端（SEC-33 P1-1：不再每次加载、改写全局配置）"""
+        return {
+            "v1": client.CoreV1Api(api_client),
+            "apps_v1": client.AppsV1Api(api_client),
+            "version": client.VersionApi(api_client),
+        }
 
     async def _execute_internal(self, parameters: Dict[str, Any]) -> Any:
         """执行工具内部逻辑"""
@@ -83,7 +67,7 @@ class K8sClusterCheckTool(K8sBaseTool):
         time_window = parameters.get("time_window_hours", 1)
 
         # 创建API客户端
-        clients = self._create_api_clients(config_path)
+        clients = self._initialize_clients(config_path)
         v1 = clients["v1"]
         version_api = clients["version"]
 

@@ -86,9 +86,9 @@ class K8sPodTool(K8sBaseTool):
             "required": ["operation"],
         }
 
-    def _create_api_clients(self) -> Dict[str, client.ApiClient]:
+    def _create_api_clients(self, api_client: client.ApiClient) -> Dict[str, Any]:
         """创建Pod工具需要的API客户端"""
-        return {"v1": client.CoreV1Api(), "apps_v1": client.AppsV1Api()}
+        return {"v1": client.CoreV1Api(api_client), "apps_v1": client.AppsV1Api(api_client)}
 
     async def _execute_internal(self, parameters: Dict[str, Any]) -> Any:
         """执行工具内部逻辑"""
