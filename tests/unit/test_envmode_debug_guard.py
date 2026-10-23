@@ -21,10 +21,21 @@ REPO = Path(__file__).resolve().parents[2]
 @pytest.mark.parametrize(
     "raw,expected",
     [
-        ("production", "production"), ("prod", "production"), ("PRD", "production"), (" Production\n", "production"),
-        ("development", "development"), ("dev", "development"), (" DEV ", "development"),
-        ("test", "test"), ("testing", "test"), ("Testing", "test"),
-        ("staging", None), ("", None), ("   ", None), (None, None), (1, None),
+        ("production", "production"),
+        ("prod", "production"),
+        ("PRD", "production"),
+        (" Production\n", "production"),
+        ("development", "development"),
+        ("dev", "development"),
+        (" DEV ", "development"),
+        ("test", "test"),
+        ("testing", "test"),
+        ("Testing", "test"),
+        ("staging", None),
+        ("", None),
+        ("   ", None),
+        (None, None),
+        (1, None),
     ],
 )
 def test_parse_env_mode_matches_go_envmode_aliases(raw, expected) -> None:
@@ -132,9 +143,13 @@ def test_error_handler_keeps_5xx_details_in_dev_test_with_debug(monkeypatch, env
 
 def test_aliases_mirror_go_envmode_table() -> None:
     assert envmode._ALIASES == {
-        "production": "production", "prod": "production", "prd": "production",
-        "development": "development", "dev": "development",
-        "test": "test", "testing": "test",
+        "production": "production",
+        "prod": "production",
+        "prd": "production",
+        "development": "development",
+        "dev": "development",
+        "test": "test",
+        "testing": "test",
     }
 
 

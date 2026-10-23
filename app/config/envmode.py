@@ -31,9 +31,7 @@ _ALIASES = {
 _MAX_SHOWN_LEN = 16
 
 DEBUG_IN_PRODUCTION_MESSAGE = (
-    "生产环境禁止开启 debug：debug 模式下 5xx 响应会带出 message/details 等内部信息。"
-    "请设置 DEBUG=false（或 app.debug: false）后再启动；"
-    "若并非生产环境，请把 ENV 设为 development/dev 或 test/testing"
+    "生产环境禁止开启 debug：debug 模式下 5xx 响应会带出 message/details 等内部信息。请设置 DEBUG=false（或 app.debug: false）后再启动；若并非生产环境，请把 ENV 设为 development/dev 或 test/testing"
 )
 
 
