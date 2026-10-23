@@ -193,3 +193,13 @@ async def test_resource_tool_bound_to_alt_cannot_label_default_and_apply_client_
     )
     assert kube.calls == before
     assert result["success"] is False and "切换集群" in result["message"]
+
+
+async def test_cleanup_releases_binding_so_tool_can_rebind(kube, gates, server):
+    params = {"operation": "list_pods", "namespace": "staging"}
+    await server.execute_tool("k8s_pod_management", {**params, "config_path": kube.alt})
+    tool = server.tools["k8s_pod_management"]
+    await tool.cleanup()
+    assert tool._api_clients is None and tool._client_source is None
+    await server.execute_tool("k8s_pod_management", dict(params))
+    assert _hosts(kube.calls) == [ALT_HOST, DEFAULT_HOST]

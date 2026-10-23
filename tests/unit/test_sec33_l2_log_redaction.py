@@ -93,6 +93,9 @@ async def test_diagnose_pod_log_failure_error_log_is_redacted(capture):
     result = await service.diagnose_kubernetes_issues("api", "default", include_pods=True, include_logs=True, include_events=False)
     assert result["diagnosis"]["logs"] == {"api-0": "获取日志失败"}
     assert_marker_only_in_debug(capture)
+    # pod 日志失败的 ERROR 行记录的是底层异常类型，而不是包装后的异常
+    pod_log = [r.getMessage() for r in capture.records if r.levelno == logging.ERROR and "获取Pod日志失败" in r.getMessage()]
+    assert pod_log and all("错误类型=LeakyError" in message for message in pod_log)
 
 
 async def test_diagnose_unknown_error_log_is_redacted(capture, monkeypatch):

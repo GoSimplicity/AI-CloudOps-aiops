@@ -107,6 +107,14 @@ async def test_get_file_stats_file_swapped_to_symlink_is_refused(tree, monkeypat
     assert "9871" not in str(failed.value)
 
 
+def test_validated_identity_refuses_symlink(tree):
+    base, outside = tree
+    (base / "link").symlink_to(outside / "a.md")
+    with pytest.raises(file_boundary.PathChangedError):
+        file_boundary.validated_identity(str(base / "link"))
+    assert file_boundary.validated_identity(str(base / "a.md")).st_ino == os.lstat(base / "a.md").st_ino
+
+
 def test_open_in_root_uses_nofollow_walk(tree):
     base, outside = tree
     (base / "link").symlink_to(outside / "a.md")
