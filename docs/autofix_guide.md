@@ -121,6 +121,8 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 
 所有响应均不包含原始异常文本（`str(e)`）；完整堆栈只通过 `logger.exception` 记录在服务端。
 
+`/autofix/diagnose` 同样使用上述统一映射：只有 `VALIDATION_ERROR` 返回 400；`AUTOFIX_ERROR` 等服务域错误返回 502、`SERVICE_UNAVAILABLE` 返回 503、其它未分类领域异常返回 500，均不拼接异常文本。
+
 #### 前端契约
 
 1. **生成计划**：`POST /api/v1/autofix/workflow`。默认响应 `data.status = "needs_human_confirmation"`、`data.next_action = "human_confirm"`，并带：
@@ -131,7 +133,7 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
    - `data.approval.expires_at`、`data.approval.retry_safe = false`；`data.review.confirmation_required = true`；
    - `data.executed_actions` 为空。
    前端应以 `approval.confirmation_required === true`（或 `status === "needs_human_confirmation"`）判定“待确认”，不要再假设 low 风险动作已执行。
-2. **确认执行**：`POST /api/v1/autofix/workflow/confirm`，请求体 `{"plan_id": "...", "approved_action_ids": ["..."]}`。只执行显式选择的原计划动作。
+2. **确认执行**：`POST /api/v1/autofix/workflow/confirm`，请求体 `{"plan_id": "...", "approved_action_ids": ["..."]}`。只执行显式选择的原计划动作。部分确认后若仍有待确认动作，`data.status = "needs_human_confirmation"`，`data.review.confirmation_required` 与 `data.approval.confirmation_required` 仍为 `true`；全部确认执行后两者均为 `false`（`approval.state = "completed"`）。
    - **403（`WORKFLOW_APPROVAL_ERROR`，未执行任何动作）**：确认前重新校验时目标命名空间不在 `allowed_namespaces`（包括计划生成后白名单被收紧）、属于受限命名空间、资源或权限检查不通过；以及执行阶段命名空间硬校验拒绝且没有任何动作被执行。403 表示可安全地修正配置后重新诊断。
    - **409（可能已产生副作用）**：重复确认/并发确认/重放、计划目标或动作在重新校验时发生变化，以及执行中途失败或部分执行。409 禁止盲目重试，应先人工核对集群实际状态。
 3. **功能关闭时**：`/autofix/repair`、`/autofix/bootstrap` 在开关关闭时返回 **HTTP 403**，响应体 `{"code": 403, "message": "自动修复入口 /autofix/repair 已关闭（autofix.repair_enabled / AUTOFIX_REPAIR_ENABLED=false）…", "data": {...}}`（bootstrap 同理，message 指明 `autofix.bootstrap_enabled`）。`data.error_code = "AUTOFIX_FEATURE_DISABLED"`，`data.details = {"switch": "autofix.repair_enabled" | "autofix.bootstrap_enabled"}`。缺少可信主体时仍先返回 401。关闭时不会初始化 Kubernetes 客户端。

@@ -435,6 +435,8 @@ class AutoFixService(BaseService):
         review.update(
             {
                 "approved": review_approved,
+                # SEC-26 第二层审查 P3-1：按剩余待确认动作重算，全部确认后不再要求确认
+                "confirmation_required": remaining_blocked_count > 0,
                 "reason": review_reason,
                 "approved_action_ids": list(
                     dict.fromkeys(previous_approved_action_ids + normalized_action_ids)

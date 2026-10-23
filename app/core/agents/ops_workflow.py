@@ -277,6 +277,7 @@ class OpsMultiAgentWorkflow:
         elif allowed_actions:
             review = {
                 "approved": True,
+                "confirmation_required": False,
                 "reason": self._extract_review_reason(
                     ai_review,
                     "候选动作风险可控，允许自动执行",
@@ -290,6 +291,7 @@ class OpsMultiAgentWorkflow:
         else:
             review = {
                 "approved": False,
+                "confirmation_required": False,
                 "reason": self._extract_review_reason(
                     ai_review,
                     "没有可执行动作，保留为人工排查建议",

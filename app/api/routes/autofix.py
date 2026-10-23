@@ -579,9 +579,10 @@ async def diagnose_k8s(
     except HTTPException as he:
         # 透传显式HTTP错误
         raise he
-    except (AIOpsException, DomainValidationError) as e:
-        # 统一将领域校验错误映射为400
-        raise HTTPException(status_code=HttpStatusCodes.BAD_REQUEST, detail=str(e))
+    except (AIOpsException, DomainValidationError):
+        # SEC-26 第二层审查 P3-3：交给 api_response 统一映射（ValidationError→400，AutoFixError→502，
+        # ServiceUnavailable→503 等）；5xx 响应由错误处理器统一脱敏，不再把 str(e) 直接拼进 400 响应
+        raise
     except Exception as e:
         logger.exception(f"诊断失败 - 部署: {request.deployment}, 错误类型: {type(e).__name__}")
         raise AutoFixError("诊断操作失败") from e
