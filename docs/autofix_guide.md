@@ -78,6 +78,34 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
    export PYTHONPATH=$(pwd)
    ```
 
+### 执行边界与前端契约（SEC-26）
+
+自 SEC-26 起，自动修复**默认只生成计划，不自动执行任何动作（包括 low 风险动作）**；执行必须由计划所属主体调用确认接口显式选择动作。所有开关默认关闭（fail-closed），配置项不含任何密钥：
+
+| 配置（YAML / 环境变量） | 默认值 | 说明 |
+| --- | --- | --- |
+| `autofix.auto_execute_enabled` / `AUTOFIX_AUTO_EXECUTE_ENABLED` | `false` | `true` 时恢复旧行为：风险评估放行的动作无需确认直接执行（仍受白名单限制，不推荐） |
+| `autofix.allowed_namespaces` / `AUTOFIX_ALLOWED_NAMESPACES` | `[]`（空） | 允许执行修复动作的命名空间白名单；环境变量为逗号分隔。为空时任何命名空间都不能执行（确认也会被 403 拒绝） |
+| `autofix.repair_enabled` / `AUTOFIX_REPAIR_ENABLED` | `false` | 是否开放旧入口 `POST /api/v1/autofix/repair` |
+| `autofix.bootstrap_enabled` / `AUTOFIX_BOOTSTRAP_ENABLED` | `false` | 是否开放 `POST /api/v1/autofix/bootstrap`（创建 test 命名空间与故障演示资源） |
+
+`kube-system`、`kube-public`、`kube-node-lease` 等受限命名空间即使写入白名单也不会执行。
+
+#### 前端契约
+
+1. **生成计划**：`POST /api/v1/autofix/workflow`。默认响应 `data.status = "needs_human_confirmation"`、`data.next_action = "human_confirm"`，并带：
+   - `data.plan.plan_id`：确认时使用；
+   - `data.approval.state = "pending"`、`data.approval.confirmation_required = true`；
+   - `data.approval.confirm_endpoint = "/api/v1/autofix/workflow/confirm"`；
+   - `data.approval.pending_action_ids`：可确认的动作 ID；`data.blocked_actions` / `data.candidate_actions` 为动作详情；
+   - `data.approval.expires_at`、`data.approval.retry_safe = false`；`data.review.confirmation_required = true`；
+   - `data.executed_actions` 为空。
+   前端应以 `approval.confirmation_required === true`（或 `status === "needs_human_confirmation"`）判定“待确认”，不要再假设 low 风险动作已执行。
+2. **确认执行**：`POST /api/v1/autofix/workflow/confirm`，请求体 `{"plan_id": "...", "approved_action_ids": ["..."]}`。只执行显式选择的原计划动作；目标命名空间不在 `allowed_namespaces`、权限/资源检查不通过时返回 403 且不执行。
+3. **功能关闭时**：`/autofix/repair`、`/autofix/bootstrap` 在开关关闭时返回 **HTTP 403**，响应体 `{"code": 403, "message": "自动修复入口 /autofix/repair 已关闭（autofix.repair_enabled / AUTOFIX_REPAIR_ENABLED=false）…", "data": {...}}`（bootstrap 同理，message 指明 `autofix.bootstrap_enabled`）。缺少可信主体时仍先返回 401。关闭时不会初始化 Kubernetes 客户端。
+4. **`/autofix/repair` 开启后**：不再直接修改集群，内部改走与 `/autofix/workflow` 相同的计划→确认链路，响应保留 `status/deployment/namespace/success/actions_taken/timestamp/execution_time` 字段，并新增 `next_action`、`plan_id`、`approval`、`candidate_actions`、`blocked_actions`、`review`；默认 `success=false`、`actions_taken=[]`，需要按 `approval.confirm_endpoint` 确认。`force=true` 返回 400（force 修复已停用）。旧实现中的硬编码回退镜像替换与 force 激进规则已删除，不能通过开关恢复。
+5. `GET /api/v1/autofix/config` 新增 `data.execution_policy`，返回上述四个开关的当前值与 `confirm_endpoint`。
+
 ### API 接口说明
 
 #### 1. 自动修复部署
@@ -91,7 +119,7 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
   "deployment": "nginx-deployment",
   "namespace": "default",
   "event": "Pod启动失败的问题描述",
-  "force": true
+  "force": false
 }
 ```
 
@@ -100,7 +128,7 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 - `deployment`: 要修复的部署名称
 - `namespace`: 部署所在的命名空间
 - `event`: 问题描述，用于 AI 分析
-- `force`: 是否强制执行修复，即使风险较高
+- `force`: 已停用（SEC-26）；传 `true` 返回 400。入口默认关闭，开启后也只生成待确认计划
 
 **响应**:
 

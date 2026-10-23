@@ -96,3 +96,10 @@ inspection:
   scheduler:
     enabled: false
     cron: "*/15 * * * *"
+
+# 自动修复执行边界（SEC-26，默认全部关闭 / fail-closed）
+autofix:
+  auto_execute_enabled: false # true 恢复旧行为：风险评估放行的 low/medium 动作不经确认直接执行（不推荐）
+  allowed_namespaces: [] # 允许执行修复动作的命名空间白名单；为空时任何命名空间都不允许执行
+  repair_enabled: false # 是否开放 /autofix/repair；开启后也只出计划，执行仍需 /autofix/workflow/confirm
+  bootstrap_enabled: false # 是否开放 /autofix/bootstrap（创建 test 命名空间并应用故障演示清单）

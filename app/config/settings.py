@@ -741,6 +741,16 @@ class AutoFixConfig:
             get_env_or_config("AUTOFIX_ALLOWED_NAMESPACES", "autofix.allowed_namespaces", [])
         )
     )
+    repair_enabled: bool = field(
+        default_factory=lambda: get_env_or_config(
+            "AUTOFIX_REPAIR_ENABLED", "autofix.repair_enabled", False, bool
+        )
+    )
+    bootstrap_enabled: bool = field(
+        default_factory=lambda: get_env_or_config(
+            "AUTOFIX_BOOTSTRAP_ENABLED", "autofix.bootstrap_enabled", False, bool
+        )
+    )
 
 
 @dataclass

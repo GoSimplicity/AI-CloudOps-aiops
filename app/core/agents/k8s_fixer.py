@@ -686,20 +686,10 @@ class K8sFixerAgent:
                 ):
                     has_image_pull_issue = True
 
-            # 镜像拉取失败时，回退到通用可用镜像
+            # SEC-26：镜像拉取失败只记录问题，不再替换为任何硬编码镜像；
+            # 目标镜像必须由人工确定，拉取策略调整走 /workflow 计划与确认链路
             if has_image_pull_issue:
-                # 使用用户提供的稳定镜像作为回退镜像
-                fallback_image = "nginx:1.21.6"
-                current_image = main_container.get("image")
-                if current_image != fallback_image:
-                    issues_found.append("镜像拉取失败")
-                    container_patch["image"] = fallback_image
-                    fixes_applied.append(
-                        f"将镜像从 {current_image} 回退为 {fallback_image}"
-                    )
-                    # 降低拉取策略，避免频繁拉取
-                    container_patch["imagePullPolicy"] = "IfNotPresent"
-                    need_to_patch = True
+                issues_found.append("镜像拉取失败（需人工确认目标镜像，不自动替换）")
 
             # OOMKilled 时提高内存限制
             if "OOMKilled" in pod_issues:

@@ -136,6 +136,7 @@ def _get_http_status_for_aiops_exception(exc: AIOpsException) -> int:
         AutoFixError,
         ConfigurationError,
         ExternalServiceError,
+        FeatureDisabledError,
         HistoricalDataError,
         PredictionError,
         RCAError,
@@ -147,7 +148,7 @@ def _get_http_status_for_aiops_exception(exc: AIOpsException) -> int:
         WorkflowApprovalError,
     )
 
-    if isinstance(exc, (SessionAccessError, WorkflowApprovalError)):
+    if isinstance(exc, (SessionAccessError, WorkflowApprovalError, FeatureDisabledError)):
         return exc.status_code
     if isinstance(exc, HistoricalDataError):
         return HttpStatusCodes.UNPROCESSABLE_ENTITY

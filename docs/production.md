@@ -115,6 +115,8 @@ RAG 冷启动也先校验会话归属，拒绝请求不会因为已有知识文�
 
 ## 自动修复审批归属与重试边界
 
+**SEC-26 执行边界**：工作流默认只出计划、不自动执行任何动作；执行必须调用 `/autofix/workflow/confirm`，且目标命名空间必须在 `autofix.allowed_namespaces`（默认空，fail-closed）中。`/autofix/repair` 与 `/autofix/bootstrap` 默认关闭并返回 403。生产环境如需开放，需显式配置 `AUTOFIX_ALLOWED_NAMESPACES`、`AUTOFIX_REPAIR_ENABLED`、`AUTOFIX_BOOTSTRAP_ENABLED`，`AUTOFIX_AUTO_EXECUTE_ENABLED` 应保持 `false`。完整配置项、默认值与前端契约见[自动修复指南](autofix_guide.md#执行边界与前端契约sec-26)。
+
 `/autofix/workflow` 与 `/autofix/workflow/confirm` 使用相同的服务密钥和可信 `X-CloudOps-User-ID` 链路；没有用户头的持密钥内部调用使用隔离的 `service:internal`。工作流与旧修复、诊断、测试资源入口在依赖调用前要求可信主体，空密钥开发态不能自报用户身份绕过。请求体中的 `owner` / `user_id` 不决定审批归属。
 
 1.0 审批契约是**仅计划所属主体可审批**，不提供工作区全局代批。服务先预留容量再运行工作流，用随机 ID 定位显式 owner 记录，取消目标名称加秒级时间的碰撞覆盖。未知、过期、重启后或旧无 owner 的计划返回 404；已知其他主体计划返回 403，拒绝时不初始化模型或读取集群。没有公开的按 ID 查询计划结果接口，确认入口不会向其他主体回显计划。
