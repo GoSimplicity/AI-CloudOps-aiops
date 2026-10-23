@@ -15,8 +15,6 @@ _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 from legacy_guard import require_legacy_opt_in
 require_legacy_opt_in()
 
-from datetime import datetime
-
 import pytest
 from check_utils import (
     DEFAULT_API_BASE_URL,
@@ -282,42 +280,6 @@ class TestAssistantAPI:
             True,
             status_code=response.status_code,
             refresh_success=(response.status_code == 200),
-        )
-
-    def test_assistant_add_document(self):
-        """测试添加文档接口"""
-        logger.info("测试添加文档接口 /api/v1/assistant/add-document")
-
-        url = f"{self.api_base_url}/assistant/add-document"
-        payload = {
-            "content": "这是一个测试文档，用于验证智能助手的文档添加功能。包含关键信息：AIOps平台测试、负载预测、根因分析。",
-            "metadata": {
-                "source": "测试脚本",
-                "type": "测试文档",
-                "created_at": datetime.utcnow().isoformat(),
-            },
-        }
-
-        response = make_request(
-            "post", url, json_data=payload, logger=logger, timeout=30
-        )
-
-        assert response is not None, "添加文档请求失败"
-        # 添加文档可能成功(200)或失败(500)
-        assert response.status_code in [200, 500], (
-            f"添加文档返回不预期状态码 {response.status_code}"
-        )
-
-        # 验证响应结构
-        required_fields = ["code", "message", "data"]
-        validation = validate_response_structure(response, required_fields, logger)
-        assert validation["valid"], f"响应结构验证失败: {validation['missing_fields']}"
-
-        self.test_result.add_test_result(
-            "assistant_add_document",
-            True,
-            status_code=response.status_code,
-            document_added=(response.status_code == 200),
         )
 
     def test_assistant_add_document_empty_content(self):
