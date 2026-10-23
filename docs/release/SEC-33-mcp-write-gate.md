@@ -38,7 +38,7 @@ config_path、YAML 等任何参数值**；响应文案也不回显参数值。
 
 ## 分类表
 
-未在下表"只读"中列出的工具或 operation（包括新工具、拼写变体、大小写或空白不同、非字符串）**一律按写处理**。
+未在下表"只读"中列出的工具或 operation（包括新工具、拼写变体、大小写或空白不同）**一律按写处理**；参数中带 `operation` 但不是字符串时在分类前按 `MCP_INVALID_OPERATION` 拒绝（SEC-33 L2 P3-3）。
 
 整工具只读：`get_current_time`、`get_system_info`、`read_file`、`list_directory`、`get_file_stats`、`calculate`、
 `calculate_statistics`、`convert_units`、`k8s_cluster_check`。
@@ -100,6 +100,18 @@ config_path、YAML 等任何参数值**；响应文案也不回显参数值。
 写类工具和 Secret 读取带非默认 `config_path` 一律 `MCP_CONFIG_PATH_DENIED`。其中**对 Secret 读取也做 config_path 检查是比原要求更严的设计，经 Tech Lead 确认保留**：切换 kubeconfig 会绕过当前集群的白名单语义，而 Secret 键名本身也属敏感元数据。只读工具暂时保持原行为。
 是否允许按白名单切换 kubeconfig/集群、以及只读工具的 config_path 收敛，**后续在 SEC-39 处理**。
 
+K8s 工具客户端与配置来源绑定（SEC-33 L2 P1-1）：每个 K8s 工具实例在首次调用时用独立的 `kubernetes.client.Configuration`
+加载 kubeconfig（显式 `config_path` → `~/.kube/config` → in-cluster），**不修改 kubernetes 全局默认配置**，并把客户端绑定到该来源
+（显式路径按 realpath 比较，否则为 default）。之后任何请求的来源与绑定来源不一致（包括先只读带 `config_path`、再发默认来源的写，
+或先默认、再带其它 `config_path`）都直接拒绝，`message` 为固定文案“K8s工具已绑定首次配置，不能在请求中切换集群”，不会复用缓存客户端。
+指向同一文件的符号链接按 realpath 视为同一来源。显式 `config_path` 不是存在的文件时报错，**不再静默回退**到 `~/.kube/config` 或 in-cluster。
+修复前，只读调用带 `config_path` 会让缓存客户端（以及全局默认配置）指向另一集群，随后不带 `config_path` 的写操作和 Secret 读
+通过门禁后就落到那个集群上。
+
+K8s 工具基类的通用异常（SEC-33 L2 P3-4）：`execute()` 捕获到的未知异常只返回 `{"error": "执行失败", "message": "K8s工具执行失败"}`，
+加载 kubeconfig 失败只返回“无法加载Kubernetes配置”，不再回显 `str(e)`；ERROR 日志只记工具名和异常类型，原始异常只进 DEBUG。
+各工具自己 try/except 里返回 `str(e)` 的分支不在本次范围内。
+
 ## MCP_FILE_ROOT 启动检查
 
 MCP 服务启动（lifespan）时检查 `MCP_FILE_ROOT`（默认 `data/knowledge_base`，按 realpath 解析符号链接）。检查时解析出的
@@ -123,6 +135,11 @@ realpath 会被**固定**下来，之后文件工具一直使用这个值，root
 `modified_time` 是链接自身的时间，不泄露目标的 size / mtime。`get_file_stats` 统计目录总大小时同样不计入这类链接（文件数照旧计入）。
 悬空链接不再导致整个目录列举失败。
 
+校验后替换（SEC-33 L2 P3-2）：文件工具在路径校验后不再按路径名打开，而是从固定 root 的目录 fd 出发逐级 `openat(O_NOFOLLOW)`
+打开每个组件，再用 `fstat` 的 dev/ino 与校验时的 `lstat` 比对；`list_directory` 基于目录 fd 列举、`get_file_stats` 用 `os.fwalk`
+基于 fd 遍历。校验之后文件或任一中间目录被换成符号链接（即使指向 root 外的真实文件）、或被换成另一个 inode，都返回
+“路径在校验后发生变化（可能被替换为符号链接），已拒绝”，不读取、不返回目标内容或元数据。
+
 ## 升级影响
 
 - 升级后默认所有 MCP 写操作和 Secret 读取被拒绝。依赖 MCP 写工具的调用方会收到 HTTP 200 + `status="error"` + `error_code`。
@@ -133,6 +150,13 @@ realpath 会被**固定**下来，之后文件工具一直使用这个值，root
   `ingress`、`namespace`、`node`、`pv`、`pvc` 这些原名；门禁额外认识复数和简称等别名，只是为了在无法判定时拒绝请求（fail-closed），
   用别名调用会通过门禁，但工具仍不支持。
 - 生产环境 `MCP_FILE_ROOT` 配置不安全时 MCP 服务将无法启动。
+- K8s 工具实例绑定首次调用的配置来源，进程内不能再切换集群（含先带 `config_path` 再用默认来源），需要换集群时重启 MCP 服务；
+  显式 `config_path` 不存在时报错而不是回退到默认集群。
+- 参数中 `operation` 为非字符串的调用改为返回 `MCP_INVALID_OPERATION`（之前按写拒绝，返回 `MCP_WRITE_DISABLED` 等；
+  `k8s_resource_operations` 传数组/对象时之前会抛 `TypeError`）。
+- K8s 工具未知异常的 `message` 统一为“K8s工具执行失败”，调用方不能再依赖异常原文。
+- 文件工具对校验后被替换为符号链接的路径拒绝访问；root 内指向 root 内的符号链接照常可用。
+- 日志：diagnose 链路和 `execute_with_timeout` 的 ERROR 日志不再带 traceback 和异常原文，排障需要临时打开 DEBUG。
 - 同一发布中 `/autofix/diagnose`（SEC-26 P3-e）：diagnose 未知异常返回 500 `AUTOFIX_INTERNAL_ERROR`；上游超时与 Kubernetes 不可用返回 503 `SERVICE_UNAVAILABLE`（不再是 502）；Kubernetes 调用经 `execute_with_timeout` 包装，包装内出现的任何异常（含未知异常）都视为上游不可用，返回 503 而不是 500，与 autofix_guide 一致。diagnose 链路的 ERROR 日志只记操作名、异常类型和 status，原始异常文本只进 DEBUG 日志。详见 [autofix_guide.md「diagnose 错误映射」](../autofix_guide.md#diagnose-错误映射)。
 
 ## 回滚
