@@ -267,6 +267,9 @@ class AutoFixService(BaseService):
         if not diagnosis:
             raise ValidationError("plan_id", "工作流结果缺少诊断上下文")
 
+        if isinstance(self._remediation_engine, AutoFixRemediationEngine):
+            # 确认时按当前配置重新读取白名单：计划生成后被收紧的命名空间在重新校验中即被拒绝（403）
+            self._remediation_engine.allowed_namespaces = build_namespace_policy().allowed_namespaces
         current_plan = await self._remediation_engine.build_plan(diagnosis)
         plan = deepcopy(workflow_result.get("plan") or {})
         if any(current_plan.get(key) != plan.get(key) for key in ("namespace", "deployment")):
