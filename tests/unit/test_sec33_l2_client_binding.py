@@ -205,3 +205,66 @@ async def test_cleanup_releases_all_sources_so_tool_can_reinitialize(kube, gates
     assert tool._api_clients is None and tool._custom_clients == {}
     await server.execute_tool("k8s_pod_management", dict(params))
     assert _hosts(kube.calls) == [ALT_HOST, DEFAULT_HOST]
+
+
+# ---------------------------------------------------------------- SEC-33 L3 P3-K：评审变异 #5 / #6 的正式回归测试
+
+
+def test_incluster_load_uses_private_configuration(monkeypatch, tmp_path):
+    """变异 #5：in-cluster 分支去掉 client_configuration 会改写 kubernetes 全局默认配置"""
+    from app.mcp.server.tools.k8s_pod_tool import K8sPodTool
+
+    monkeypatch.setenv("HOME", str(tmp_path / "no-home"))  # 没有 ~/.kube/config → 走 in-cluster
+    monkeypatch.setattr(client.Configuration, "_default", None)
+    seen = []
+
+    def fake_incluster(client_configuration=None, try_refresh_token=True):
+        seen.append(client_configuration)
+        target = client_configuration if client_configuration is not None else client.Configuration()
+        target.host = "https://incluster.invalid"
+        if client_configuration is None:
+            client.Configuration.set_default(target)
+
+    def must_not_load_file(*args, **kwargs):
+        raise AssertionError("no ~/.kube/config: file loader must not run")
+
+    monkeypatch.setattr(kube_config, "load_incluster_config", fake_incluster)
+    monkeypatch.setattr(kube_config, "load_kube_config", must_not_load_file)
+    api_client = K8sPodTool()._new_api_client(None)
+    assert len(seen) == 1 and isinstance(seen[0], client.Configuration)
+    assert api_client.configuration is seen[0]
+    assert api_client.configuration.host == "https://incluster.invalid"
+    assert client.Configuration.get_default_copy().host != "https://incluster.invalid"
+
+
+def test_concurrent_default_initialization_loads_once(monkeypatch):
+    """变异 #6：去掉 _client_source_lock 后并发首个请求会各自加载、各自建客户端"""
+    import threading
+    import time
+
+    from app.mcp.server.tools.k8s_pod_tool import K8sPodTool
+
+    tool = K8sPodTool()
+    loads = []
+    barrier = threading.Barrier(8)
+
+    def slow_new_api_client(config_path):
+        loads.append(config_path)
+        time.sleep(0.05)
+        return Mock(name="api-client")
+
+    monkeypatch.setattr(tool, "_new_api_client", slow_new_api_client)
+    monkeypatch.setattr(tool, "_create_api_clients", lambda api_client: {"v1": api_client})
+    results = []
+
+    def worker():
+        barrier.wait()
+        results.append(tool._initialize_clients(None))
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert loads == [None]
+    assert len(results) == 8 and all(result is results[0] for result in results)
