@@ -41,6 +41,8 @@ class OpsWorkflowState(TypedDict, total=False):
     agents_used: List[str]
     messages: List[Dict[str, Any]]
     timestamp: str
+    # 仅由 run(plan_only=True) 写入，不从请求体读取：本次调用只出计划，不论实例 auto_execute 如何
+    plan_only: bool
 
 
 class OpsMultiAgentWorkflow:
@@ -51,6 +53,9 @@ class OpsMultiAgentWorkflow:
 
     SEC-26：``auto_execute`` 默认 False，Reviewer 不再放行任何动作，所有可执行动作
     进入 needs_human_confirmation，必须经 /workflow/confirm 显式确认后执行。
+
+    ``run(..., plan_only=True)`` 只对本次调用强制只出计划（写入本次状态，不修改共享实例的
+    ``auto_execute``），并发调用之间不会串扰；该开关只能收紧、不能放宽。
     """
 
     def __init__(
@@ -66,8 +71,11 @@ class OpsMultiAgentWorkflow:
         self.max_iterations = max_iterations
         self.graph = self._build_graph()
 
-    async def run(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """执行多智能体工作流并返回可审计结果。"""
+    async def run(self, request: Dict[str, Any], *, plan_only: bool = False) -> Dict[str, Any]:
+        """执行多智能体工作流并返回可审计结果。
+
+        ``plan_only=True`` 时本次调用无论 ``auto_execute`` 如何都只生成计划、不调用执行引擎。
+        """
         initial_state: OpsWorkflowState = {
             "problem_description": str(request.get("problem_description") or request.get("event") or ""),
             "deployment": str(request.get("deployment") or ""),
@@ -79,9 +87,14 @@ class OpsMultiAgentWorkflow:
             "status": "running",
             "next_action": "coordinate",
             "timestamp": datetime.now().isoformat(),
+            "plan_only": plan_only is True,
         }
         result = await self.graph.ainvoke(initial_state)
         return self._finalize(result)
+
+    def _may_auto_execute(self, state: OpsWorkflowState) -> bool:
+        """本次调用是否允许免确认执行：实例开启 auto_execute 且本次未被强制 plan_only"""
+        return self.auto_execute and state.get("plan_only") is not True
 
     def _build_graph(self):
         workflow = StateGraph(OpsWorkflowState)
@@ -215,7 +228,7 @@ class OpsMultiAgentWorkflow:
         executable_actions = [action for action in plan.get("candidate_actions", []) if action.get("executable", True)]
         blocked_actions = [action for action in executable_actions if not action.get("risk_assessment", {}).get("allowed")]
         allowed_actions = [action for action in executable_actions if action.get("risk_assessment", {}).get("allowed")]
-        confirmation_by_policy = bool(allowed_actions) and not self.auto_execute
+        confirmation_by_policy = bool(allowed_actions) and not self._may_auto_execute(state)
         if confirmation_by_policy:
             # 默认只出计划：即便风险评估放行，也全部转为待确认，Executor 不会被调度
             allowed_ids = {action.get("action_id") for action in allowed_actions}
@@ -264,6 +277,7 @@ class OpsMultiAgentWorkflow:
         elif allowed_actions:
             review = {
                 "approved": True,
+                "confirmation_required": False,
                 "reason": self._extract_review_reason(
                     ai_review,
                     "候选动作风险可控，允许自动执行",
@@ -277,6 +291,7 @@ class OpsMultiAgentWorkflow:
         else:
             review = {
                 "approved": False,
+                "confirmation_required": False,
                 "reason": self._extract_review_reason(
                     ai_review,
                     "没有可执行动作，保留为人工排查建议",
@@ -544,8 +559,8 @@ class OpsMultiAgentWorkflow:
 
     async def _executor(self, state: OpsWorkflowState) -> OpsWorkflowState:
         state = self._copy_state(state)
-        if not self.auto_execute:
-            # 防御：默认配置下任何路径都不得在未确认时调用执行引擎
+        if not self._may_auto_execute(state):
+            # 防御：默认配置或 plan_only 调用下任何路径都不得在未确认时调用执行引擎
             state["status"] = "needs_human_confirmation"
             state["next_action"] = "human_confirm"
             return state

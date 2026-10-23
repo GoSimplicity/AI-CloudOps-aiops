@@ -102,6 +102,8 @@ def test_s1_upstream_or_internal_helper_types() -> None:
 def test_s4_yaml_switch_strip_lower_and_int_one_is_off_with_warn(monkeypatch, caplog, yaml_value, expected, warns) -> None:
     monkeypatch.delenv("AUTOFIX_REPAIR_ENABLED", raising=False)
     monkeypatch.setattr(settings, "CONFIG", {"autofix": {"repair_enabled": yaml_value}})
+    # 合并 SEC-26 P2-2 后开关从严格布尔 YAML 视图 AUTOFIX_SWITCH_CONFIG 读取
+    monkeypatch.setattr(settings, "AUTOFIX_SWITCH_CONFIG", {"autofix": {"repair_enabled": yaml_value}})
     with caplog.at_level(logging.WARNING, logger="aiops.config.autofix"):
         cfg = AutoFixConfig()
     assert cfg.repair_enabled is expected

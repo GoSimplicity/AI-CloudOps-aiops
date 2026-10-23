@@ -84,7 +84,7 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 
 | 配置（YAML / 环境变量） | 默认值 | 说明 |
 | --- | --- | --- |
-| `autofix.auto_execute_enabled` / `AUTOFIX_AUTO_EXECUTE_ENABLED` | `false` | `true` 时恢复旧行为：风险评估放行的动作无需确认直接执行（仍受白名单限制，不推荐） |
+| `autofix.auto_execute_enabled` / `AUTOFIX_AUTO_EXECUTE_ENABLED` | `false` | `true` 时恢复旧行为：`/autofix/workflow`（run）中风险评估放行的动作无需确认直接执行（仍受白名单限制，不推荐）；**对 `/autofix/repair` 无效**，repair 恒为只出计划 |
 | `autofix.allowed_namespaces` / `AUTOFIX_ALLOWED_NAMESPACES` | `[]`（空） | 允许执行修复动作的命名空间白名单；环境变量为逗号分隔。为空时任何命名空间都不能执行（确认也会被 403 拒绝） |
 | `autofix.repair_enabled` / `AUTOFIX_REPAIR_ENABLED` | `false` | 是否开放旧入口 `POST /api/v1/autofix/repair` |
 | `autofix.bootstrap_enabled` / `AUTOFIX_BOOTSTRAP_ENABLED` | `false` | 是否开放 `POST /api/v1/autofix/bootstrap`（创建 test 命名空间与故障演示资源）；开启后 `test` 仍须在 `allowed_namespaces` 内且不是受限命名空间，否则 403 |
@@ -93,7 +93,10 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 
 **配置取值规则（启动时解析，修改后需重启）**：
 
-- 三个布尔开关解析规则：**先 strip，再 lower，等于 true 才开启**（如 `true`/`TRUE`/` true `/`true\n`）；`false` 为关闭；其余任何值——包括空字符串、`1`、`0`、`yes`、`no`、`on`，以及 YAML 中的数字 `1`——一律按 `false`（关闭）处理，并在启动时打印 WARNING 日志（logger `aiops.config.autofix`），提示该值不是 true/false。
+- 三个布尔开关解析规则：**先 strip，再 lower，等于 true 才开启**；`false` 为关闭；其余任何值一律按 `false`（关闭）处理，并在启动时打印 WARNING 日志（logger `aiops.config.autofix`），提示该值不是 true/false：
+  - **环境变量**：先 strip 再 lower（`true`/`True`/`TRUE`/` true `/`true\n` 均为开启）；`1`、`0`、`yes`、`no`、`on`、空字符串等都按关闭处理并告警。
+  - **YAML**：开关字段使用专门的严格解析（不认 YAML 1.1 的布尔别名），只有不加引号的 `true`/`True`/`TRUE` 为开启、`false`/`False`/`FALSE` 为关闭。不加引号的 `yes`/`Yes`/`on`/`On`/`no`/`off` 等**不再**被当作布尔，按关闭处理并告警；`y`、数字 `1`/`0`、加引号的 `'yes'` 同样按关闭处理并告警。加引号的字符串与环境变量规则一致（先 strip 再 lower），`'true'`/`' TRUE '` 视为开启。
+  - 严格解析只作用于 `autofix.auto_execute_enabled`、`autofix.repair_enabled`、`autofix.bootstrap_enabled` 这三个字段，以及沿用同一解析函数的 SEC-33 开关 `mcp.write_tools_enabled`、`mcp.secret_read_enabled`；其它配置项（如 `app.debug`、`dev.auto_reload`）仍按原有 YAML 1.1 规则解析，行为不变。
 - `allowed_namespaces` **大小写敏感、按字面精确匹配**，不做大小写归一；Kubernetes 命名空间均为小写，写成 `Staging` 不会匹配 `staging`。
 - **`*` 不是通配符**：`*`、`prod-*` 等只会按字面匹配，实际不会放行任何命名空间；要放行多个命名空间请逐个列出。
 - 启动时白名单中出现含 `*` 的条目或含大写字母的条目会打印 WARNING（不会自动改写，仍按字面生效）。
@@ -121,6 +124,8 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 
 所有响应均不包含原始异常文本（`str(e)`）；完整堆栈只通过 `logger.exception` 记录在服务端。
 
+`/autofix/diagnose` 同样使用上述统一映射：只有 `VALIDATION_ERROR` 返回 400；`AUTOFIX_ERROR` 等服务域错误返回 502、`SERVICE_UNAVAILABLE` 返回 503、其它未分类领域异常返回 500，均不拼接异常文本。
+
 #### 前端契约
 
 1. **生成计划**：`POST /api/v1/autofix/workflow`。默认响应 `data.status = "needs_human_confirmation"`、`data.next_action = "human_confirm"`，并带：
@@ -131,13 +136,13 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
    - `data.approval.expires_at`、`data.approval.retry_safe = false`；`data.review.confirmation_required = true`；
    - `data.executed_actions` 为空。
    前端应以 `approval.confirmation_required === true`（或 `status === "needs_human_confirmation"`）判定“待确认”，不要再假设 low 风险动作已执行。
-2. **确认执行**：`POST /api/v1/autofix/workflow/confirm`，请求体 `{"plan_id": "...", "approved_action_ids": ["..."]}`。只执行显式选择的原计划动作。
+2. **确认执行**：`POST /api/v1/autofix/workflow/confirm`，请求体 `{"plan_id": "...", "approved_action_ids": ["..."]}`。只执行显式选择的原计划动作。部分确认后若仍有待确认动作，`data.status = "needs_human_confirmation"`，`data.review.confirmation_required` 与 `data.approval.confirmation_required` 仍为 `true`；全部确认执行后两者均为 `false`（`approval.state = "completed"`）。
    - **403（`WORKFLOW_APPROVAL_ERROR`，未执行任何动作）**：确认前重新校验时目标命名空间不在 `allowed_namespaces`（包括计划生成后白名单被收紧）、属于受限命名空间、权限检查不通过；以及执行阶段命名空间硬校验拒绝且没有任何动作被执行（所有执行引擎都必须实现 `namespace_refusal` 并经过该预检，未实现按拒绝处理）。403 表示可安全地修正配置后重新诊断。
    - **409（`resource_exists=false`，未执行任何动作）**：确认前重新校验时目标资源已不存在（例如 Deployment 已被删除），审批不能覆盖；尚未调用任何写接口，需重新诊断。
    - **409（可能已产生副作用）**：重复确认/并发确认/重放、计划目标或动作在重新校验时发生变化，以及执行中途失败或部分执行。409 禁止盲目重试，应先人工核对集群实际状态。
 3. **功能关闭时**：`/autofix/repair`、`/autofix/bootstrap` 在开关关闭时返回 **HTTP 403**，响应体 `{"code": 403, "message": "自动修复入口 /autofix/repair 已关闭（autofix.repair_enabled / AUTOFIX_REPAIR_ENABLED=false）…", "data": {...}}`（bootstrap 同理，message 指明 `autofix.bootstrap_enabled`）。`data.error_code = "AUTOFIX_FEATURE_DISABLED"`，`data.details = {"switch": "autofix.repair_enabled" | "autofix.bootstrap_enabled"}`。缺少可信主体时仍先返回 401。关闭时不会初始化 Kubernetes 客户端。
    **`/autofix/bootstrap` 开启但命名空间不允许时**：目标命名空间 `test` 不在 `AUTOFIX_ALLOWED_NAMESPACES` 内（含白名单为空）或属于受限命名空间，返回 **HTTP 403**，`data.error_code = "AUTOFIX_NAMESPACE_NOT_ALLOWED"`，`data.details = {"namespace": "test", "switch": "autofix.allowed_namespaces"}`，message 示例：`测试资源引导入口 /autofix/bootstrap 已开启，但目标命名空间 test 不在白名单内：autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 为空（fail-closed），请将 test 加入 AUTOFIX_ALLOWED_NAMESPACES；已拒绝创建测试资源`。此检查同样先于服务初始化，拒绝时不初始化 Kubernetes 客户端、不创建命名空间或任何资源。要使用 bootstrap 需同时设置 `AUTOFIX_BOOTSTRAP_ENABLED=true` 与 `AUTOFIX_ALLOWED_NAMESPACES` 包含 `test`。判定顺序：401（无可信主体）→ 403 `AUTOFIX_FEATURE_DISABLED` → 403 `AUTOFIX_NAMESPACE_NOT_ALLOWED`。
-4. **`/autofix/repair` 开启后**：不再直接修改集群，内部改走与 `/autofix/workflow` 相同的计划→确认链路，响应保留 `status/deployment/namespace/success/actions_taken/timestamp/execution_time` 字段，并新增 `next_action`、`plan_id`、`approval`、`candidate_actions`、`blocked_actions`、`review`；默认 `success=false`、`actions_taken=[]`，需要按 `approval.confirm_endpoint` 确认。`force=true` 返回 400（force 修复已停用）。Kubernetes API 错误（`ApiException`）或上游超时返回 HTTP 502、`data.error_code = "AUTOFIX_ERROR"`（debug 文案“自动修复错误: 修复操作失败”）；其他未预期内部异常返回 HTTP 500、`data.error_code = "AUTOFIX_INTERNAL_ERROR"`（debug 文案“自动修复内部错误: 修复操作失败”）；非 debug 模式或生产环境 message 为“内部服务器错误”（均不拼接异常文本），完整异常堆栈仅记录在服务端日志（`logger.exception`）。旧实现中的硬编码回退镜像替换与 force 激进规则已删除，不能通过开关恢复。
+4. **`/autofix/repair` 开启后**：不再直接修改集群，内部改走与 `/autofix/workflow` 相同的计划→确认链路，且**固定只出计划**：即使同时设置 `AUTOFIX_AUTO_EXECUTE_ENABLED=true`，repair 也不会免确认执行任何动作（`status = "needs_human_confirmation"`、`executed_actions = []`），必须经确认接口执行；该限制只作用于 repair 本次调用，不影响并发的 `/autofix/workflow` 请求。响应保留 `status/deployment/namespace/success/actions_taken/timestamp/execution_time` 字段，并新增 `next_action`、`plan_id`、`approval`、`candidate_actions`、`blocked_actions`、`review`；默认 `success=false`、`actions_taken=[]`，需要按 `approval.confirm_endpoint` 确认。`force=true` 返回 400（force 修复已停用）。Kubernetes API 错误（`ApiException`）或上游超时返回 HTTP 502、`data.error_code = "AUTOFIX_ERROR"`（debug 文案“自动修复错误: 修复操作失败”）；其他未预期内部异常返回 HTTP 500、`data.error_code = "AUTOFIX_INTERNAL_ERROR"`（debug 文案“自动修复内部错误: 修复操作失败”）；非 debug 模式或生产环境 message 为“内部服务器错误”（均不拼接异常文本），完整异常堆栈仅记录在服务端日志（`logger.exception`）。旧实现中的硬编码回退镜像替换与 force 激进规则已删除，不能通过开关恢复。
 5. `GET /api/v1/autofix/config` 新增 `data.execution_policy`，返回上述四个开关的当前值与 `confirm_endpoint`。
 
 ### API 接口说明

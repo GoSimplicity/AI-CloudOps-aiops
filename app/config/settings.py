@@ -28,10 +28,13 @@ load_dotenv()
 ENV = os.getenv("ENV", "development")
 
 
-def load_config() -> Dict[str, Any]:
-    """加载配置文件（通过 BaseAppSettings 提供的统一加载器）"""
+def load_config(strict_bool: bool = False) -> Dict[str, Any]:
+    """加载配置文件（通过 BaseAppSettings 提供的统一加载器）
+
+    strict_bool=True 时使用 StrictBoolSafeLoader：YAML 1.1 布尔别名（yes/on 等）保留为字符串。
+    """
     try:
-        data = BaseAppSettings.load_yaml_config()
+        data = BaseAppSettings.load_yaml_config_strict_bool() if strict_bool else BaseAppSettings.load_yaml_config()
         return data or {}
     except Exception as e:
         logger = logging.getLogger("aiops.config.settings")
@@ -40,6 +43,9 @@ def load_config() -> Dict[str, Any]:
 
 
 CONFIG = load_config()
+# SEC-26 第二层审查 P2-2：autofix 开关专用视图。与 CONFIG 是同一份 YAML，但 yes/on 等不会被转成 True；
+# 只有 _parse_autofix_bool 读取它，其它配置仍按 CONFIG（YAML 1.1 safe_load）解析，结果不变。
+AUTOFIX_SWITCH_CONFIG = load_config(strict_bool=True)
 
 
 def get_env_or_config(
@@ -742,22 +748,44 @@ def _parse_namespace_list(value: Any) -> List[str]:
 _autofix_config_logger = logging.getLogger("aiops.config.autofix")
 
 
+# YAML 1.1 会把这些不加引号的写法当成布尔；autofix 开关不认它们（StrictBoolSafeLoader 保留为字符串）
+_YAML11_BOOL_ALIASES = frozenset({"yes", "no", "on", "off", "y", "n"})
+
+
+def _get_autofix_switch_value(env_key: str, config_path: str) -> Any:
+    """环境变量优先；否则从 AUTOFIX_SWITCH_CONFIG（严格布尔 YAML 视图）取值；未设置返回 None"""
+    env_value = os.getenv(env_key)
+    if env_value is not None:
+        return env_value
+    value: Any = AUTOFIX_SWITCH_CONFIG
+    for part in config_path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
 def _parse_autofix_bool(env_key: str, config_path: str) -> bool:
     """autofix 开关解析规则：先 strip，再 lower，等于 true 才开启；false 为关闭。
 
-    其它任何值（含空串、0/1、yes/no、YAML 数字 1/0）按关闭处理并告警。
-    YAML 里写成 ``1``（int）同样按关闭处理并告警——只有 true 会开启。
+    其它任何值（含空串、0/1、yes/no/on/off、YAML 数字 1/0）按关闭处理并告警。
+    YAML 中只有原生布尔 true/True/TRUE 为开（SEC-26 第二层审查 P2-2）；不加引号的 yes/on/On 不再按
+    YAML 1.1 视为 true。SEC-33 的 mcp.write_tools_enabled / mcp.secret_read_enabled 沿用同一规则。
     """
-    value = get_env_or_config(env_key, config_path, False)
+    value = _get_autofix_switch_value(env_key, config_path)
+    if value is None:
+        return False
     if value is True or value is False:
         return value
     if isinstance(value, str) and value.strip().lower() in ("true", "false"):
         return value.strip().lower() == "true"
+    hint = "（yes/on 等 YAML 1.1 布尔写法不被接受，请写 true）" if isinstance(value, str) and value.strip().lower() in _YAML11_BOOL_ALIASES else ""
     _autofix_config_logger.warning(
-        "autofix 开关 %s / %s 的值 %r 不是 true/false，已按 false（关闭）处理；只有 true 会开启",
+        "autofix 开关 %s / %s 的值 %r 不是 true/false，已按 false（关闭）处理；只有 true 会开启%s",
         env_key,
         config_path,
         value,
+        hint,
     )
     return False
 

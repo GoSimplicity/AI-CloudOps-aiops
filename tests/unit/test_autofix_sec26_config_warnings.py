@@ -21,6 +21,7 @@ def clean_env(monkeypatch):
     for key in (*SWITCHES, "AUTOFIX_ALLOWED_NAMESPACES"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(settings, "CONFIG", {})
+    monkeypatch.setattr(settings, "AUTOFIX_SWITCH_CONFIG", {})
 
 
 def warnings_from(caplog):
@@ -61,7 +62,7 @@ def test_switch_env_only_true_enables(monkeypatch, caplog, env_key, attr, raw, e
 
 @pytest.mark.parametrize("yaml_value,expected,warns", [(True, True, False), (False, False, False), (1, False, True), (0, False, True), ("yes", False, True)])
 def test_switch_yaml_non_bool_values_are_off_and_warned(monkeypatch, caplog, yaml_value, expected, warns) -> None:
-    monkeypatch.setattr(settings, "CONFIG", {"autofix": {"repair_enabled": yaml_value}})
+    monkeypatch.setattr(settings, "AUTOFIX_SWITCH_CONFIG", {"autofix": {"repair_enabled": yaml_value}})
     with caplog.at_level(logging.WARNING, logger=LOGGER):
         cfg = AutoFixConfig()
     assert cfg.repair_enabled is expected

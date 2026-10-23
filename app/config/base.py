@@ -11,7 +11,8 @@ Description: 配置基础类 - 基于 Pydantic Settings，支持 ENV > YAML > �
 
 import os
 from pathlib import Path
-from typing import Any, Dict
+import re
+from typing import Any, Dict, Type
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -40,18 +41,43 @@ def _get_yaml_path() -> Path:
     return root / "config" / "config.yaml"
 
 
-def _load_yaml() -> Dict[str, Any]:
-    """加载 YAML 配置为字典，找不到文件返回空字典"""
+_YAML_BOOL_TAG = "tag:yaml.org,2002:bool"
+
+
+class StrictBoolSafeLoader(yaml.SafeLoader):
+    """SafeLoader 变体：去掉 YAML 1.1 的布尔别名，只把 true/True/TRUE、false/False/FALSE 解析为 bool。
+
+    yes/no/on/off（及其大小写变体）保留为字符串，交由调用方按字面判定。
+    SEC-26 第二层审查 P2-2：只用于 autofix 开关字段（见 settings.AUTOFIX_SWITCH_CONFIG），
+    全局 CONFIG 仍用 yaml.safe_load，其它配置的解析结果不变。
+    """
+
+
+StrictBoolSafeLoader.yaml_implicit_resolvers = {first: [(tag, regexp) for tag, regexp in resolvers if tag != _YAML_BOOL_TAG] for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()}
+StrictBoolSafeLoader.add_implicit_resolver(
+    _YAML_BOOL_TAG,
+    re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+    list("tTfF"),
+)
+
+
+def _load_yaml(loader: Type[yaml.SafeLoader] = yaml.SafeLoader) -> Dict[str, Any]:
+    """加载 YAML 配置为字典，找不到文件返回空字典
+
+    默认 loader 为 yaml.SafeLoader（与 yaml.safe_load 等价）；loader 只能是 SafeLoader 及其子类。
+    """
+    if not (isinstance(loader, type) and issubclass(loader, yaml.SafeLoader)):
+        raise TypeError("YAML 配置只能用 yaml.SafeLoader 或其子类加载")
     yaml_path = _get_yaml_path()
     default_path = _get_root_dir() / "config" / "config.yaml"
 
     try:
         if yaml_path.exists():
             with open(yaml_path, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
+                return yaml.load(f, Loader=loader) or {}  # loader 限定为 SafeLoader 及其子类
         if default_path.exists():
             with open(default_path, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
+                return yaml.load(f, Loader=loader) or {}  # loader 限定为 SafeLoader 及其子类
         return {}
     except Exception:
         # 返回空字典，避免启动失败
@@ -76,6 +102,11 @@ class BaseAppSettings(BaseSettings):
     def load_yaml_config(cls) -> Dict[str, Any]:
         """提供给外部使用的 YAML 加载方法"""
         return _load_yaml()
+
+    @classmethod
+    def load_yaml_config_strict_bool(cls) -> Dict[str, Any]:
+        """同一份 YAML，但不认 YAML 1.1 布尔别名（yes/on 等保留为字符串）；仅供 autofix 开关使用"""
+        return _load_yaml(StrictBoolSafeLoader)
 
     @classmethod
     def settings_customise_sources(

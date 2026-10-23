@@ -603,8 +603,9 @@ async def diagnose_k8s(
         # 透传显式HTTP错误
         raise he
     except (AIOpsException, DomainValidationError):
-        # 承接 SEC-26 s6：领域异常原样交给 api_response，按异常类型映射状态码并带 error_code
-        # （ValidationError→400、ServiceUnavailable→503、AutoFixError→502 ...），不再统一改写为 400 + str(e)
+        # 承接 SEC-26 s6 / 第二层审查 P3-3：领域异常原样交给 api_response，按异常类型映射状态码并带 error_code
+        # （ValidationError→400、AutoFixError→502、ServiceUnavailable→503 ...）；5xx 由错误处理器统一脱敏，
+        # 不再统一改写为 400 + str(e)
         raise
     except Exception as e:
         logger.exception(f"诊断失败 - 部署: {request.deployment}, 错误类型: {type(e).__name__}")
