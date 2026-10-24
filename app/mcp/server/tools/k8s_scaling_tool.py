@@ -96,17 +96,17 @@ class K8sScalingTool(K8sBaseTool):
             "required": ["operation"],
         }
 
-    def _create_api_clients(self) -> Dict[str, client.ApiClient]:
+    def _create_api_clients(self, api_client: client.ApiClient) -> Dict[str, Any]:
         """创建Kubernetes API客户端"""
         api_clients = {
-            "apps_v1": client.AppsV1Api(),
-            "autoscaling_v1": client.AutoscalingV1Api(),
+            "apps_v1": client.AppsV1Api(api_client),
+            "autoscaling_v1": client.AutoscalingV1Api(api_client),
             "autoscaling_v2": None,  # 会在需要时初始化
         }
 
         # 尝试初始化v2 API
         try:
-            api_clients["autoscaling_v2"] = client.AutoscalingV2Api()
+            api_clients["autoscaling_v2"] = client.AutoscalingV2Api(api_client)
         except Exception:
             pass  # v2 API可能不可用
 

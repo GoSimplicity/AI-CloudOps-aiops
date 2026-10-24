@@ -10,10 +10,9 @@ Description: Kubernetes资源管理工具
 """
 
 import asyncio
+import copy
 from datetime import datetime
 from functools import partial
-import os
-import threading
 from typing import Any, Dict
 
 from kubernetes import client
@@ -21,7 +20,7 @@ from kubernetes.client.rest import ApiException
 import yaml
 
 from .k8s_base_tool import K8sBaseTool
-from .yaml_apply import ApplyValidationError, BoundedDynamicClient, apply_yaml, safe_error_fields
+from .yaml_apply import BoundedDynamicClient, apply_yaml, safe_error_fields
 
 # SEC-33 P1-1：Secret 只返回 name、namespace、type、keys；data、stringData、annotations（含明文
 # last-applied-configuration）与 labels 一律不返回。门禁之外的第二层防护，绕过门禁直接调工具也生效。
@@ -81,8 +80,6 @@ class K8sResourceTool(K8sBaseTool):
     """k8s资源操作工具"""
 
     def __init__(self):
-        self._client_source_lock = threading.Lock()
-        self._client_source = None
         super().__init__(
             name="k8s_resource_operations",
             description="k8s资源操作工具，支持通用资源的describe、标签管理、注解管理和YAML应用功能",
@@ -161,28 +158,15 @@ class K8sResourceTool(K8sBaseTool):
             "required": ["operation"],
         }
 
-    def _initialize_clients(self, config_path=None):
-        if config_path == "":  # 空串与 None 一样表示默认 kubeconfig
-            config_path = None
-        if config_path is not None and (not isinstance(config_path, str) or not os.path.isfile(config_path)):
-            raise ApplyValidationError("显式kubeconfig必须是存在的文件，拒绝回退到其他集群")
-        source = os.path.realpath(config_path) if config_path is not None else "default"
-        with self._client_source_lock:
-            if self._api_clients and self._client_source != source:
-                raise ApplyValidationError("资源工具已绑定首次配置，不能在请求中切换集群")
-            clients = super()._initialize_clients(config_path)
-            self._client_source = source
-            return clients
-
-    def _create_api_clients(self) -> Dict[str, Any]:
+    def _create_api_clients(self, api_client: client.ApiClient) -> Dict[str, Any]:
         """创建Kubernetes API客户端"""
         # 初始化各种API客户端
         api_clients = {
-            "v1": client.CoreV1Api(),
-            "apps_v1": client.AppsV1Api(),
-            "networking_v1": client.NetworkingV1Api(),
-            "storage_v1": client.StorageV1Api(),
-            "api_client": self._apply_api_client(),
+            "v1": client.CoreV1Api(api_client),
+            "apps_v1": client.AppsV1Api(api_client),
+            "networking_v1": client.NetworkingV1Api(api_client),
+            "storage_v1": client.StorageV1Api(api_client),
+            "api_client": self._apply_api_client(api_client),
         }
 
         # 尝试初始化动态客户端
@@ -194,8 +178,9 @@ class K8sResourceTool(K8sBaseTool):
         return api_clients
 
     @staticmethod
-    def _apply_api_client():
-        configuration = client.Configuration.get_default_copy()
+    def _apply_api_client(api_client: client.ApiClient) -> client.ApiClient:
+        """apply 专用客户端：复制绑定来源的独立 Configuration（不读全局默认），PATCH 不做隐式重试"""
+        configuration = copy.deepcopy(api_client.configuration)
         configuration.retries = 0
         return client.ApiClient(configuration=configuration)
 

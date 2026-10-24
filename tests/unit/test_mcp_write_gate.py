@@ -279,7 +279,9 @@ async def test_unclassified_operation_is_treated_as_write(gates, server_with_moc
     params = {"namespace": "staging"} if op is None else {"operation": op, "namespace": "staging"}
     with pytest.raises(FeatureDisabledError) as denied:
         await server.execute_tool("k8s_pod_management", params)
-    assert denied.value.error_code == write_gate.MCP_WRITE_DISABLED
+    # SEC-33 L2 P3-3：非字符串 operation 在分类前按 MCP_INVALID_OPERATION 拒绝；缺省与未知字符串仍按写拒绝
+    expected = write_gate.MCP_INVALID_OPERATION if op is not None and not isinstance(op, str) else write_gate.MCP_WRITE_DISABLED
+    assert denied.value.error_code == expected
     init.assert_not_called()
     assert api.mock_calls == []
 
@@ -753,15 +755,19 @@ def test_resource_tool_empty_config_path_initializes_default_clients(monkeypatch
     from app.mcp.server.tools import k8s_resource_tool
     from app.mcp.server.tools.k8s_base_tool import K8sBaseTool
 
-    base_init = Mock(return_value={"v1": Mock()})
-    monkeypatch.setattr(K8sBaseTool, "_initialize_clients", base_init)
-    tool = k8s_resource_tool.K8sResourceTool.__new__(k8s_resource_tool.K8sResourceTool)
-    tool._api_clients = None
-    tool._client_source = None
-    tool._client_source_lock = __import__("threading").Lock()
-    tool._initialize_clients(value)
-    base_init.assert_called_once_with(None)
-    assert tool._client_source == "default"
+    new_api_client = Mock(return_value=Mock(name="api-client"))
+    # SEC-33 L2 P1-1：绑定逻辑在 K8sBaseTool，只替换最底层的 kubeconfig 加载
+    monkeypatch.setattr(K8sBaseTool, "_new_api_client", new_api_client)
+    monkeypatch.setattr(k8s_resource_tool.K8sResourceTool, "_create_api_clients", lambda self, api_client: {"v1": api_client})
+    tool = k8s_resource_tool.K8sResourceTool()
+    try:
+        tool._initialize_clients(value)
+    finally:
+        tool._executor.shutdown(wait=True)
+    new_api_client.assert_called_once_with(None)
+    # SEC-46：默认来源客户端单独保存，自定义来源缓存为空
+    assert tool._api_clients == {"v1": new_api_client.return_value}
+    assert tool._custom_clients == {}
 
 
 ALL_NS_VALUES = [True, "true", 1, None, "false"]

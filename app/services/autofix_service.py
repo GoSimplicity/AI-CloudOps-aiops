@@ -45,7 +45,7 @@ from ..core.autofix.policy import (  # noqa: F401  ensure_repair_enabled / REPAI
 )
 from ..core.interfaces.k8s_client import K8sClient
 from ..core.interfaces.llm_client import NullLLMClient
-from .base import BaseService
+from .base import BaseService, error_brief
 from .workflow_approvals import CONFIRM_ENDPOINT, WorkflowApproval, WorkflowApprovals
 
 # SEC-26 P3-e：diagnose 原样上抛的已脱敏领域异常（ServiceUnavailableError 单独处理：去掉 details 后上抛）
@@ -676,7 +676,8 @@ class AutoFixService(BaseService):
                             )
                             logs[pod_info["name"]] = pod_logs
                         except Exception as e:
-                            self.logger.exception(f"获取Pod日志失败 - Pod: {pod_info['name']}, 错误类型: {type(e).__name__}")
+                            self.logger.error(f"获取Pod日志失败 - Pod: {pod_info['name']}, {error_brief(e.__cause__ or e.__context__ or e)}")
+                            self.logger.debug("获取Pod日志失败详情", exc_info=True)
                             logs[pod_info["name"]] = "获取日志失败"
 
                     diagnosis_result["diagnosis"]["logs"] = logs
@@ -701,15 +702,17 @@ class AutoFixService(BaseService):
             # execute_with_timeout 已把上游超时 / 不可用统一包装为 ServiceUnavailableError（details 可能含 str(e)），
             # 这里只保留类型与状态（503 SERVICE_UNAVAILABLE），重新构造不带 details 的异常
             cause = e.__cause__ or e.__context__
-            self.logger.exception(
-                f"诊断Kubernetes问题失败: 上游不可用, 错误类型: {type(cause or e).__name__}"
-            )
+            # SEC-33 L2 P3-1：ERROR 只记类型与状态（不带堆栈，堆栈的异常链含原始文本）；原始信息只进 DEBUG
+            self.logger.error(f"诊断Kubernetes问题失败: 上游不可用, {error_brief(cause or e)}")
+            self.logger.debug("诊断Kubernetes问题失败详情", exc_info=True)
             raise ServiceUnavailableError(self.service_name) from e
         except _DIAGNOSE_UPSTREAM_ERRORS as e:
-            self.logger.exception(f"诊断Kubernetes问题失败: 上游不可用, 错误类型: {type(e).__name__}")
+            self.logger.error(f"诊断Kubernetes问题失败: 上游不可用, {error_brief(e)}")
+            self.logger.debug("诊断Kubernetes问题失败详情", exc_info=True)
             raise ServiceUnavailableError(self.service_name) from e
         except Exception as e:
-            self.logger.exception(f"诊断Kubernetes问题失败, 错误类型: {type(e).__name__}")
+            self.logger.error(f"诊断Kubernetes问题失败, {error_brief(e)}")
+            self.logger.debug("诊断Kubernetes问题失败详情", exc_info=True)
             raise AutoFixInternalError("诊断失败") from e
 
     async def get_autofix_config(self) -> Dict[str, Any]:

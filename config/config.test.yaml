@@ -18,6 +18,7 @@ llm:
   temperature: 0.7
 mcp:
   health_check_interval: 30
+  kubeconfig_allowed_dir: ''
   max_retries: 3
   secret_read_enabled: false
   server_url: http://localhost:9000

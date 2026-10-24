@@ -19,6 +19,13 @@ from app.common.constants import ServiceConstants
 from app.common.exceptions import ServiceUnavailableError
 
 
+def error_brief(error: BaseException) -> str:
+    """日志用的异常摘要：只含异常类型与（整数）status，不含异常文本"""
+    status = getattr(error, "status", None)
+    status = status if isinstance(status, int) and not isinstance(status, bool) else None
+    return f"错误类型={type(error).__name__}, status={status}"
+
+
 class BaseService(ABC):
     """业务服务基类"""
 
@@ -131,9 +138,9 @@ class BaseService(ABC):
                 details={"error": f"操作 {operation_name} 超时", "timeout": timeout},
             )
         except Exception as e:
-            self.logger.error(
-                f"服务 {self.service_name} 执行 {operation_name} 失败: {str(e)}"
-            )
+            # SEC-33 L2 P3-1：ERROR 只记操作名、异常类型与状态；原始异常文本可能含凭据/集群地址，只进 DEBUG
+            self.logger.error(f"服务 {self.service_name} 执行 {operation_name} 失败: {error_brief(e)}")
+            self.logger.debug(f"服务 {self.service_name} 执行 {operation_name} 失败详情", exc_info=True)
             raise ServiceUnavailableError(
                 service_name=self.service_name,
                 details={"error": str(e), "operation": operation_name},

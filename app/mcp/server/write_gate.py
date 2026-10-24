@@ -33,6 +33,7 @@ MCP_NAMESPACE_NOT_ALLOWED = "MCP_NAMESPACE_NOT_ALLOWED"
 MCP_CLUSTER_SCOPED_DENIED = "MCP_CLUSTER_SCOPED_DENIED"
 MCP_CONFIG_PATH_DENIED = "MCP_CONFIG_PATH_DENIED"
 MCP_SECRET_READ_DISABLED = "MCP_SECRET_READ_DISABLED"
+MCP_INVALID_OPERATION = "MCP_INVALID_OPERATION"
 
 ERROR_CODES = (
     MCP_WRITE_DISABLED,
@@ -40,6 +41,7 @@ ERROR_CODES = (
     MCP_CLUSTER_SCOPED_DENIED,
     MCP_CONFIG_PATH_DENIED,
     MCP_SECRET_READ_DISABLED,
+    MCP_INVALID_OPERATION,
 )
 
 WRITE_DISABLED_MESSAGE = "MCP 写工具已关闭（mcp.write_tools_enabled / MCP_WRITE_TOOLS_ENABLED 默认 false），未执行任何操作"
@@ -47,6 +49,7 @@ REPAIR_DISABLED_MESSAGE = "MCP 写工具要求 autofix.repair_enabled=true，当
 NAMESPACE_DENIED_MESSAGE = "目标命名空间不在 autofix.allowed_namespaces 白名单内、属于受限命名空间或无法确定，未执行任何操作"
 CLUSTER_SCOPED_MESSAGE = "MCP 不允许集群级写操作（如创建/删除/修改 Namespace、修改 Node），未执行任何操作"
 CONFIG_PATH_DENIED_MESSAGE = "MCP 写操作和 Secret 读取不允许指定 config_path（切换 kubeconfig），未执行任何操作"
+INVALID_OPERATION_MESSAGE = "MCP 工具参数 operation 必须是字符串，未执行任何操作"
 SECRET_READ_DISABLED_MESSAGE = "MCP Secret 读取已关闭（mcp.secret_read_enabled / MCP_SECRET_READ_ENABLED 默认 false），未执行任何操作"
 
 # 整个工具只读（无 operation 参数）
@@ -153,7 +156,7 @@ def _is_cluster_scoped_kind(kind: Any) -> bool:
 
 @dataclass(frozen=True)
 class GateDecision:
-    """门禁分类结果：kind ∈ {read, secret_read, write, cluster}；namespaces 为 None 表示无法确定（fail-closed）"""
+    """门禁分类结果：kind ∈ {read, secret_read, write, cluster, invalid}；namespaces 为 None 表示无法确定（fail-closed）"""
 
     kind: str
     namespaces: Optional[List[str]] = field(default=None)
@@ -199,6 +202,9 @@ def classify(tool_name: str, parameters: Mapping[str, Any]) -> GateDecision:
     if not isinstance(parameters, Mapping):
         return GateDecision("write", None)
     operation = _operation(parameters)
+    if "operation" in parameters and not isinstance(operation, str):
+        # SEC-33 L2 P3-3：先做类型检查，避免 list/dict 等不可哈希值在集合成员判断时抛 TypeError
+        return GateDecision("invalid")
     read_ops = READ_OPERATIONS.get(tool_name, frozenset())
     if isinstance(operation, str) and operation in read_ops:
         return GateDecision("read")
@@ -271,6 +277,8 @@ def enforce_write_gate(tool_name: str, parameters: Mapping[str, Any]) -> None:
     from app.config.settings import config
 
     decision = classify(tool_name, parameters)
+    if decision.kind == "invalid":
+        raise _deny(tool_name, INVALID_OPERATION_MESSAGE, "mcp.operation", MCP_INVALID_OPERATION)
     if decision.kind == "read":
         return
     if decision.kind == "secret_read":
