@@ -1396,8 +1396,8 @@ class AnswerGenerator:
         """MD响应后处理"""
         response = self._ensure_code_block_formatting(response)
         response = self._ensure_list_formatting(response)
-        if not response.startswith("#"):
-            response = self._add_structure_headers(response, docs)
+        # 不再根据检索文档的元数据给回答强加"## 配置和代码示例"等标题：
+        # 这些标题与用户问题和回答内容无关，几乎所有文档都包含"config"子串，导致大多数回答开头被误加标题。
         return response
 
     def _ensure_code_block_formatting(self, text: str) -> str:
@@ -1416,23 +1416,6 @@ class AnswerGenerator:
         text = re.sub(r"([^\n])\n(\d+\. )", r"\1\n\n\2", text)
         text = re.sub(r"([^\n])\n(- )", r"\1\n\n\2", text)
         return text
-
-    def _add_structure_headers(self, response: str, docs: List[Document]) -> str:
-        """添加结构化标题"""
-        has_code = any(doc.metadata.get("has_code", False) for doc in docs)
-        has_config = any(
-            "配置" in doc.page_content or "config" in doc.page_content.lower()
-            for doc in docs
-        )
-
-        if has_code and has_config:
-            return f"## 配置和代码示例\n\n{response}"
-        elif has_code:
-            return f"## 代码示例\n\n{response}"
-        elif has_config:
-            return f"## 配置说明\n\n{response}"
-        else:
-            return response
 
     def _prepare_enhanced_context(
         self, docs: List[Document], context: Optional[Dict], is_md_content: bool = False

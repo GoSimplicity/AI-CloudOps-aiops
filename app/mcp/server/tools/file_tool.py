@@ -15,11 +15,15 @@ import stat as stat_mode
 from typing import Any, Dict, Tuple
 
 from app.utils.file_boundary import (
+    HardLinkError,
+    NoFollowUnsupportedError,
     PathChangedError,
     display_path,
     file_root,
+    is_single_link,
     open_in_root,
     resolve_tool_path,
+    stat_in_root,
     validated_identity,
 )
 
@@ -34,6 +38,10 @@ def _failure(prefix: str, raw: Any, resolved: Any, error: Exception) -> FileTool
     shown = display_path(raw, resolved)
     if isinstance(error, FileToolError):
         return FileToolError(f"{prefix}: {error}")
+    if isinstance(error, HardLinkError):
+        return FileToolError(f"{prefix}: {error}（{shown}）")
+    if isinstance(error, NoFollowUnsupportedError):
+        return FileToolError(f"{prefix}: {error}（{shown}）")
     if isinstance(error, PathChangedError):
         return FileToolError(f"{prefix}: 路径在校验后发生变化（可能被替换为符号链接），已拒绝（{shown}）")
     if isinstance(error, ValueError) and str(error) == "Path is outside MCP_FILE_ROOT":
@@ -59,6 +67,19 @@ def _entry_stat_at(dir_fd: int, dir_path: str, name: str) -> Tuple[str, os.stat_
         finally:
             os.close(target_fd)
     return ("directory" if stat_mode.S_ISDIR(info.st_mode) else "file"), info
+
+
+def _stats_result(shown: str, info: os.stat_result, is_dir: bool) -> Dict[str, Any]:
+    return {
+        "path": shown,
+        "exists": True,
+        "type": "directory" if is_dir else "file",
+        "size_bytes": info.st_size,
+        "modified_time": info.st_mtime,
+        "created_time": info.st_ctime,
+        "access_time": info.st_atime,
+        "permissions": oct(info.st_mode)[-3:],
+    }
 
 
 class FileReadTool(BaseTool):
@@ -192,7 +213,8 @@ class FileListTool(BaseTool):
                             "name": item,
                             "type": item_type,
                             # root 外的符号链接 size 记 0（lstat 的 size 是目标路径长度），mtime 为链接自身
-                            "size_bytes": info.st_size if item_type == "file" else 0,
+                            # SEC-33 L3 P3-B：多硬链接的普通文件不展示大小
+                            "size_bytes": info.st_size if item_type == "file" and is_single_link(info) else 0,
                             "modified_time": info.st_mtime,
                         }
                     )
@@ -238,21 +260,16 @@ class FileStatsTool(BaseTool):
             if not os.path.exists(path):
                 raise FileToolError(f"路径不存在: {shown}")
 
-            fd = open_in_root(path, validated_identity(path))
+            identity = validated_identity(path)
+            is_dir = stat_mode.S_ISDIR(identity.st_mode)
+            if not is_dir:
+                # SEC-33 L3 P3-b：非目录不打开目标本身，经父目录 fd + follow_symlinks=False 取 stat 并比对 dev/ino
+                return _stats_result(shown, stat_in_root(path, identity), False)
+
+            fd = open_in_root(path, identity, directory=True)
             try:
                 stat = os.fstat(fd)
-                is_dir = stat_mode.S_ISDIR(stat.st_mode)
-
-                result = {
-                    "path": shown,
-                    "exists": True,
-                    "type": "directory" if is_dir else "file",
-                    "size_bytes": stat.st_size,
-                    "modified_time": stat.st_mtime,
-                    "created_time": stat.st_ctime,
-                    "access_time": stat.st_atime,
-                    "permissions": oct(stat.st_mode)[-3:],
-                }
+                result = _stats_result(shown, stat, True)
 
                 if is_dir:
                     total_files = 0
@@ -265,7 +282,8 @@ class FileStatsTool(BaseTool):
                                 item_type, info = _entry_stat_at(root_fd, os.path.join(path, root), file)
                             except OSError:
                                 continue
-                            if item_type == "file":  # root 外的符号链接不计入，避免泄露目标大小
+                            # root 外的符号链接与多硬链接普通文件不计入，避免泄露目标大小
+                            if item_type == "file" and is_single_link(info):
                                 total_size += info.st_size
 
                     result.update(

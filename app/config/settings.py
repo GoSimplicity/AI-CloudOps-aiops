@@ -633,6 +633,16 @@ class MCPConfig:
             "MCP_SECRET_READ_ENABLED", "mcp.secret_read_enabled"
         )
     )
+    # SEC-46：K8s 读工具 config_path 只允许指向该目录内的 kubeconfig；默认空 = 禁用自定义 config_path。
+    # 目录按 realpath 校验，与 data/ 或知识库目录重叠视为无效；含 exec/auth-provider 的 kubeconfig 一律拒绝
+    kubeconfig_allowed_dir: str = field(
+        default_factory=lambda: str(
+            get_env_or_config(
+                "MCP_KUBECONFIG_ALLOWED_DIR", "mcp.kubeconfig_allowed_dir", ""
+            )
+            or ""
+        ).strip()
+    )
 
 
 @dataclass

@@ -391,6 +391,7 @@ POST /api/v1/rca/analyze
 
 ### 🛠️ **软件依赖**
 - **Python**: 3.11+
+- **gitleaks**: 8.25.0+（提交前密钥扫描；运行 `bash scripts/setup-git-hooks.sh` 启用钩子，版本过低或无法解析时脚本与 pre-commit 钩子都会失败）
 - **Docker**: 20.10+
 - **Docker Compose**: 2.0+
 - **Redis**: 7.0+

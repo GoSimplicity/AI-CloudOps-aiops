@@ -765,7 +765,9 @@ def test_resource_tool_empty_config_path_initializes_default_clients(monkeypatch
     finally:
         tool._executor.shutdown(wait=True)
     new_api_client.assert_called_once_with(None)
-    assert tool._client_source == "default"
+    # SEC-46：默认来源客户端单独保存，自定义来源缓存为空
+    assert tool._api_clients == {"v1": new_api_client.return_value}
+    assert tool._custom_clients == {}
 
 
 ALL_NS_VALUES = [True, "true", 1, None, "false"]
