@@ -22,4 +22,4 @@
 .venv/bin/python scripts/integration/autofix_kind_smoke.py --execute --kubeconfig /tmp/cloudops-kind-kubeconfig --result /tmp/new-autofix-result.json
 ```
 
-只接受kind-cloudops-release的HTTPS回环配置，拒绝exec/auth-provider及不安全TLS，并核验本机Docker kind节点标签、6443回环端口对应；BusyBox使用imagePullPolicy Never，需预加载busybox:1.37.0。缺少--execute、结果文件已存在或配置指向外部地址均在写入前拒绝。持久化工具本次也已实际运行通过并确认namespace清理，不默认接入CI的真实集群写入
+该脚本直接构造修复引擎并显式传入 `auto_execute=True` 与自建 namespace 白名单（SEC-26 后服务默认只出计划），仅用于隔离kind验收。只接受kind-cloudops-release的HTTPS回环配置，拒绝exec/auth-provider及不安全TLS，并核验本机Docker kind节点标签、6443回环端口对应；BusyBox使用imagePullPolicy Never，需预加载busybox:1.37.0。缺少--execute、结果文件已存在或配置指向外部地址均在写入前拒绝。持久化工具本次也已实际运行通过并确认namespace清理，不默认接入CI的真实集群写入

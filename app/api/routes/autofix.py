@@ -26,8 +26,9 @@ from app.common.constants import (
 from app.common.exceptions import (
     AIOpsException,
     AutoFixError,
+    FeatureDisabledError,
+    NamespaceNotAllowedError,
     RequestTimeoutError,
-    ResourceNotFoundError,
     ServiceUnavailableError,
     ValidationError as DomainValidationError,
     WorkflowApprovalError,
@@ -41,7 +42,12 @@ from app.models import (
     ServiceConfigResponse,
     ServiceInfoResponse,
 )
-from app.services.autofix_service import AutoFixService
+from app.services.autofix_service import (
+    AutoFixService,
+    ensure_bootstrap_enabled,
+    ensure_bootstrap_namespace_allowed,
+    ensure_repair_enabled,
+)
 from app.services.factory import ServiceFactory
 from app.services.notification import NotificationService
 
@@ -92,8 +98,9 @@ async def autofix_ready() -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"自动修复就绪检查失败: {str(e)}")
-        raise ServiceUnavailableError("autofix", {"error": str(e)})
+        # 响应不携带异常内容；完整堆栈只进服务端日志
+        logger.exception(f"自动修复就绪检查失败, 错误类型: {type(e).__name__}")
+        raise ServiceUnavailableError("autofix") from e
 
 
 @router.post(
@@ -337,7 +344,13 @@ async def autofix_k8s(
     ),
     background_tasks: BackgroundTasks = None,
 ) -> Dict[str, Any]:
-    """执行Kubernetes自动修复"""
+    """Kubernetes自动修复兼容入口。
+
+    SEC-26：默认关闭（autofix.repair_enabled=false，返回403）。开启后不再直接修改集群，
+    只生成与 /workflow 相同的待确认计划，执行必须走 /workflow/confirm 并受 allowed_namespaces 限制。
+    """
+    # 开关检查先于服务初始化，关闭时不会接触 Kubernetes 客户端
+    ensure_repair_enabled()
     try:
         # 提前校验deployment格式，避免后续抛出404
         invalid_chars = "!@#$%^&*()+=[]{}|;:'\",<>?"
@@ -345,39 +358,17 @@ async def autofix_k8s(
             raise HTTPException(
                 status_code=HttpStatusCodes.BAD_REQUEST, detail="deployment名称无效"
             )
-        await asyncio.wait_for(
-            (await get_autofix_service()).initialize(),
-            timeout=ServiceConstants.DEFAULT_WARMUP_TIMEOUT,
+        _service = await get_autofix_service()
+        fix_result = await asyncio.wait_for(
+            _service.fix_kubernetes_deployment(
+                deployment=request.deployment,
+                namespace=request.namespace,
+                force_fix=request.force,
+                dry_run=False,
+                event=request.event,
+            ),
+            timeout=ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT,
         )
-
-        try:
-            # 透传事件上下文及可选容器/等待配置给服务层，增强规则判断
-            _service = await get_autofix_service()
-            setattr(_service, "_last_event_hint", request.event)
-            # 这些属性仅用于本次请求，不影响后续请求
-            try:
-                if hasattr(_service, "_target_container"):
-                    delattr(_service, "_target_container")
-                if hasattr(_service, "_wait_rollout"):
-                    delattr(_service, "_wait_rollout")
-            except Exception:
-                pass
-            if getattr(request, "container", None):
-                setattr(_service, "_target_container", request.container)
-            setattr(_service, "_wait_rollout", getattr(request, "wait_rollout", True))
-
-            fix_result = await asyncio.wait_for(
-                _service.fix_kubernetes_deployment(
-                    deployment=request.deployment,
-                    namespace=request.namespace,
-                    force_fix=request.force,
-                    dry_run=False,
-                ),
-                timeout=ServiceConstants.AUTOFIX_WORKFLOW_TIMEOUT,
-            )
-        except ResourceNotFoundError as rnfe:
-            # 映射资源不存在为 404
-            raise HTTPException(status_code=HttpStatusCodes.NOT_FOUND, detail=str(rnfe))
 
         if request.auto_restart and fix_result.get("success", False):
             try:
@@ -391,13 +382,19 @@ async def autofix_k8s(
             except Exception as e:
                 logger.warning(f"添加通知任务失败: {str(e)}")
 
-        # 与测试预期对齐
+        approval = fix_result.get("approval") or {}
         data = {
-            "status": fix_result.get("status", "completed"),
+            "status": fix_result.get("status", "planned"),
+            "next_action": fix_result.get("next_action"),
             "deployment": request.deployment,
             "namespace": request.namespace,
             "success": fix_result.get("success", False),
             "actions_taken": fix_result.get("actions_taken", []),
+            "plan_id": (fix_result.get("plan") or {}).get("plan_id"),
+            "approval": approval,
+            "candidate_actions": fix_result.get("candidate_actions", []),
+            "blocked_actions": fix_result.get("blocked_actions", []),
+            "review": fix_result.get("review", {}),
             "timestamp": datetime.now().isoformat(),
             "execution_time": fix_result.get("execution_time", 0.0),
         }
@@ -412,8 +409,9 @@ async def autofix_k8s(
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"自动修复失败 - 部署: {request.deployment}, 错误: {str(e)}")
-        raise AutoFixError(f"修复操作失败: {str(e)}")
+        # 响应不拼接 str(e)；服务端用 logger.exception 保留完整异常堆栈（只附部署名与异常类型，不记录请求头/配置）
+        logger.exception(f"自动修复失败 - 部署: {request.deployment}, 错误类型: {type(e).__name__}")
+        raise AutoFixError("修复操作失败")
 
 
 @router.post(
@@ -424,7 +422,13 @@ async def autofix_k8s(
 @api_response("创建测试命名空间及故障资源")
 @log_api_call(log_request=False)
 async def bootstrap_faulty_resources() -> Dict[str, Any]:
-    """创建 test 命名空间并应用预置的故障清单，用于自愈演示"""
+    """创建 test 命名空间并应用预置的故障清单，用于自愈演示（默认关闭，返回403）
+
+    SEC-26：开启后 test 仍须在 autofix.allowed_namespaces 内且非受限命名空间，否则 403
+    （AUTOFIX_NAMESPACE_NOT_ALLOWED）；两项检查都先于服务初始化，拒绝时不会接触 Kubernetes。
+    """
+    ensure_bootstrap_enabled()
+    ensure_bootstrap_namespace_allowed()
     try:
         await (await get_autofix_service()).initialize()
         result = await (await get_autofix_service()).bootstrap_test_resources()
@@ -434,8 +438,11 @@ async def bootstrap_faulty_resources() -> Dict[str, Any]:
             "applied": result.get("applied", []),
             "timestamp": datetime.now().isoformat(),
         }
+    except (FeatureDisabledError, NamespaceNotAllowedError):
+        raise
     except Exception as e:
-        raise AutoFixError(f"引导故障资源失败: {str(e)}")
+        logger.exception(f"引导故障资源失败, 错误类型: {type(e).__name__}")
+        raise AutoFixError("引导故障资源失败") from e
 
 
 @router.post(
@@ -572,12 +579,13 @@ async def diagnose_k8s(
     except HTTPException as he:
         # 透传显式HTTP错误
         raise he
-    except (AIOpsException, DomainValidationError) as e:
-        # 统一将领域校验错误映射为400
-        raise HTTPException(status_code=HttpStatusCodes.BAD_REQUEST, detail=str(e))
+    except (AIOpsException, DomainValidationError):
+        # SEC-26 第二层审查 P3-3：交给 api_response 统一映射（ValidationError→400，AutoFixError→502，
+        # ServiceUnavailable→503 等）；5xx 响应由错误处理器统一脱敏，不再把 str(e) 直接拼进 400 响应
+        raise
     except Exception as e:
-        logger.error(f"诊断失败 - 部署: {request.deployment}, 错误: {str(e)}")
-        raise AutoFixError(f"诊断操作失败: {str(e)}")
+        logger.exception(f"诊断失败 - 部署: {request.deployment}, 错误类型: {type(e).__name__}")
+        raise AutoFixError("诊断操作失败") from e
 
 
 @router.get(

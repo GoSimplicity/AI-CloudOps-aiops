@@ -15,22 +15,50 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime
 import logging
-import time
 from typing import Any, Dict, List, Optional
 
 from ..common.constants import ServiceConstants
-from ..common.exceptions import AutoFixError, ResourceNotFoundError, ValidationError, WorkflowApprovalError
+from ..common.exceptions import AutoFixError, FeatureDisabledError, ValidationError, WorkflowApprovalError
 from ..common.identity import require_principal
+from ..config.settings import config
 from ..core.agents.k8s_fixer import K8sFixerAgent
 from ..core.agents.ops_workflow import OpsMultiAgentWorkflow
 from ..core.agents.supervisor import SupervisorAgent
 from ..core.autofix import AutoFixRemediationEngine
+from ..core.autofix.policy import (  # noqa: F401  ensure_repair_enabled / REPAIR_DISABLED_MESSAGE 保持从本模块导出
+    REPAIR_DISABLED_MESSAGE,
+    build_namespace_policy,
+    ensure_namespace_allowed,
+    ensure_repair_enabled,
+)
 from ..core.interfaces.k8s_client import K8sClient
 from ..core.interfaces.llm_client import NullLLMClient
 from .base import BaseService
-from .workflow_approvals import WorkflowApproval, WorkflowApprovals
+from .workflow_approvals import CONFIRM_ENDPOINT, WorkflowApproval, WorkflowApprovals
 
 logger = logging.getLogger("aiops.services.autofix")
+
+BOOTSTRAP_DISABLED_MESSAGE = "测试资源引导入口 /autofix/bootstrap 已关闭（autofix.bootstrap_enabled / AUTOFIX_BOOTSTRAP_ENABLED=false）"
+# /autofix/bootstrap 创建故障演示资源的目标命名空间
+BOOTSTRAP_NAMESPACE = "test"
+
+
+def ensure_bootstrap_enabled() -> None:
+    if not config.autofix.bootstrap_enabled:
+        raise FeatureDisabledError(BOOTSTRAP_DISABLED_MESSAGE, switch="autofix.bootstrap_enabled")
+
+
+def ensure_bootstrap_namespace_allowed() -> None:
+    """bootstrap 开启后仍要求 test 命名空间在 allowed_namespaces 内且非受限命名空间。
+
+    复用 run/confirm 的同一判定（AutoFixRemediationEngine._namespace_allowed + 相同配置注入），
+    只构造策略对象、不传 k8s 客户端，因此拒绝时不会初始化 Kubernetes 或创建任何资源。
+    """
+    ensure_namespace_allowed(
+        BOOTSTRAP_NAMESPACE,
+        subject="测试资源引导入口 /autofix/bootstrap 已开启",
+        outcome="已拒绝创建测试资源",
+    )
 
 
 class AutoFixService(BaseService):
@@ -64,6 +92,11 @@ class AutoFixService(BaseService):
             if not nested and task is not None:
                 self._active_operations.pop(task, None)
 
+    @staticmethod
+    def _build_remediation_engine(k8s_client: Any) -> AutoFixRemediationEngine:
+        """按 autofix 配置构造执行引擎：白名单为空即 fail-closed，默认不自动执行"""
+        return build_namespace_policy(k8s_client)
+
     async def initialize(self) -> None:
         if self._closing:
             raise WorkflowApprovalError(503, "自动修复服务已关闭")
@@ -88,16 +121,17 @@ class AutoFixService(BaseService):
             self._supervisor = SupervisorAgent(llm_client=llm_client)
             self.logger.info("监督代理初始化完成")
 
-            self._remediation_engine = AutoFixRemediationEngine(k8s_client=k8s_client)
+            self._remediation_engine = self._build_remediation_engine(k8s_client)
             self._ops_workflow = OpsMultiAgentWorkflow(
                 remediation_engine=self._remediation_engine,
                 llm_client=llm_client,
+                auto_execute=bool(config.autofix.auto_execute_enabled),
             )
             self.logger.info("自动修复执行引擎和多智能体工作流初始化完成")
 
         except Exception as e:
-            self.logger.error(f"自动修复服务组件初始化失败: {str(e)}")
-            raise AutoFixError(f"初始化失败: {str(e)}")
+            self.logger.exception(f"自动修复服务组件初始化失败, 错误类型: {type(e).__name__}")
+            raise AutoFixError("初始化失败") from e
 
     async def _do_health_check(self) -> bool:
         try:
@@ -122,7 +156,7 @@ class AutoFixService(BaseService):
         async with self._operation():
             return await self._execute_owned_workflow(request)
 
-    async def _execute_owned_workflow(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_owned_workflow(self, request: Dict[str, Any], *, plan_only: bool = False) -> Dict[str, Any]:
         require_principal()
         if not isinstance(request, dict) or not isinstance(request.get("problem_description"), str) or not request["problem_description"].strip():
             raise ValidationError("problem_description", "问题描述不能为空")
@@ -135,7 +169,10 @@ class AutoFixService(BaseService):
         try:
             # 工作流内部可能执行低风险动作，异常后不能假定没有副作用
             reservation.effects_started = True
-            result = await self._run_multi_agent_workflow(request)
+            result = await self._run_multi_agent_workflow(request, plan_only=plan_only)
+            if plan_only and (result.get("executed_actions") or (result.get("execution") or {}).get("executed_actions")):
+                # 防御：plan_only 调用绝不允许出现执行记录；一旦出现按结果不确定处理（下方 except 记为 uncertain 并返回 409）
+                raise AutoFixError("只出计划的调用出现了执行记录")
             if result.get("status") == "failed" or (result.get("execution") or {}).get("status") == "failed":
                 raise WorkflowApprovalError(409, "工作流执行失败，可能已产生副作用，禁止盲目重试，请人工核对")
             self._approvals.publish(reservation, result)
@@ -148,8 +185,11 @@ class AutoFixService(BaseService):
             self._approvals.fail(reservation, reason)
             raise WorkflowApprovalError(409, reason) from error
 
-    async def _run_multi_agent_workflow(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """执行基于LangGraph的多智能体自动修复工作流。"""
+    async def _run_multi_agent_workflow(self, request: Dict[str, Any], *, plan_only: bool = False) -> Dict[str, Any]:
+        """执行基于LangGraph的多智能体自动修复工作流。
+
+        ``plan_only=True`` 只作用于本次调用（随工作流状态传递），不修改共享的 ``self._ops_workflow``。
+        """
         self._ensure_initialized()
 
         problem_description = (request or {}).get("problem_description")
@@ -160,9 +200,7 @@ class AutoFixService(BaseService):
             if self._remediation_engine is None:
                 if not self._k8s_fixer:
                     raise AutoFixError("自动修复执行引擎未初始化")
-                self._remediation_engine = AutoFixRemediationEngine(
-                    k8s_client=self._k8s_fixer.k8s_service
-                )
+                self._remediation_engine = self._build_remediation_engine(self._k8s_fixer.k8s_service)
             llm_client = (
                 self._k8s_fixer.llm_service
                 if self._k8s_fixer and getattr(self._k8s_fixer, "llm_service", None)
@@ -171,6 +209,7 @@ class AutoFixService(BaseService):
             self._ops_workflow = OpsMultiAgentWorkflow(
                 remediation_engine=self._remediation_engine,
                 llm_client=llm_client,
+                auto_execute=bool(config.autofix.auto_execute_enabled),
             )
 
         workflow_input = {
@@ -180,7 +219,7 @@ class AutoFixService(BaseService):
             "event": request.get("event", problem_description),
             "diagnosis": request.get("diagnosis", {}),
         }
-        result = await self._ops_workflow.run(workflow_input)
+        result = await self._ops_workflow.run(workflow_input, plan_only=plan_only)
         result["workflow_engine"] = "langgraph"
         result["workflow_nodes"] = [
             "Coordinator",
@@ -228,14 +267,15 @@ class AutoFixService(BaseService):
         if self._remediation_engine is None:
             if not self._k8s_fixer:
                 raise AutoFixError("自动修复执行引擎未初始化")
-            self._remediation_engine = AutoFixRemediationEngine(
-                k8s_client=self._k8s_fixer.k8s_service
-            )
+            self._remediation_engine = self._build_remediation_engine(self._k8s_fixer.k8s_service)
 
         diagnosis = deepcopy(workflow_result.get("diagnosis") or {})
         if not diagnosis:
             raise ValidationError("plan_id", "工作流结果缺少诊断上下文")
 
+        if isinstance(self._remediation_engine, AutoFixRemediationEngine):
+            # 确认时按当前配置重新读取白名单：计划生成后被收紧的命名空间在重新校验中即被拒绝（403）
+            self._remediation_engine.allowed_namespaces = build_namespace_policy().allowed_namespaces
         current_plan = await self._remediation_engine.build_plan(diagnosis)
         plan = deepcopy(workflow_result.get("plan") or {})
         if any(current_plan.get(key) != plan.get(key) for key in ("namespace", "deployment")):
@@ -250,7 +290,8 @@ class AutoFixService(BaseService):
                 raise WorkflowApprovalError(409, "原计划动作或目标参数已变化，请重新生成计划")
             risk = current.get("risk_assessment") or {}
             if any(risk.get(key) is not True for key in ("namespace_allowed", "permission_allowed", "resource_exists")):
-                raise WorkflowApprovalError(409, "当前资源、权限或命名空间限制未通过，审批不能覆盖，请重新诊断")
+                # SEC-26 P3-2：确认时重新校验未通过属于授权/策略拒绝，返回 403（审批不能覆盖）
+                raise WorkflowApprovalError(403, "当前资源、权限或命名空间限制未通过，审批不能覆盖，请重新诊断")
 
         review = deepcopy(workflow_result.get("review") or {})
         previous_executed_actions = deepcopy(workflow_result.get("executed_actions") or [])
@@ -326,11 +367,28 @@ class AutoFixService(BaseService):
         plan["allowed_actions"] = allowed_actions + approved_actions
         plan["blocked_actions"] = remaining_blocked_actions
 
+        if isinstance(self._remediation_engine, AutoFixRemediationEngine):
+            # SEC-26 第一层审查附加条件 P3-1：置 effects_started 前先做执行引擎同一道命名空间硬校验；
+            # 被拒绝时尚未调用任何执行接口，审批记录应进入 invalidated（而非 uncertain）。
+            # 预检与下面 execute_plan 内的校验之间没有 await，读到的是同一份白名单。
+            refused = self._remediation_engine._namespace_refusal(plan.get("namespace", "default"), plan["allowed_actions"])
+            if refused:
+                raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
+
         record.effects_started = True
         execution = await self._remediation_engine.execute_plan(plan)
         current_executed_actions = execution.get("executed_actions", [])
         executed_ids = [action.get("action_id") for action in current_executed_actions]
+        if execution.get("status") == "blocked" and not current_executed_actions:
+            # SEC-26 P3-2：执行前重新校验（命名空间白名单/受限命名空间）未通过，未执行任何动作 → 403
+            not_attempted_ids = {action.get("action_id") for action in execution.get("not_attempted_actions") or []}
+            if execution.get("post_check") is None and set(normalized_action_ids) <= not_attempted_ids:
+                # 执行器在任何写操作之前拒绝（无已执行动作、无事后检查、选中动作全部未尝试）：
+                # 可确认尚未产生副作用，回退 effects_started，使审批记录进入 invalidated
+                record.effects_started = False
+            raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
         if set(executed_ids) != set(normalized_action_ids) or len(executed_ids) != len(normalized_action_ids) or any(action.get("status") != "succeeded" for action in current_executed_actions):
+            # 已进入执行且未全部成功：可能已有副作用，保持 409（冲突/需人工核对），不归为授权拒绝
             raise WorkflowApprovalError(409, "执行记录未确认所有选中动作成功，可能已产生副作用，不能重试原计划，请人工核对")
         cumulative_executed_actions = previous_executed_actions + current_executed_actions
         execution_payload = deepcopy(execution)
@@ -377,6 +435,8 @@ class AutoFixService(BaseService):
         review.update(
             {
                 "approved": review_approved,
+                # SEC-26 第二层审查 P3-1：按剩余待确认动作重算，全部确认后不再要求确认
+                "confirmation_required": remaining_blocked_count > 0,
                 "reason": review_reason,
                 "approved_action_ids": list(
                     dict.fromkeys(previous_approved_action_ids + normalized_action_ids)
@@ -411,204 +471,64 @@ class AutoFixService(BaseService):
         }
         return response
 
-    async def fix_kubernetes_deployment(self, deployment: str, namespace: str = "default", force_fix: bool = False, dry_run: bool = False) -> Dict[str, Any]:
-        async with self._operation():
-            return await self._fix_kubernetes_deployment(deployment, namespace, force_fix, dry_run)
-
-    async def _fix_kubernetes_deployment(
+    async def fix_kubernetes_deployment(
         self,
         deployment: str,
         namespace: str = "default",
         force_fix: bool = False,
         dry_run: bool = False,
+        event: str = "",
     ) -> Dict[str, Any]:
-        """修复K8s部署问题"""
-        require_principal()
-        self._ensure_initialized()
+        """/autofix/repair 兼容入口：默认关闭；开启后只生成计划并走与 run 相同的确认与白名单链路
 
-        # 验证输入参数
-        self._validate_k8s_params(deployment, namespace)
-
-        try:
-            # 获取部署信息
-            deployment_info = await self.execute_with_timeout(
-                lambda: self._k8s_fixer.k8s_service.get_deployment(
-                    deployment, namespace
-                ),
-                timeout=ServiceConstants.AUTOFIX_K8S_TIMEOUT,
-                operation_name="get_deployment",
+        SEC-26：旧实现绕过风险评估直接 patch（含硬编码回退镜像、force 激进规则），已删除。
+        ``dry_run`` 仅为签名兼容保留——本入口本身不执行任何写操作。
+        SEC-26 第二层审查 P2-1：固定以 plan_only=True 调用工作流，即使 autofix.auto_execute_enabled
+        为 true 也不会免确认执行；只作用于本次调用，不改共享工作流实例，与并发的 /autofix/run 互不影响。
+        """
+        async with self._operation():
+            ensure_repair_enabled()
+            if force_fix:
+                raise ValidationError("force", "force 修复已停用：所有动作必须经 /workflow/confirm 显式确认，不能绕过风险评估")
+            self._validate_k8s_params(deployment, namespace)
+            problem = (event or "").strip() or f"修复 Deployment {deployment}"
+            result = await self._execute_owned_workflow(
+                {
+                    "problem_description": problem,
+                    "deployment": deployment,
+                    "namespace": namespace,
+                    "event": problem,
+                },
+                plan_only=True,
             )
-
-            if not deployment_info:
-                raise ResourceNotFoundError(
-                    "Deployment", f"{deployment} (namespace: {namespace})"
-                )
-
-            # 执行修复操作（统一走K8sFixer，结合event_hint决定是否强制修复策略）
-            event_hint = (getattr(self, "_last_event_hint", "") or "").lower()
-
-            # 优先快速路径：显式的镜像拉取失败提示，直接应用回退镜像
-            try:
-                if any(
-                    k in event_hint
-                    for k in [
-                        "imagepullbackoff",
-                        "errimagepull",
-                        "image pull",
-                        "failed to pull image",
-                    ]
-                ):
-                    containers = (
-                        deployment_info.get("spec", {})
-                        .get("template", {})
-                        .get("spec", {})
-                        .get("containers", [])
-                        or []
-                    )
-                    # 选择目标容器：优先使用请求传入，其次第一个容器
-                    requested_container = getattr(self, "_target_container", None)
-                    if requested_container and any(
-                        c.get("name") == requested_container for c in containers
-                    ):
-                        target_container_name = requested_container
-                    else:
-                        target_container_name = (
-                            containers[0].get("name", deployment)
-                            if containers
-                            else deployment
-                        )
-
-                    fallback_image = "nginx:1.21.6"
-
-                    # 若当前镜像已为回退镜像，则无需patch
-                    current_image = None
-                    for c in containers:
-                        if c.get("name") == target_container_name:
-                            current_image = c.get("image")
-                            break
-
-                    need_patch = current_image != fallback_image
-                    patched = False
-
-                    start_ts = time.time()
-
-                    if need_patch:
-                        patch = {
-                            "spec": {
-                                "template": {
-                                    "spec": {
-                                        "containers": [
-                                            {
-                                                "name": target_container_name,
-                                                "image": fallback_image,
-                                                "imagePullPolicy": "IfNotPresent",
-                                            }
-                                        ]
-                                    }
-                                }
-                            }
-                        }
-
-                        patched = await self._k8s_fixer.k8s_service.patch_deployment(
-                            deployment, patch, namespace
-                        )
-
-                    # 可选等待rollout完成，确保可用性
-                    should_wait = bool(getattr(self, "_wait_rollout", True))
-                    if should_wait:
-                        rollout_timeout = min(
-                            ServiceConstants.AUTOFIX_DEFAULT_TIMEOUT, 120
-                        )
-                        rollout = await self._k8s_fixer.k8s_service.wait_for_deployment_rollout(
-                            deployment, namespace, timeout_seconds=rollout_timeout
-                        )
-                    else:
-                        rollout = {"ready": True, "skipped": True}
-
-                    success = bool(rollout.get("ready"))
-                    elapsed = round(time.time() - start_ts, 3)
-
-                    actions = []
-                    if need_patch and patched:
-                        actions.extend(
-                            [
-                                f"更新镜像为 {fallback_image}",
-                                "设置 imagePullPolicy=IfNotPresent",
-                            ]
-                        )
-                    elif not need_patch:
-                        actions.append("镜像已为回退版本，无需更新")
-
-                    if should_wait and not success:
-                        if isinstance(rollout, dict) and "error" in rollout:
-                            actions.append(f"rollout检查失败: {rollout.get('error')}")
-                        else:
-                            actions.append("等待rollout超时")
-
-                    msg = (
-                        f"镜像为 {fallback_image}，部署已就绪"
-                        if success
-                        else f"镜像为 {fallback_image}，部署未在超时内就绪"
-                    )
-
-                    return self._wrap_fix_result(
-                        {
-                            "fixed": success,
-                            "message": msg,
-                            "actions_taken": actions,
-                            "success": success,
-                            "status": "completed" if success else "degraded",
-                            "rollout": rollout,
-                            "execution_time": elapsed,
-                        },
-                        deployment,
-                        namespace,
-                        "k8s_fixer",
-                        dry_run,
-                    )
-            except Exception as quick_e:
-                # 快速路径失败则继续走常规分析修复
-                self.logger.warning(f"快速镜像回退路径失败，将尝试通用修复: {quick_e}")
-
-            # 常规路径：将提示拼入错误描述，触发更激进的规则
-            if force_fix or any(
-                k in event_hint
-                for k in ["crashloop", "imagepull", "oom", "probe", "unhealthy"]
-            ):
-                error_desc = event_hint or ""
-            else:
-                error_desc = ""
-
-            fix_result = await self.execute_with_timeout(
-                lambda: self._k8s_fixer.analyze_and_fix_deployment(
-                    deployment, namespace, error_desc
-                ),
-                timeout=ServiceConstants.AUTOFIX_ANALYSIS_TIMEOUT,
-                operation_name="k8s_fix_analysis",
+            executed = result.get("executed_actions") or []
+            result.update(
+                {
+                    "deployment": deployment,
+                    "namespace": namespace,
+                    "dry_run": dry_run,
+                    "success": result.get("status") == "completed" and bool(executed),
+                    "actions_taken": [str(action.get("action_type") or action.get("action_id")) for action in executed],
+                }
             )
-
-            return self._wrap_fix_result(
-                fix_result, deployment, namespace, "k8s_fixer", dry_run
-            )
-
-        except Exception as e:
-            self.logger.error(f"修复Kubernetes部署失败: {str(e)}")
-            if isinstance(e, (ValidationError, ResourceNotFoundError, AutoFixError)):
-                raise e
-            raise AutoFixError(f"修复失败: {str(e)}")
+            return result
 
     async def bootstrap_test_resources(self) -> Dict[str, Any]:
         async with self._operation():
             return await self._bootstrap_test_resources()
 
     async def _bootstrap_test_resources(self) -> Dict[str, Any]:
-        """在test命名空间创建用于自愈演示的故障资源"""
+        """在test命名空间创建用于自愈演示的故障资源（默认关闭；开启后 test 仍须在 allowed_namespaces 内）"""
         require_principal()
+        ensure_bootstrap_enabled()
+        # 白名单校验先于初始化检查与任何 Kubernetes 调用
+        ensure_bootstrap_namespace_allowed()
         self._ensure_initialized()
+        namespace = BOOTSTRAP_NAMESPACE
         try:
             k8s = self._k8s_fixer.k8s_service
             # 确保命名空间存在
-            await k8s.ensure_namespace("test")
+            await k8s.ensure_namespace(namespace)
 
             results = []
             manifests = [
@@ -616,15 +536,16 @@ class AutoFixService(BaseService):
                 "deploy/test-additional-problems.yaml",
             ]
             for m in manifests:
-                results.append(await k8s.apply_yaml_file(m, namespace="test"))
+                results.append(await k8s.apply_yaml_file(m, namespace=namespace))
 
             return {
                 "success": all(r.get("success") for r in results),
                 "applied": results,
-                "namespace": "test",
+                "namespace": namespace,
             }
         except Exception as e:
-            raise AutoFixError(f"引导测试资源失败: {str(e)}")
+            self.logger.exception(f"引导测试资源失败, 错误类型: {type(e).__name__}")
+            raise AutoFixError("引导测试资源失败") from e
 
     async def diagnose_kubernetes_issues(self, deployment: Optional[str] = None, namespace: str = "default", include_pods: bool = True, include_logs: bool = False, include_events: bool = True) -> Dict[str, Any]:
         async with self._operation():
@@ -688,7 +609,8 @@ class AutoFixService(BaseService):
                             )
                             logs[pod_info["name"]] = pod_logs
                         except Exception as e:
-                            logs[pod_info["name"]] = f"获取日志失败: {str(e)}"
+                            self.logger.exception(f"获取Pod日志失败 - Pod: {pod_info['name']}, 错误类型: {type(e).__name__}")
+                            logs[pod_info["name"]] = "获取日志失败"
 
                     diagnosis_result["diagnosis"]["logs"] = logs
 
@@ -706,16 +628,22 @@ class AutoFixService(BaseService):
             return diagnosis_result
 
         except Exception as e:
-            self.logger.error(f"诊断Kubernetes问题失败: {str(e)}")
             if isinstance(e, (ValidationError, AutoFixError)):
+                self.logger.error(f"诊断Kubernetes问题失败: {e.message}")
                 raise e
-            raise AutoFixError(f"诊断失败: {str(e)}")
+            self.logger.exception(f"诊断Kubernetes问题失败, 错误类型: {type(e).__name__}")
+            raise AutoFixError("诊断失败") from e
 
     async def get_autofix_config(self) -> Dict[str, Any]:
         """获取自动修复配置信息"""
-        from ..config.settings import config
-
         config_info = {
+            "execution_policy": {
+                "auto_execute_enabled": bool(config.autofix.auto_execute_enabled),
+                "allowed_namespaces": list(config.autofix.allowed_namespaces or []),
+                "repair_enabled": bool(config.autofix.repair_enabled),
+                "bootstrap_enabled": bool(config.autofix.bootstrap_enabled),
+                "confirm_endpoint": CONFIRM_ENDPOINT,
+            },
             "k8s_config": {
                 "namespace_default": "default",
                 "timeout": ServiceConstants.AUTOFIX_K8S_TIMEOUT,
@@ -746,7 +674,7 @@ class AutoFixService(BaseService):
             "fix_strategies": [
                 "restart_deployment",
                 "scale_deployment",
-                "update_image",
+                "patch_image_pull_policy",
                 "fix_configuration",
                 "resource_adjustment",
                 "risk_assessment",
@@ -832,11 +760,11 @@ class AutoFixService(BaseService):
             return health_status
 
         except Exception as e:
-            self.logger.error(f"获取自动修复服务健康信息失败: {str(e)}")
+            self.logger.exception(f"获取自动修复服务健康信息失败, 错误类型: {type(e).__name__}")
             return {
                 "service": "autofix",
                 "status": ServiceConstants.STATUS_UNHEALTHY,
-                "error": str(e),
+                "error": "获取健康信息失败",
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -859,46 +787,6 @@ class AutoFixService(BaseService):
                 "namespace",
                 f"命名空间长度不能超过 {ServiceConstants.AUTOFIX_MAX_NAME_LENGTH} 字符",
             )
-
-    def _wrap_fix_result(
-        self,
-        fix_result: Any,
-        deployment: str,
-        namespace: str,
-        agent_type: str,
-        dry_run: bool = False,
-    ) -> Dict[str, Any]:
-        """包装修复结果"""
-        if isinstance(fix_result, dict):
-            wrapped_result = fix_result.copy()
-        else:
-            wrapped_result = {"result": str(fix_result)}
-
-        # 添加元数据
-        wrapped_result.update(
-            {
-                "deployment": deployment,
-                "namespace": namespace,
-                "agent_type": agent_type,
-                "dry_run": dry_run,
-                "timestamp": datetime.now().isoformat(),
-                "success": wrapped_result.get(
-                    "success", bool(wrapped_result.get("fixed", True))
-                ),
-            }
-        )
-
-        # 确保包含必要字段
-        if "actions_taken" not in wrapped_result:
-            # 尽量从 message 中提取操作；若无则为空
-            wrapped_result["actions_taken"] = wrapped_result.get("actions", []) or []
-
-        if "status" not in wrapped_result:
-            wrapped_result["status"] = (
-                "completed" if wrapped_result["success"] else "failed"
-            )
-
-        return wrapped_result
 
     async def cleanup(self) -> None:
         """清理自动修复服务资源"""

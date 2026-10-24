@@ -62,7 +62,8 @@ def deployment(name: str = "api", replicas: int = 1) -> Dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_crashloop_diagnosis_generates_restart_action_with_risk_assessment() -> None:
-    engine = AutoFixRemediationEngine(k8s_client=FakeK8sClient(deployment()))
+    # 旧行为需显式开启 auto_execute 且配置白名单
+    engine = AutoFixRemediationEngine(k8s_client=FakeK8sClient(deployment()), allowed_namespaces=["default"], auto_execute=True)
 
     plan = await engine.build_plan(
         {
@@ -86,7 +87,7 @@ async def test_crashloop_diagnosis_generates_restart_action_with_risk_assessment
 @pytest.mark.asyncio
 async def test_high_risk_multi_replica_restart_is_blocked_from_execution() -> None:
     fake_k8s = FakeK8sClient(deployment(replicas=3))
-    engine = AutoFixRemediationEngine(k8s_client=fake_k8s)
+    engine = AutoFixRemediationEngine(k8s_client=fake_k8s, allowed_namespaces=["default"], auto_execute=True)
 
     result = await engine.plan_and_execute(
         {
@@ -107,7 +108,7 @@ async def test_high_risk_multi_replica_restart_is_blocked_from_execution() -> No
 @pytest.mark.asyncio
 async def test_image_pull_failure_executes_safe_image_pull_policy_patch_and_records_rollout() -> None:
     fake_k8s = FakeK8sClient(deployment())
-    engine = AutoFixRemediationEngine(k8s_client=fake_k8s)
+    engine = AutoFixRemediationEngine(k8s_client=fake_k8s, allowed_namespaces=["default"], auto_execute=True)
 
     result = await engine.plan_and_execute(
         {

@@ -43,6 +43,26 @@ class WorkflowApprovalError(AIOpsException):
         self.status_code = status_code
 
 
+class FeatureDisabledError(AIOpsException):
+    """功能被配置开关关闭（默认关闭的高风险入口）"""
+
+    def __init__(self, message: str, switch: str, status_code: int = 403) -> None:
+        super().__init__(message=message, error_code="AUTOFIX_FEATURE_DISABLED", details={"switch": switch})
+        self.status_code = status_code
+
+
+class NamespaceNotAllowedError(AIOpsException):
+    """目标命名空间不在 autofix.allowed_namespaces 白名单内或属于受限命名空间"""
+
+    def __init__(self, message: str, namespace: str, status_code: int = 403) -> None:
+        super().__init__(
+            message=message,
+            error_code="AUTOFIX_NAMESPACE_NOT_ALLOWED",
+            details={"namespace": namespace, "switch": "autofix.allowed_namespaces"},
+        )
+        self.status_code = status_code
+
+
 class ServiceUnavailableError(AIOpsException):
     """服务不可用异常"""
 

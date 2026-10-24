@@ -17,7 +17,9 @@ from typing import Any, Dict, List, Optional
 import requests
 import yaml
 
+from app.common.exceptions import AIOpsException
 from app.config.settings import config
+from app.core.autofix.policy import ensure_mutation_allowed
 from app.core.interfaces.k8s_client import K8sClient, NullK8sClient
 from app.core.interfaces.llm_client import LLMClient, NullLLMClient
 from app.utils.workload_context import model_workload_context
@@ -126,6 +128,8 @@ class K8sFixerAgent:
         self, deployment_name: str, namespace: str, error_description: str
     ) -> str:
         """分析并修复Kubernetes Deployment问题"""
+        # SEC-26 写入口门禁：开关关闭或命名空间不允许时不读取、不修改任何集群资源
+        ensure_mutation_allowed(namespace, "analyze_and_fix_deployment")
         try:
             logger.info(f"开始分析和修复Deployment: {deployment_name}")
 
@@ -375,6 +379,9 @@ class K8sFixerAgent:
 
                 return fix_result
 
+            except AIOpsException:
+                # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
+                raise
             except Exception as e:
                 logger.error(f"分析或执行修复时出错: {str(e)}")
                 # 如果是nginx相关部署，尝试执行默认修复
@@ -394,6 +401,9 @@ class K8sFixerAgent:
                     )["message"]
                 return f"分析或执行修复失败: {str(e)}"
 
+        except AIOpsException:
+            # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
+            raise
         except Exception as e:
             logger.error(f"分析和修复Deployment失败: {str(e)}")
             return f"修复失败: {str(e)}"
@@ -409,6 +419,10 @@ class K8sFixerAgent:
         force_fix: bool = False,
     ) -> Dict[str, Any]:
         """识别并修复常见的Kubernetes问题"""
+        ensure_mutation_allowed(
+            deployment.get("metadata", {}).get("namespace", "default"),
+            "_identify_and_fix_common_issues",
+        )
         try:
             deployment_name = deployment.get("metadata", {}).get("name", "unknown")
             namespace = deployment.get("metadata", {}).get("namespace", "default")
@@ -542,6 +556,7 @@ class K8sFixerAgent:
                     container_patch["name"] = main_container.get("name", "nginx")
 
                     # 应用修补
+                    ensure_mutation_allowed(namespace, "patch_deployment")
                     patch_result = await self.k8s_service.patch_deployment(
                         deployment_name, patch, namespace
                     )
@@ -686,20 +701,10 @@ class K8sFixerAgent:
                 ):
                     has_image_pull_issue = True
 
-            # 镜像拉取失败时，回退到通用可用镜像
+            # SEC-26：镜像拉取失败只记录问题，不再替换为任何硬编码镜像；
+            # 目标镜像必须由人工确定，拉取策略调整走 /workflow 计划与确认链路
             if has_image_pull_issue:
-                # 使用用户提供的稳定镜像作为回退镜像
-                fallback_image = "nginx:1.21.6"
-                current_image = main_container.get("image")
-                if current_image != fallback_image:
-                    issues_found.append("镜像拉取失败")
-                    container_patch["image"] = fallback_image
-                    fixes_applied.append(
-                        f"将镜像从 {current_image} 回退为 {fallback_image}"
-                    )
-                    # 降低拉取策略，避免频繁拉取
-                    container_patch["imagePullPolicy"] = "IfNotPresent"
-                    need_to_patch = True
+                issues_found.append("镜像拉取失败（需人工确认目标镜像，不自动替换）")
 
             # OOMKilled 时提高内存限制
             if "OOMKilled" in pod_issues:
@@ -907,6 +912,7 @@ class K8sFixerAgent:
                 container_patch["name"] = main_container.get("name", "nginx")
 
                 # 应用修补
+                ensure_mutation_allowed(namespace, "patch_deployment")
                 patch_result = await self.k8s_service.patch_deployment(
                     deployment_name, patch, namespace
                 )
@@ -946,6 +952,9 @@ class K8sFixerAgent:
                         "actions_taken": [],
                     }
 
+        except AIOpsException:
+            # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
+            raise
         except Exception as e:
             logger.error(f"识别和修复常见问题失败: {str(e)}")
             return {"fixed": False, "message": f"修复失败: {str(e)}"}
@@ -954,6 +963,7 @@ class K8sFixerAgent:
         self, deployment_name: str, namespace: str, analysis: Dict[str, Any]
     ) -> str:
         """执行修复操作"""
+        ensure_mutation_allowed(namespace, "_execute_fix")
         try:
             actions_taken = []
 
@@ -1004,6 +1014,7 @@ class K8sFixerAgent:
                         )
 
                 # 应用补丁
+                ensure_mutation_allowed(namespace, "patch_deployment")
                 success = await self.k8s_service.patch_deployment(
                     deployment_name, resources_patch, namespace
                 )
@@ -1060,6 +1071,7 @@ class K8sFixerAgent:
                     )
 
                 # 应用补丁
+                ensure_mutation_allowed(namespace, "patch_deployment")
                 success = await self.k8s_service.patch_deployment(
                     deployment_name, probe_patch, namespace
                 )
@@ -1074,6 +1086,7 @@ class K8sFixerAgent:
                 logger.info("执行重启操作")
 
                 # 执行重启
+                ensure_mutation_allowed(namespace, "restart_deployment")
                 success = await self.k8s_service.restart_deployment(
                     deployment_name, namespace
                 )
@@ -1111,6 +1124,9 @@ class K8sFixerAgent:
 
             return result
 
+        except AIOpsException:
+            # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
+            raise
         except Exception as e:
             logger.error(f"执行修复操作失败: {str(e)}")
             return f"执行修复操作失败: {str(e)}"
@@ -1119,6 +1135,7 @@ class K8sFixerAgent:
         self, deployment_name: str, namespace: str, action: str
     ) -> str:
         """执行额外的修复操作"""
+        ensure_mutation_allowed(namespace, "_execute_additional_action")
         try:
             if not action:
                 return ""
@@ -1130,6 +1147,7 @@ class K8sFixerAgent:
                 replicas_match = re.search(r"(\d+)", action)
                 if replicas_match:
                     replicas = int(replicas_match.group(1))
+                    ensure_mutation_allowed(namespace, "scale_deployment")
                     success = await self.k8s_service.scale_deployment(
                         deployment_name, replicas, namespace
                     )
@@ -1139,6 +1157,9 @@ class K8sFixerAgent:
 
             return f"执行额外操作: {action}"
 
+        except AIOpsException:
+            # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
+            raise
         except Exception as e:
             logger.error(f"执行额外操作失败: {str(e)}")
             return f"执行额外操作失败: {str(e)}"
@@ -1507,6 +1528,11 @@ class K8sFixerAgent:
         Returns:
             更新后的AgentState对象
         """
+        gate_context = getattr(state, "context", None) or {}
+        ensure_mutation_allowed(
+            gate_context.get("namespace", "default") if isinstance(gate_context, dict) else "",
+            "process_agent_state",
+        )
         try:
             from dataclasses import replace
 
@@ -1541,6 +1567,9 @@ class K8sFixerAgent:
                 fix_result = await self.analyze_and_fix_deployment(
                     deployment, namespace, problem
                 )
+            except AIOpsException:
+                # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
+                raise
             except Exception as fix_e:
                 logger.error(f"修复过程发生错误: {str(fix_e)}")
                 fix_result = f"修复过程发生错误: {str(fix_e)}"
@@ -1573,6 +1602,9 @@ class K8sFixerAgent:
             # 返回更新后的状态
             return replace(state, context=context)
 
+        except AIOpsException:
+            # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
+            raise
         except Exception as e:
             logger.error(f"K8sFixer处理状态失败: {str(e)}")
             # 确保context是一个字典

@@ -39,9 +39,9 @@ def pending_result():
 def service():
     service = AutoFixService()
     service._initialized = True
-    service._ops_workflow = SimpleNamespace(run=AsyncMock(side_effect=lambda _: deepcopy(pending_result())))
+    service._ops_workflow = SimpleNamespace(run=AsyncMock(side_effect=lambda _, **__: deepcopy(pending_result())))
     service._remediation_engine = SimpleNamespace(
-        build_plan=AsyncMock(side_effect=lambda _: deepcopy(pending_result()["plan"])),
+        build_plan=AsyncMock(side_effect=lambda _, **__: deepcopy(pending_result()["plan"])),
         execute_plan=AsyncMock(return_value={"status": "completed", "executed_actions": [{"action_id": ACTION, "status": "succeeded"}]}),
     )
     return service
@@ -190,7 +190,7 @@ def test_cold_http_confirmation_rejects_before_initialization(service, monkeypat
 async def test_human_cannot_override_stored_hard_restrictions(service, key):
     result = pending_result()
     result["plan"]["blocked_actions"][0]["risk_assessment"][key] = False
-    service._ops_workflow.run.side_effect = lambda _: deepcopy(result)
+    service._ops_workflow.run.side_effect = lambda _, **__: deepcopy(result)
     plan_id = await create_plan(service)
     with principal_scope("user:1"), pytest.raises(AIOpsException) as raised:
         await service.confirm_multi_agent_workflow(plan_id, [ACTION])
@@ -208,8 +208,34 @@ async def test_revalidation_hard_restrictions_stop_execution(service, key):
     service._remediation_engine.build_plan.return_value = result
     with principal_scope("user:1"), pytest.raises(AIOpsException) as raised:
         await service.confirm_multi_agent_workflow(plan_id, [ACTION])
-    assert raised.value.status_code == 409
+    # SEC-26 P3-2：确认时重新校验未通过属于策略拒绝，返回 403
+    assert raised.value.status_code == 403
+    assert raised.value.error_code == "WORKFLOW_APPROVAL_ERROR"
     service._remediation_engine.execute_plan.assert_not_awaited()
+
+
+async def test_execute_time_namespace_revalidation_failure_returns_403(service):
+    """SEC-26 P3-2：execute_plan 的执行前命名空间复核拒绝（status=blocked、未执行任何动作）→ 403"""
+    plan_id = await create_plan(service)
+    service._remediation_engine.execute_plan.return_value = {
+        "status": "blocked", "executed_actions": [], "not_attempted_actions": [{"action_id": ACTION}],
+        "error": "namespace refused",
+    }
+    with principal_scope("user:1"), pytest.raises(AIOpsException) as raised:
+        await service.confirm_multi_agent_workflow(plan_id, [ACTION])
+    assert raised.value.status_code == 403
+    assert raised.value.error_code == "WORKFLOW_APPROVAL_ERROR"
+
+
+async def test_partial_execution_failure_stays_409(service):
+    """已进入执行且有动作失败：可能已有副作用，仍是 409（不归为授权拒绝）"""
+    plan_id = await create_plan(service)
+    service._remediation_engine.execute_plan.return_value = {
+        "status": "failed", "executed_actions": [{"action_id": ACTION, "status": "failed"}],
+    }
+    with principal_scope("user:1"), pytest.raises(AIOpsException) as raised:
+        await service.confirm_multi_agent_workflow(plan_id, [ACTION])
+    assert raised.value.status_code == 409
 
 
 async def test_newly_generated_allowed_actions_are_not_implicitly_executed(service):
@@ -245,8 +271,8 @@ async def test_partial_confirmation_only_allows_remaining_original_actions(servi
     second["action_id"] = "second-action"
     original["plan"]["candidate_actions"].append(second)
     original["plan"]["blocked_actions"].append(second)
-    service._ops_workflow.run.side_effect = lambda _: deepcopy(original)
-    service._remediation_engine.build_plan.side_effect = lambda _: deepcopy(original["plan"])
+    service._ops_workflow.run.side_effect = lambda _, **__: deepcopy(original)
+    service._remediation_engine.build_plan.side_effect = lambda _, **__: deepcopy(original["plan"])
     service._remediation_engine.execute_plan.side_effect = lambda plan: {
         "status": "completed", "executed_actions": [{"action_id": action["action_id"], "status": "succeeded"} for action in plan["allowed_actions"]],
     }
@@ -354,7 +380,7 @@ async def test_concurrent_contexts_never_publish_another_owner_result(service):
     release = asyncio.Event()
     owners = []
 
-    async def run(_):
+    async def run(_, **__):
         nonlocal arrived
         before = require_principal()
         arrived += 1
@@ -419,7 +445,7 @@ async def test_legacy_cluster_entrypoints_require_principal_before_dependencies(
 async def test_oversized_plan_snapshot_is_not_retained(service):
     result = pending_result()
     result["diagnosis"]["oversized"] = "x" * (1024 * 1024)
-    service._ops_workflow.run.side_effect = lambda _: deepcopy(result)
+    service._ops_workflow.run.side_effect = lambda _, **__: deepcopy(result)
     with principal_scope("user:1"), pytest.raises(AIOpsException) as rejected:
         await service.execute_multi_agent_workflow({"problem_description": "offline"})
     assert rejected.value.status_code == 409
@@ -454,7 +480,7 @@ def test_http_confirmation_timeout_is_explicitly_uncertain_and_not_retryable(ser
 
     plan_id = asyncio.run(create_plan(service))
 
-    async def slow(_):
+    async def slow(_, **__):
         await asyncio.sleep(1)
         return {"status": "completed", "executed_actions": []}
 
@@ -474,7 +500,7 @@ def test_http_confirmation_timeout_is_explicitly_uncertain_and_not_retryable(ser
 def test_http_workflow_timeout_never_returns_retry_safe_generic_server_error(service, monkeypatch):
     from app.common.constants import ServiceConstants
 
-    async def slow(_):
+    async def slow(_, **__):
         await asyncio.sleep(1)
         return deepcopy(pending_result())
 
@@ -531,7 +557,7 @@ async def test_inflight_operation_limits_are_bounded_and_release_after_completio
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def run(_):
+    async def run(_, **__):
         nonlocal arrived
         arrived += 1
         if arrived == count:
@@ -557,7 +583,7 @@ async def test_inflight_operation_limits_are_bounded_and_release_after_completio
 def test_http_principal_ownership_and_duplicate_approval_statuses(service, monkeypatch):
     from app.common.identity import require_principal
 
-    async def run(_):
+    async def run(_, **__):
         result = deepcopy(pending_result())
         result["diagnosis"]["private_marker"] = require_principal() + "-private"
         return result
@@ -615,8 +641,8 @@ async def test_original_allowed_actions_wait_for_explicit_selection_in_a_blocked
     allowed["risk_assessment"]["requires_human_confirmation"] = False
     original["plan"]["candidate_actions"].append(allowed)
     original["plan"]["allowed_actions"].append(allowed)
-    service._ops_workflow.run.side_effect = lambda _: deepcopy(original)
-    service._remediation_engine.build_plan.side_effect = lambda _: deepcopy(original["plan"])
+    service._ops_workflow.run.side_effect = lambda _, **__: deepcopy(original)
+    service._remediation_engine.build_plan.side_effect = lambda _, **__: deepcopy(original["plan"])
     service._remediation_engine.execute_plan.side_effect = lambda plan: {"status": "completed", "executed_actions": [{"action_id": action["action_id"], "status": "succeeded"} for action in plan["allowed_actions"]]}
     with principal_scope("user:1"):
         result = await service.execute_multi_agent_workflow({"problem_description": "offline"})
@@ -675,7 +701,7 @@ async def test_missing_permission_probe_never_allows_automatic_execution():
 def test_nonfinite_model_metadata_is_rejected_before_http_response_serialization(service, monkeypatch, value):
     result = pending_result()
     result["review"]["ai_review"] = {"confidence": value}
-    service._ops_workflow.run.side_effect = lambda _: deepcopy(result)
+    service._ops_workflow.run.side_effect = lambda _, **__: deepcopy(result)
     with approval_http_client(service, monkeypatch) as client:
         response = client.post("/autofix/workflow", headers={"X-API-Key": KEY, "X-CloudOps-User-ID": "1"}, json={"problem_description": "offline"})
         assert response.status_code == 409
