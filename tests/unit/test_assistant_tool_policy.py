@@ -155,7 +155,10 @@ def test_query_and_stream_use_the_same_operation_policy(monkeypatch):
     native.client.execute_tool.assert_not_awaited()
 
 
-async def test_explicit_internal_mcp_dispatch_retains_existing_high_privilege_contract():
+async def test_explicit_internal_mcp_dispatch_is_gated_by_sec33_write_gate_by_default():
+    """SEC-33 之前内部直连 MCPServer 可以直接 scale；现在默认被写门禁拒绝且不触达 K8s"""
+    from app.common.exceptions import FeatureDisabledError
+
     tool = K8sDeploymentTool()
     deployment = SimpleNamespace(spec=SimpleNamespace(replicas=1))
     apps = Mock()
@@ -164,7 +167,32 @@ async def test_explicit_internal_mcp_dispatch_retains_existing_high_privilege_co
     server = MCPServer()
     await server.register_tool(tool)
     try:
-        result = await server.execute_tool(tool.name, {"operation": "scale", "deployment_name": "offline", "replicas": 0})
+        with pytest.raises(FeatureDisabledError) as denied:
+            await server.execute_tool(tool.name, {"operation": "scale", "deployment_name": "offline", "replicas": 0})
+        assert denied.value.error_code == "MCP_WRITE_DISABLED"
+        tool._initialize_clients.assert_not_called()
+        apps.patch_namespaced_deployment.assert_not_called()
+        assert deployment.spec.replicas == 1
+    finally:
+        await server.shutdown()
+
+
+async def test_explicit_internal_mcp_dispatch_keeps_contract_when_all_sec33_gates_open(monkeypatch):
+    """写开关 + repair_enabled + 命名空间白名单全部满足时，内部调用仍保持原有高权限契约"""
+    monkeypatch.setattr(config.mcp, "write_tools_enabled", True)
+    monkeypatch.setattr(config.autofix, "repair_enabled", True)
+    monkeypatch.setattr(config.autofix, "allowed_namespaces", ["staging"])
+    tool = K8sDeploymentTool()
+    deployment = SimpleNamespace(spec=SimpleNamespace(replicas=1))
+    apps = Mock()
+    apps.read_namespaced_deployment.return_value = deployment
+    tool._initialize_clients = Mock(return_value={"apps_v1": apps, "v1": Mock()})
+    server = MCPServer()
+    await server.register_tool(tool)
+    try:
+        result = await server.execute_tool(
+            tool.name, {"operation": "scale", "deployment_name": "offline", "replicas": 0, "namespace": "staging"}
+        )
         assert result["success"] is True
         apps.patch_namespaced_deployment.assert_called_once()
         assert deployment.spec.replicas == 0

@@ -11,6 +11,7 @@ from app.api.middleware.auth import setup_auth
 from app.api.middleware.error_handler import setup_error_handlers
 from app.api.routes import autofix
 from app.common.exceptions import AIOpsException, FeatureDisabledError
+from app.common.identity import principal_scope
 from app.config.settings import AutoFixConfig, config
 from app.services.autofix_service import AutoFixService
 from tests.unit.test_autofix_sec26_run_lockdown import assert_no_writes, make_service, mock_k8s
@@ -20,6 +21,13 @@ ROOT = Path(__file__).resolve().parents[2]
 # 拼接构造，避免本测试文件自身包含被禁止的镜像字面量
 FORBIDDEN_IMAGE = "nginx" + ":" + "1.21.6"
 REPAIR_BODY = {"deployment": "api", "namespace": "default", "event": "CrashLoopBackOff restarting failed container"}
+
+@pytest.fixture(autouse=True)
+def confirming_user():
+    """SEC-44 修正：确认路径需要可信用户主体；本模块的确认流程以 user:1 执行"""
+    with principal_scope("user:1"):
+        yield
+
 
 
 def make_app(monkeypatch, service) -> TestClient:

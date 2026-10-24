@@ -19,8 +19,10 @@ llm:
 mcp:
   health_check_interval: 30
   max_retries: 3
+  secret_read_enabled: false
   server_url: http://localhost:9000
   timeout: 30
+  write_tools_enabled: false
 notification:
   enabled: true
 prediction:

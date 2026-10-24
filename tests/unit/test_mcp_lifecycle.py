@@ -10,7 +10,14 @@ import pytest
 
 from app.config.settings import config
 from app.mcp import main
+from app.mcp.server import write_gate
 from app.mcp.server.mcp_server import MCPServer
+
+
+@pytest.fixture
+def offline_tool_is_read_only(monkeypatch):
+    """SEC-33 门禁把未归类工具按写处理；生命周期测试里的假工具 offline 显式登记为只读"""
+    monkeypatch.setattr(write_gate, "READ_ONLY_TOOLS", write_gate.READ_ONLY_TOOLS | {"offline"})
 
 
 @pytest.mark.parametrize("registration_failure", [False, True])
@@ -39,7 +46,7 @@ async def test_sse_aclose_cleans_registration_without_yielding(monkeypatch):
     assert id(request) not in main.active_sse_connections
 
 
-async def test_slow_tool_is_cancelled_before_timeout_returns(monkeypatch):
+async def test_slow_tool_is_cancelled_before_timeout_returns(monkeypatch, offline_tool_is_read_only):
     from app.mcp.server import mcp_server
 
     monkeypatch.setattr(config.mcp, "timeout", 0.01)
@@ -60,7 +67,7 @@ async def test_slow_tool_is_cancelled_before_timeout_returns(monkeypatch):
     assert cancelled.is_set()
 
 
-async def test_shutdown_cancels_running_tool_before_cleanup():
+async def test_shutdown_cancels_running_tool_before_cleanup(offline_tool_is_read_only):
     server = MCPServer()
     started = asyncio.Event()
     cancelled = asyncio.Event()
@@ -80,7 +87,14 @@ async def test_shutdown_cancels_running_tool_before_cleanup():
 
     await server.register_tool(SimpleNamespace(name="offline", execute=execute, cleanup=cleanup))
     task = asyncio.create_task(server.execute_tool("offline", {}))
-    await started.wait()
+    # 有界等待：工具若在开始前就失败（例如被门禁拒绝），这里应快速失败而不是无限挂起
+    waiter = asyncio.ensure_future(started.wait())
+    await asyncio.wait({waiter, task}, timeout=5, return_when=asyncio.FIRST_COMPLETED)
+    if not started.is_set():
+        waiter.cancel()
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        pytest.fail(f"tool never started: {task.exception() if task.done() else 'timeout'!r}")
     try:
         await server.shutdown()
         assert task.done()

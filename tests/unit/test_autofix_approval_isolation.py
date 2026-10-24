@@ -43,6 +43,7 @@ def service():
     service._remediation_engine = SimpleNamespace(
         build_plan=AsyncMock(side_effect=lambda _, **__: deepcopy(pending_result()["plan"])),
         execute_plan=AsyncMock(return_value={"status": "completed", "executed_actions": [{"action_id": ACTION, "status": "succeeded"}]}),
+        namespace_refusal=lambda namespace, actions: None,
     )
     return service
 
@@ -74,7 +75,7 @@ async def test_concurrent_confirmation_claims_once_before_any_execution(service)
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def execute(_):
+    async def execute(_, **__):
         entered.set()
         await release.wait()
         return {"status": "completed", "executed_actions": [{"action_id": ACTION, "status": "succeeded"}]}
@@ -112,7 +113,7 @@ async def test_cancelled_execution_consumes_the_claim(service):
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def execute(_):
+    async def execute(_, **__):
         entered.set()
         await release.wait()
         return {"status": "completed", "executed_actions": []}
@@ -199,8 +200,11 @@ async def test_human_cannot_override_stored_hard_restrictions(service, key):
     service._remediation_engine.execute_plan.assert_not_awaited()
 
 
-@pytest.mark.parametrize("key", ["namespace_allowed", "permission_allowed", "resource_exists"])
-async def test_revalidation_hard_restrictions_stop_execution(service, key):
+@pytest.mark.parametrize(
+    ("key", "status"),
+    [("namespace_allowed", 403), ("permission_allowed", 403), ("resource_exists", 409)],
+)
+async def test_revalidation_hard_restrictions_stop_execution(service, key, status):
     plan_id = await create_plan(service)
     result = pending_result()["plan"]
     result["candidate_actions"][0]["risk_assessment"][key] = False
@@ -208,8 +212,9 @@ async def test_revalidation_hard_restrictions_stop_execution(service, key):
     service._remediation_engine.build_plan.return_value = result
     with principal_scope("user:1"), pytest.raises(AIOpsException) as raised:
         await service.confirm_multi_agent_workflow(plan_id, [ACTION])
-    # SEC-26 P3-2：确认时重新校验未通过属于策略拒绝，返回 403
-    assert raised.value.status_code == 403
+    # SEC-26 P3-2：命名空间/权限重新校验未通过属于策略拒绝 → 403；
+    # 承接 SEC-26 P3-6：资源已不存在属于状态冲突 → 409
+    assert raised.value.status_code == status
     assert raised.value.error_code == "WORKFLOW_APPROVAL_ERROR"
     service._remediation_engine.execute_plan.assert_not_awaited()
 
@@ -252,6 +257,8 @@ async def test_newly_generated_allowed_actions_are_not_implicitly_executed(servi
         await service.confirm_multi_agent_workflow(plan_id, [ACTION])
     execution_plan = service._remediation_engine.execute_plan.call_args.args[0]
     assert [action["action_id"] for action in execution_plan["allowed_actions"]] == [ACTION]
+    # SEC-44：确认后执行显式标记为 confirm 触发（不按自动执行条件校验，仍过写门禁与审计）
+    assert service._remediation_engine.execute_plan.call_args.kwargs == {"trigger": "confirm"}
 
 
 async def test_reported_execution_failure_consumes_approval_even_with_remaining_actions(service):
@@ -273,7 +280,7 @@ async def test_partial_confirmation_only_allows_remaining_original_actions(servi
     original["plan"]["blocked_actions"].append(second)
     service._ops_workflow.run.side_effect = lambda _, **__: deepcopy(original)
     service._remediation_engine.build_plan.side_effect = lambda _, **__: deepcopy(original["plan"])
-    service._remediation_engine.execute_plan.side_effect = lambda plan: {
+    service._remediation_engine.execute_plan.side_effect = lambda plan, **__: {
         "status": "completed", "executed_actions": [{"action_id": action["action_id"], "status": "succeeded"} for action in plan["allowed_actions"]],
     }
     plan_id = await create_plan(service)
@@ -519,7 +526,7 @@ async def test_cleanup_cancels_and_waits_for_confirmation_before_discarding_stat
     entered = asyncio.Event()
     cancelled = asyncio.Event()
 
-    async def execution(_):
+    async def execution(_, **__):
         entered.set()
         try:
             await asyncio.Event().wait()
@@ -643,7 +650,7 @@ async def test_original_allowed_actions_wait_for_explicit_selection_in_a_blocked
     original["plan"]["allowed_actions"].append(allowed)
     service._ops_workflow.run.side_effect = lambda _, **__: deepcopy(original)
     service._remediation_engine.build_plan.side_effect = lambda _, **__: deepcopy(original["plan"])
-    service._remediation_engine.execute_plan.side_effect = lambda plan: {"status": "completed", "executed_actions": [{"action_id": action["action_id"], "status": "succeeded"} for action in plan["allowed_actions"]]}
+    service._remediation_engine.execute_plan.side_effect = lambda plan, **__: {"status": "completed", "executed_actions": [{"action_id": action["action_id"], "status": "succeeded"} for action in plan["allowed_actions"]]}
     with principal_scope("user:1"):
         result = await service.execute_multi_agent_workflow({"problem_description": "offline"})
         plan_id = result["plan"]["plan_id"]

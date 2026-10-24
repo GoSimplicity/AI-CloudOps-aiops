@@ -17,8 +17,20 @@ from datetime import datetime
 import logging
 from typing import Any, Dict, List, Optional
 
+from kubernetes.client.rest import ApiException
+import urllib3
+
 from ..common.constants import ServiceConstants
-from ..common.exceptions import AutoFixError, FeatureDisabledError, ValidationError, WorkflowApprovalError
+from ..common.exceptions import (
+    AutoFixError,
+    AutoFixInternalError,
+    FeatureDisabledError,
+    NamespaceNotAllowedError,
+    RequestTimeoutError,
+    ServiceUnavailableError,
+    ValidationError,
+    WorkflowApprovalError,
+)
 from ..common.identity import require_principal
 from ..config.settings import config
 from ..core.agents.k8s_fixer import K8sFixerAgent
@@ -35,6 +47,19 @@ from ..core.interfaces.k8s_client import K8sClient
 from ..core.interfaces.llm_client import NullLLMClient
 from .base import BaseService
 from .workflow_approvals import CONFIRM_ENDPOINT, WorkflowApproval, WorkflowApprovals
+
+# SEC-26 P3-e：diagnose 原样上抛的已脱敏领域异常（ServiceUnavailableError 单独处理：去掉 details 后上抛）
+_DIAGNOSE_PASSTHROUGH_ERRORS = (
+    ValidationError,
+    AutoFixError,
+    AutoFixInternalError,
+    FeatureDisabledError,
+    NamespaceNotAllowedError,
+    WorkflowApprovalError,
+    RequestTimeoutError,
+)
+# 未经 execute_with_timeout 包装直接到达的上游超时 / K8s API 异常 → 503
+_DIAGNOSE_UPSTREAM_ERRORS = (ApiException, urllib3.exceptions.TimeoutError, TimeoutError, asyncio.TimeoutError)
 
 logger = logging.getLogger("aiops.services.autofix")
 
@@ -148,7 +173,9 @@ class AutoFixService(BaseService):
             return bool(k8s_healthy)
 
         except Exception as e:
-            self.logger.warning(f"自动修复服务健康检查失败: {str(e)}")
+            # 承接 SEC-26 P3-3：warning 只记异常类型，完整内容放 debug
+            self.logger.warning("自动修复服务健康检查失败，异常类型: %s", type(e).__name__)
+            self.logger.debug("自动修复服务健康检查失败详情: %s", e, exc_info=True)
             return False
 
     async def execute_multi_agent_workflow(self, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -261,6 +288,26 @@ class AutoFixService(BaseService):
                 raise
             raise WorkflowApprovalError(409, reason) from error
 
+    @staticmethod
+    def _namespace_precheck_refusal(namespace: Any, actions: List[Dict[str, Any]], *engines: Any) -> bool:
+        """对每个（去重后的）引擎调用公开的 namespace_refusal；缺少该方法或预检异常一律按拒绝（fail-closed）"""
+        seen = set()
+        for engine in engines:
+            if id(engine) in seen:
+                continue
+            seen.add(id(engine))
+            refusal = getattr(engine, "namespace_refusal", None)
+            if not callable(refusal):
+                logger.warning("执行引擎 %s 未实现 namespace_refusal，按拒绝处理", type(engine).__name__)
+                return True
+            try:
+                if refusal(namespace, actions):
+                    return True
+            except Exception as e:
+                logger.warning("命名空间预检异常，按拒绝处理，异常类型: %s", type(e).__name__)
+                return True
+        return False
+
     async def _confirm_claimed_workflow(self, record: WorkflowApproval, normalized_action_ids: List[str]) -> Dict[str, Any]:
         normalized_plan_id = record.plan_id
         workflow_result = deepcopy(record.result or {})
@@ -273,10 +320,14 @@ class AutoFixService(BaseService):
         if not diagnosis:
             raise ValidationError("plan_id", "工作流结果缺少诊断上下文")
 
-        if isinstance(self._remediation_engine, AutoFixRemediationEngine):
-            # 确认时按当前配置重新读取白名单：计划生成后被收紧的命名空间在重新校验中即被拒绝（403）
-            self._remediation_engine.allowed_namespaces = build_namespace_policy().allowed_namespaces
-        current_plan = await self._remediation_engine.build_plan(diagnosis)
+        shared_engine = self._remediation_engine
+        # 承接 SEC-26 P3-7：确认时按当前配置在局部重新构建策略（allowed_namespaces + auto_execute + 受限命名空间），
+        # 不修改共享单例；计划生成后被收紧的命名空间在重新校验中即被拒绝（403）。
+        # 注意：配置本身只在启动时加载，改白名单需重启（重启会清掉待审批项），见 docs/autofix_guide.md。
+        engine = shared_engine
+        if isinstance(shared_engine, AutoFixRemediationEngine):
+            engine = shared_engine.with_policy(build_namespace_policy())
+        current_plan = await engine.build_plan(diagnosis)
         plan = deepcopy(workflow_result.get("plan") or {})
         if any(current_plan.get(key) != plan.get(key) for key in ("namespace", "deployment")):
             raise WorkflowApprovalError(409, "重新校验的目标与原计划不一致，请重新生成计划")
@@ -289,9 +340,12 @@ class AutoFixService(BaseService):
             if current is None or original is None or any(current.get(key) != original.get(key) for key in ("action_id", "action_type", "target", "parameters", "executable", "rollback_available")):
                 raise WorkflowApprovalError(409, "原计划动作或目标参数已变化，请重新生成计划")
             risk = current.get("risk_assessment") or {}
-            if any(risk.get(key) is not True for key in ("namespace_allowed", "permission_allowed", "resource_exists")):
+            if any(risk.get(key) is not True for key in ("namespace_allowed", "permission_allowed")):
                 # SEC-26 P3-2：确认时重新校验未通过属于授权/策略拒绝，返回 403（审批不能覆盖）
-                raise WorkflowApprovalError(403, "当前资源、权限或命名空间限制未通过，审批不能覆盖，请重新诊断")
+                raise WorkflowApprovalError(403, "当前权限或命名空间限制未通过，审批不能覆盖，请重新诊断")
+            if risk.get("resource_exists") is not True:
+                # 承接 SEC-26 P3-6：目标资源已不存在属于状态冲突，返回 409（尚未执行，需重新诊断）
+                raise WorkflowApprovalError(409, "目标资源当前不存在，审批不能覆盖，尚未执行，请重新诊断")
 
         review = deepcopy(workflow_result.get("review") or {})
         previous_executed_actions = deepcopy(workflow_result.get("executed_actions") or [])
@@ -367,16 +421,17 @@ class AutoFixService(BaseService):
         plan["allowed_actions"] = allowed_actions + approved_actions
         plan["blocked_actions"] = remaining_blocked_actions
 
-        if isinstance(self._remediation_engine, AutoFixRemediationEngine):
-            # SEC-26 第一层审查附加条件 P3-1：置 effects_started 前先做执行引擎同一道命名空间硬校验；
-            # 被拒绝时尚未调用任何执行接口，审批记录应进入 invalidated（而非 uncertain）。
-            # 预检与下面 execute_plan 内的校验之间没有 await，读到的是同一份白名单。
-            refused = self._remediation_engine._namespace_refusal(plan.get("namespace", "default"), plan["allowed_actions"])
-            if refused:
-                raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
+        # SEC-26 第一层审查附加条件 P3-1：置 effects_started 前先做执行引擎同一道命名空间硬校验；
+        # 被拒绝时尚未调用任何执行接口，审批记录应进入 invalidated（而非 uncertain）。
+        # 预检与下面 execute_plan 内的校验之间没有 await，读到的是同一份白名单。
+        # 所有引擎（不只是 AutoFixRemediationEngine）都必须实现 RemediationEngine.namespace_refusal 并经过预检；
+        # 局部策略副本与共享单例都要放行才执行（任一拒绝即拒绝）。
+        if self._namespace_precheck_refusal(plan.get("namespace", "default"), plan["allowed_actions"], engine, shared_engine):
+            raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
 
         record.effects_started = True
-        execution = await self._remediation_engine.execute_plan(plan)
+        # SEC-44：确认后执行显式标记 trigger="confirm"（不做自动执行条件校验，仍经写操作门禁与审计）
+        execution = await engine.execute_plan(plan, trigger="confirm")
         current_executed_actions = execution.get("executed_actions", [])
         executed_ids = [action.get("action_id") for action in current_executed_actions]
         if execution.get("status") == "blocked" and not current_executed_actions:
@@ -386,6 +441,14 @@ class AutoFixService(BaseService):
                 # 执行器在任何写操作之前拒绝（无已执行动作、无事后检查、选中动作全部未尝试）：
                 # 可确认尚未产生副作用，回退 effects_started，使审批记录进入 invalidated
                 record.effects_started = False
+            if execution.get("refusal") == "audit":
+                # SEC-44 G4：意图审计写入失败，未执行任何写操作
+                raise WorkflowApprovalError(503, "审计记录写入失败，未执行任何动作，请稍后重新生成计划")
+            if execution.get("refusal") == "principal":
+                # SEC-44 修正：确认缺少可信用户主体（无 X-CloudOps-User-ID）→ 401，与 require_principal / 鉴权中间件的身份缺失约定一致
+                raise WorkflowApprovalError(401, "确认执行需要可信用户身份（X-CloudOps-User-ID），未执行任何动作")
+            if execution.get("refusal") == "mutation_gate":
+                raise WorkflowApprovalError(403, "写操作门禁未放行（开关或命名空间限制），未执行任何动作，请重新诊断")
             raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
         if set(executed_ids) != set(normalized_action_ids) or len(executed_ids) != len(normalized_action_ids) or any(action.get("status") != "succeeded" for action in current_executed_actions):
             # 已进入执行且未全部成功：可能已有副作用，保持 409（冲突/需人工核对），不归为授权拒绝
@@ -394,6 +457,9 @@ class AutoFixService(BaseService):
         execution_payload = deepcopy(execution)
         execution_payload["executed_actions"] = cumulative_executed_actions
         execution_payload["blocked_actions"] = remaining_blocked_actions
+        # SEC-44 修正：写操作已提交但结果审计缺失时显式上报，供调用方/运维核对
+        audit_result_recorded = all(action.get("audit_result_recorded", True) is not False for action in cumulative_executed_actions)
+        execution_payload["audit_result_recorded"] = audit_result_recorded
 
         agents_used = list(workflow_result.get("agents_used") or [])
         for agent in ["HumanConfirm", "Executor"]:
@@ -454,6 +520,7 @@ class AutoFixService(BaseService):
             "plan": plan,
             "review": review,
             "execution": execution_payload,
+            "audit_result_recorded": audit_result_recorded,
             "candidate_actions": plan.get("candidate_actions", []),
             "executed_actions": cumulative_executed_actions,
             "blocked_actions": remaining_blocked_actions,
@@ -579,7 +646,7 @@ class AutoFixService(BaseService):
             if deployment:
                 deployment_info = await self.execute_with_timeout(
                     lambda: self._k8s_fixer.k8s_service.get_deployment(
-                        deployment, namespace
+                        deployment, namespace, raise_unavailable=True
                     ),
                     timeout=ServiceConstants.AUTOFIX_K8S_TIMEOUT,
                     operation_name="get_deployment_for_diagnosis",
@@ -627,12 +694,23 @@ class AutoFixService(BaseService):
 
             return diagnosis_result
 
+        except _DIAGNOSE_PASSTHROUGH_ERRORS:
+            # SEC-26 P3-e：已脱敏的领域异常原样上抛，由 api_response 按类型映射状态码
+            raise
+        except ServiceUnavailableError as e:
+            # execute_with_timeout 已把上游超时 / 不可用统一包装为 ServiceUnavailableError（details 可能含 str(e)），
+            # 这里只保留类型与状态（503 SERVICE_UNAVAILABLE），重新构造不带 details 的异常
+            cause = e.__cause__ or e.__context__
+            self.logger.exception(
+                f"诊断Kubernetes问题失败: 上游不可用, 错误类型: {type(cause or e).__name__}"
+            )
+            raise ServiceUnavailableError(self.service_name) from e
+        except _DIAGNOSE_UPSTREAM_ERRORS as e:
+            self.logger.exception(f"诊断Kubernetes问题失败: 上游不可用, 错误类型: {type(e).__name__}")
+            raise ServiceUnavailableError(self.service_name) from e
         except Exception as e:
-            if isinstance(e, (ValidationError, AutoFixError)):
-                self.logger.error(f"诊断Kubernetes问题失败: {e.message}")
-                raise e
             self.logger.exception(f"诊断Kubernetes问题失败, 错误类型: {type(e).__name__}")
-            raise AutoFixError("诊断失败") from e
+            raise AutoFixInternalError("诊断失败") from e
 
     async def get_autofix_config(self) -> Dict[str, Any]:
         """获取自动修复配置信息"""
@@ -811,7 +889,8 @@ class AutoFixService(BaseService):
                         else:
                             self._k8s_fixer.cleanup()
                 except Exception as e:
-                    self.logger.warning(f"清理K8s修复代理失败: {e}")
+                    self.logger.warning("清理K8s修复代理失败，异常类型: %s", type(e).__name__)
+                    self.logger.debug("清理K8s修复代理失败详情: %s", e, exc_info=True)
                 self._k8s_fixer = None
 
             # 清理监督代理
@@ -823,7 +902,8 @@ class AutoFixService(BaseService):
                         else:
                             self._supervisor.cleanup()
                 except Exception as e:
-                    self.logger.warning(f"清理监督代理失败: {e}")
+                    self.logger.warning("清理监督代理失败，异常类型: %s", type(e).__name__)
+                    self.logger.debug("清理监督代理失败详情: %s", e, exc_info=True)
                 self._supervisor = None
 
             self._ops_workflow = None
@@ -835,5 +915,6 @@ class AutoFixService(BaseService):
             self.logger.info("自动修复服务资源清理完成")
 
         except Exception as e:
-            self.logger.error(f"自动修复服务资源清理失败: {str(e)}")
+            self.logger.error("自动修复服务资源清理失败，异常类型: %s", type(e).__name__)
+            self.logger.debug("自动修复服务资源清理失败详情: %s", e, exc_info=True)
             raise

@@ -15,6 +15,7 @@ import logging
 from typing import Any, Dict, List
 
 from app.config.settings import config
+from app.mcp.server.write_gate import enforce_write_gate
 
 logger = logging.getLogger("aiops.mcp.core")
 
@@ -64,6 +65,8 @@ class MCPServer:
             raise ValueError(f"未知的工具: {tool_name}")
 
         tool = self.tools[tool_name]
+        # SEC-33：写工具门禁必须在任何 K8s 调用之前；拒绝时抛 FeatureDisabledError，不进入 tool.execute
+        enforce_write_gate(tool_name, parameters)
         logger.info("开始执行工具: %s, 参数字段数: %s", tool_name, len(parameters))
 
         task = asyncio.current_task()

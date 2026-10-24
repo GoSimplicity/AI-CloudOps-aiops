@@ -24,6 +24,13 @@ from app.config.settings import ROOT_DIR, config
 logger = logging.getLogger("aiops.kubernetes")
 
 
+def _is_unavailable_api_status(status: Any) -> bool:
+    """ApiException 是否表示上游不可用：无状态码 / 0（连接级失败）、429 或 5xx"""
+    if not isinstance(status, int) or isinstance(status, bool):
+        return True
+    return status == 0 or status == 429 or status >= 500
+
+
 class KubernetesService:
     def __init__(self):
         self.apps_v1 = None
@@ -251,8 +258,15 @@ class KubernetesService:
             logger.error(f"获取PVC失败: {type(e).__name__}")
             return []
 
-    async def get_deployment(self, name: str, namespace: str = None) -> Optional[Dict]:
-        """获取Deployment信息"""
+    async def get_deployment(
+        self, name: str, namespace: str = None, *, raise_unavailable: bool = False
+    ) -> Optional[Dict]:
+        """获取Deployment信息
+
+        raise_unavailable=True 时（SEC-26 P3-e，仅 diagnose 使用），表示上游不可用的 ApiException
+        （无状态码 / 0 / 5xx / 429）原样上抛，由调用方映射为 503；其余 ApiException（如 404/403）
+        与默认行为一致返回 None。默认 False，其它调用方行为不变。
+        """
         if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法获取Deployment信息")
 
@@ -274,7 +288,9 @@ class KubernetesService:
             return deployment_dict
 
         except ApiException as e:
-            logger.error(f"获取Deployment失败: {type(e).__name__}")
+            logger.error(f"获取Deployment失败: {type(e).__name__}, status={e.status}")
+            if raise_unavailable and _is_unavailable_api_status(e.status):
+                raise
             return None
 
     async def ensure_namespace(self, namespace: str) -> bool:
@@ -371,9 +387,13 @@ class KubernetesService:
             return False
 
     async def get_pods(
-        self, namespace: str = None, label_selector: str = None
+        self, namespace: str = None, label_selector: str = None, *, raise_errors: bool = False
     ) -> List[Dict]:
-        """获取Pod列表"""
+        """获取Pod列表
+
+        raise_errors=True 时（SEC-44 G1，仅自动执行证据读取使用），读取失败原样上抛，调用方据此区分
+        “读取失败”与“没有 Pod”；默认 False，其它调用方行为不变（失败返回空列表）。
+        """
         if not await asyncio.to_thread(self._ensure_initialized):
             raise RuntimeError("Kubernetes未初始化，无法获取Pod列表")
 
@@ -399,9 +419,13 @@ class KubernetesService:
 
         except ApiException as e:
             logger.error(f"获取Pod列表失败: {type(e).__name__}")
+            if raise_errors:
+                raise
             return []
         except Exception as e:
             logger.error(f"获取Pod列表异常: {type(e).__name__}")
+            if raise_errors:
+                raise
             return []
 
     async def get_events(

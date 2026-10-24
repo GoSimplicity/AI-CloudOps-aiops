@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.common.exceptions import AutoFixError
+from app.common.exceptions import AutoFixError, ServiceUnavailableError
 from app.config.settings import config
 from app.core.autofix.remediation import AutoFixRemediationEngine
 from app.services import kubernetes as kubernetes_module
@@ -66,9 +66,11 @@ def test_bootstrap_route_hides_exception(monkeypatch, caplog) -> None:
     client = make_app(monkeypatch, service)
     with caplog.at_level(logging.ERROR):
         response = client.post("/autofix/bootstrap")
-    assert response.status_code == 502
+    # 承接 SEC-26 s1：非上游（非 ApiException/超时）的未预期异常 → 500，固定文案 + AUTOFIX_INTERNAL_ERROR
+    assert response.status_code == 500
     assert SECRET not in response.text
-    assert response.json()["data"]["detail"] == "自动修复错误: 引导故障资源失败"
+    assert response.json()["data"]["detail"] == "自动修复内部错误: 引导故障资源失败"
+    assert response.json()["data"]["error_code"] == "AUTOFIX_INTERNAL_ERROR"
     assert_logged_with_traceback(caplog, "aiops")
 
 
@@ -79,9 +81,11 @@ def test_diagnose_route_hides_exception(monkeypatch, caplog) -> None:
     client = make_app(monkeypatch, service)
     with caplog.at_level(logging.ERROR):
         response = client.post("/autofix/diagnose", json={"deployment": "api", "namespace": "default"})
-    assert response.status_code == 502
+    # 承接 SEC-26 s1：非上游（非 ApiException/超时）的未预期异常 → 500，固定文案 + AUTOFIX_INTERNAL_ERROR
+    assert response.status_code == 500
     assert SECRET not in response.text
-    assert response.json()["data"]["detail"] == "自动修复错误: 诊断操作失败"
+    assert response.json()["data"]["detail"] == "自动修复内部错误: 诊断操作失败"
+    assert response.json()["data"]["error_code"] == "AUTOFIX_INTERNAL_ERROR"
     assert_logged_with_traceback(caplog, "aiops")
 
 
@@ -126,11 +130,13 @@ async def test_service_diagnose_failure_hides_exception(caplog) -> None:
     k8s = mock_k8s()
     k8s.get_deployment.side_effect = leak()
     service = service_with_fixer(k8s)
-    with caplog.at_level(logging.ERROR), pytest.raises(AutoFixError) as raised:
+    # SEC-26 P3-e：K8s 调用失败经 execute_with_timeout 包装为上游不可用，diagnose 去掉 details 后以 503 上抛
+    with caplog.at_level(logging.ERROR), pytest.raises(ServiceUnavailableError) as raised:
         await service.diagnose_kubernetes_issues("api", "default")
     assert SECRET not in raised.value.message
-    assert raised.value.message.endswith("诊断失败")
-    assert_logged_with_traceback(caplog, "aiops.services.autofix", "ServiceUnavailableError")
+    assert raised.value.details == {}
+    assert raised.value.error_code == "SERVICE_UNAVAILABLE"
+    assert_logged_with_traceback(caplog, "aiops.services.autofix", "LeakyError")
 
 
 async def test_service_health_info_hides_exception(monkeypatch, caplog) -> None:

@@ -16,6 +16,10 @@ from app.mcp.server.mcp_server import MCPServer
 
 @pytest.mark.parametrize("failure", [False, True])
 def test_tool_http_and_core_logs_exclude_payload_and_error_text(monkeypatch, caplog, failure):
+    from app.mcp.server import write_gate
+
+    # SEC-33：假工具 offline 未归类会被按写拒绝；这里登记为只读，只验证日志隐私
+    monkeypatch.setattr(write_gate, "READ_ONLY_TOOLS", write_gate.READ_ONLY_TOOLS | {"offline"})
     marker = "private-PASS-78261"
     caplog.set_level(logging.INFO, logger="aiops.mcp.core")
     caplog.set_level(logging.INFO, logger="aiops.mcp.main")

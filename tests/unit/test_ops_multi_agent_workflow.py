@@ -16,9 +16,13 @@ class FakeRemediationEngine:
     async def build_plan(self, diagnosis):
         return self.plan
 
-    async def execute_plan(self, plan):
+    async def execute_plan(self, plan, **kwargs):
         self.executed = True
+        self.trigger = kwargs.get("trigger")
         return {"status": "completed", "executed_actions": plan["candidate_actions"], "blocked_actions": [], "post_check": {"ready": True}}
+
+    def namespace_refusal(self, namespace, actions):
+        return None
 
 
 class FakeLLMClient:
@@ -84,14 +88,19 @@ class FakeLLMClient:
 
 
 @pytest.mark.asyncio
-def safe_plan():
+def safe_plan(live_evidence: bool = True, action_type: str = "patch_image_pull_policy"):
+    fault_type = "crash_loop_backoff" if action_type == "restart_deployment" else "image_pull_failure"
+    risk = {"allowed": True, "risk_level": "low", "requires_human_confirmation": False}
+    if live_evidence:
+        # SEC-44：自动执行需要与故障类型匹配的实时证据（替身给出的假值）
+        risk["live_evidence"] = {"source": "live", "fault_type": fault_type, "checked": True, "matched": True}
     return {
-        "fault_type": "image_pull_failure",
+        "fault_type": fault_type,
         "candidate_actions": [
             {
-                "action_id": "patch-image-pull-policy",
-                "action_type": "patch_image_pull_policy",
-                "risk_assessment": {"allowed": True, "risk_level": "low", "requires_human_confirmation": False},
+                "action_id": action_type.replace("_", "-"),
+                "action_type": action_type,
+                "risk_assessment": risk,
             }
         ],
     }
@@ -116,15 +125,43 @@ async def test_workflow_default_only_plans_even_low_risk_action() -> None:
 
 @pytest.mark.asyncio
 async def test_workflow_legacy_auto_execute_switch_runs_executor_for_safe_action() -> None:
-    engine = FakeRemediationEngine(safe_plan())
+    engine = FakeRemediationEngine(safe_plan(action_type="restart_deployment"))
     workflow = OpsMultiAgentWorkflow(remediation_engine=engine, auto_execute=True)
 
-    result = await workflow.run({"problem_description": "deployment api ImagePullBackOff", "deployment": "api", "namespace": "default"})
+    result = await workflow.run({"problem_description": "deployment api CrashLoopBackOff", "deployment": "api", "namespace": "default"})
 
     assert result["status"] == "completed"
     assert result["next_action"] == "finish"
     assert result["agents_used"] == ["Coordinator", "Analyzer", "Planner", "Reviewer", "Executor"]
     assert engine.executed is True
+    assert engine.trigger == "auto"
+
+
+@pytest.mark.asyncio
+async def test_workflow_auto_execute_never_runs_image_patch() -> None:
+    """SEC-44 修正：image 补丁不在免确认白名单，auto 开启 + 证据匹配也不进 Executor"""
+    engine = FakeRemediationEngine(safe_plan())
+    workflow = OpsMultiAgentWorkflow(remediation_engine=engine, auto_execute=True)
+
+    result = await workflow.run({"problem_description": "deployment api ImagePullBackOff", "deployment": "api", "namespace": "default"})
+
+    assert result["status"] == "needs_human_confirmation"
+    assert "Executor" not in result["agents_used"]
+    assert engine.executed is False
+
+
+@pytest.mark.asyncio
+async def test_workflow_auto_execute_without_live_evidence_only_plans() -> None:
+    """SEC-44：auto_execute=True 但计划没有实时证据（只有诊断文字）→ 不进 Executor，转人工确认"""
+    engine = FakeRemediationEngine(safe_plan(live_evidence=False))
+    workflow = OpsMultiAgentWorkflow(remediation_engine=engine, auto_execute=True)
+
+    result = await workflow.run({"problem_description": "deployment api ImagePullBackOff", "deployment": "api", "namespace": "default", "plan_only": False}, plan_only=False)
+
+    assert result["status"] == "needs_human_confirmation"
+    assert "Executor" not in result["agents_used"]
+    assert engine.executed is False
+    assert result["review"]["confirmation_required"] is True
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,7 @@ if current_dir not in sys.path:
 from app.api.middleware import register_middleware
 from app.api.routes import register_routes
 from app.common.constants import AppConstants, ServiceConstants
+from app.config.envmode import ensure_debug_safe
 from app.config.logging import setup_logging
 from app.config.settings import config
 from app.services.factory import ServiceFactory
@@ -56,6 +57,8 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时执行
     logger = logging.getLogger("aiops")
+    # 生产环境（与 Go 后端 envmode 一致）开启 debug 时拒绝启动：debug 下 5xx 会带出内部 details
+    ensure_debug_safe(config.env, config.debug)
     logger.info("=" * 50)
     logger.info(f"{AppConstants.APP_NAME} 启动中...")
     logger.info(f"版本: {AppConstants.APP_VERSION}")

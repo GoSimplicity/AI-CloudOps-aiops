@@ -4,12 +4,20 @@ import asyncio
 
 import pytest
 
+from app.common.identity import principal_scope
 from app.config.settings import config
 from app.core.agents.ops_workflow import OpsMultiAgentWorkflow
 from tests.unit.test_autofix_sec26_repair_bootstrap import REPAIR_BODY, make_app
-from tests.unit.test_autofix_sec26_run_lockdown import WRITE_METHODS, assert_no_writes, make_service, mock_k8s
+from tests.unit.test_autofix_sec26_run_lockdown import WRITE_METHODS, assert_no_writes, live_pods, make_service, mock_k8s
 
 CRASHLOOP = "CrashLoopBackOff restarting failed container"
+
+@pytest.fixture(autouse=True)
+def confirming_user():
+    """SEC-44 修正：确认路径需要可信用户主体；本模块的确认流程以 user:1 执行"""
+    with principal_scope("user:1"):
+        yield
+
 
 
 def write_count(client) -> int:
@@ -24,7 +32,7 @@ def both_switches_on(monkeypatch):
 
 
 async def test_repair_is_plan_only_even_when_auto_execute_enabled(both_switches_on) -> None:
-    client = mock_k8s()  # 单副本 Deployment
+    client = mock_k8s(pods=live_pods())  # 单副本 Deployment；SEC-44：实时证据也匹配，仍只出计划
     service = make_service(client)
 
     planned = await service.fix_kubernetes_deployment("api", "default", event=CRASHLOOP)
@@ -64,7 +72,7 @@ def test_repair_route_plan_only_when_auto_execute_enabled(monkeypatch, both_swit
 
 async def test_repair_plan_only_does_not_leak_into_concurrent_run(both_switches_on) -> None:
     """plan_only 只随本次调用的状态传递：并发的 /autofix/run 仍按 auto_execute_enabled 执行，repair 仍只出计划"""
-    client = mock_k8s()
+    client = mock_k8s(pods=live_pods())
     service = make_service(client)
     run_request = {"problem_description": f"deployment api {CRASHLOOP}", "deployment": "api", "namespace": "default", "event": CRASHLOOP}
 
@@ -78,10 +86,10 @@ async def test_repair_plan_only_does_not_leak_into_concurrent_run(both_switches_
     assert write_count(client) == len(ran["executed_actions"])
 
 
-async def test_workflow_plan_only_overrides_instance_auto_execute_per_call() -> None:
+async def test_workflow_plan_only_overrides_instance_auto_execute_per_call(both_switches_on) -> None:
     from app.core.autofix.remediation import AutoFixRemediationEngine
 
-    client = mock_k8s()
+    client = mock_k8s(pods=live_pods())
     workflow = OpsMultiAgentWorkflow(remediation_engine=AutoFixRemediationEngine(client, allowed_namespaces=["default"], auto_execute=True), auto_execute=True)
     request = {"problem_description": f"deployment api {CRASHLOOP}", "deployment": "api", "namespace": "default", "event": CRASHLOOP}
 

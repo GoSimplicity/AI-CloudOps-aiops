@@ -15,6 +15,9 @@ import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
+from kubernetes.client.exceptions import ApiException
+from pydantic import ValidationError as PydanticValidationError
+import urllib3.exceptions
 
 from app.api.decorators import api_response, log_api_call
 from app.common.constants import (
@@ -26,6 +29,7 @@ from app.common.constants import (
 from app.common.exceptions import (
     AIOpsException,
     AutoFixError,
+    AutoFixInternalError,
     FeatureDisabledError,
     NamespaceNotAllowedError,
     RequestTimeoutError,
@@ -52,6 +56,26 @@ from app.services.factory import ServiceFactory
 from app.services.notification import NotificationService
 
 logger = logging.getLogger("aiops.api.autofix")
+
+# 承接 SEC-26 s1：上游（Kubernetes API）错误与上游超时 → 502；其它未预期异常 → 500
+_UPSTREAM_ERRORS = (ApiException, urllib3.exceptions.TimeoutError, TimeoutError)
+
+
+def _upstream_or_internal(error: BaseException, message: str) -> AIOpsException:
+    """按异常类型映射：K8s ApiException / 上游超时 → AutoFixError(502, AUTOFIX_ERROR)；
+    其它 → AutoFixInternalError(500, AUTOFIX_INTERNAL_ERROR)。文案固定，不拼接 str(error)。"""
+    if isinstance(error, _UPSTREAM_ERRORS):
+        return AutoFixError(message)
+    return AutoFixInternalError(message)
+
+
+def _diagnose_unavailable_or_internal(error: BaseException, message: str) -> AIOpsException:
+    """SEC-26 P3-e：diagnose 的上游超时 / K8s ApiException → ServiceUnavailableError(503)；
+    其它 → AutoFixInternalError(500)。文案固定，不拼接 str(error)。"""
+    if isinstance(error, _UPSTREAM_ERRORS):
+        return ServiceUnavailableError("autofix")
+    return AutoFixInternalError(message)
+
 
 async def require_autofix_principal() -> None:
     require_principal()
@@ -380,7 +404,9 @@ async def autofix_k8s(
                     fix_result.get("actions_taken", []),
                 )
             except Exception as e:
-                logger.warning(f"添加通知任务失败: {str(e)}")
+                # 承接 SEC-26 P3-3：warning 只记异常类型，完整内容放 debug
+                logger.warning("添加通知任务失败，异常类型: %s", type(e).__name__)
+                logger.debug("添加通知任务失败详情: %s", e, exc_info=True)
 
         approval = fix_result.get("approval") or {}
         data = {
@@ -411,7 +437,7 @@ async def autofix_k8s(
     except Exception as e:
         # 响应不拼接 str(e)；服务端用 logger.exception 保留完整异常堆栈（只附部署名与异常类型，不记录请求头/配置）
         logger.exception(f"自动修复失败 - 部署: {request.deployment}, 错误类型: {type(e).__name__}")
-        raise AutoFixError("修复操作失败")
+        raise _upstream_or_internal(e, "修复操作失败") from e
 
 
 @router.post(
@@ -442,7 +468,7 @@ async def bootstrap_faulty_resources() -> Dict[str, Any]:
         raise
     except Exception as e:
         logger.exception(f"引导故障资源失败, 错误类型: {type(e).__name__}")
-        raise AutoFixError("引导故障资源失败") from e
+        raise _upstream_or_internal(e, "引导故障资源失败") from e
 
 
 @router.post(
@@ -492,8 +518,13 @@ async def autofix_base(
             force=bool(request.get("force", False)),
             auto_restart=bool(request.get("auto_restart", True)),
         )
+    except (PydanticValidationError, KeyError, TypeError, ValueError) as e:
+        # 承接 SEC-26 s6：固定文案 + error_code（VALIDATION_ERROR，400），不回显校验器内部信息
+        logger.info("自动修复请求参数校验失败，异常类型: %s", type(e).__name__)
+        raise DomainValidationError("request", "请求参数无效") from e
     except Exception as e:
-        raise HTTPException(status_code=HttpStatusCodes.BAD_REQUEST, detail=str(e))
+        logger.warning("自动修复请求参数校验异常，异常类型: %s", type(e).__name__)
+        raise AutoFixInternalError("请求参数校验失败") from e
 
     # 为基础路径返回简化成功响应，避免底层依赖导致404
     return {
@@ -580,12 +611,13 @@ async def diagnose_k8s(
         # 透传显式HTTP错误
         raise he
     except (AIOpsException, DomainValidationError):
-        # SEC-26 第二层审查 P3-3：交给 api_response 统一映射（ValidationError→400，AutoFixError→502，
-        # ServiceUnavailable→503 等）；5xx 响应由错误处理器统一脱敏，不再把 str(e) 直接拼进 400 响应
+        # 承接 SEC-26 s6 / 第二层审查 P3-3：领域异常原样交给 api_response，按异常类型映射状态码并带 error_code
+        # （ValidationError→400、ServiceUnavailable→503、AutoFixInternalError→500 ...）；5xx 由错误处理器统一脱敏，
+        # 不再统一改写为 400 + str(e)。SEC-26 P3-e：服务层已把上游超时 / K8s 不可用映射为 503
         raise
     except Exception as e:
         logger.exception(f"诊断失败 - 部署: {request.deployment}, 错误类型: {type(e).__name__}")
-        raise AutoFixError("诊断操作失败") from e
+        raise _diagnose_unavailable_or_internal(e, "诊断操作失败") from e
 
 
 @router.get(

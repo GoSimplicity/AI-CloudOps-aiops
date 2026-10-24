@@ -6,6 +6,7 @@ import pytest
 
 from app.api.routes import autofix
 from app.common.exceptions import AIOpsException
+from app.common.identity import principal_scope
 from app.config.settings import config
 from app.services.autofix_service import AutoFixService
 from tests.unit.test_autofix_sec26_repair_bootstrap import (
@@ -22,6 +23,13 @@ UNAUTHENTICATED = [
     {"X-API-Key": "wrong-" + KEY, "X-CloudOps-User-ID": "1"},
     {"X-API-Key": "", "X-CloudOps-User-ID": "1"},
 ]
+
+@pytest.fixture(autouse=True)
+def confirming_user():
+    """SEC-44 修正：确认路径需要可信用户主体；本模块的确认流程以 user:1 执行"""
+    with principal_scope("user:1"):
+        yield
+
 
 
 @pytest.mark.parametrize("enabled", [False, True])

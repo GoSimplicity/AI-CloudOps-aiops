@@ -27,7 +27,7 @@ curl --fail -H "X-API-Key: $AIOPS_API_KEY" http://127.0.0.1:8080/api/v1/predict/
 
 服务默认按需初始化业务依赖，启动与存活检查不会调用模型。仅在依赖配置完成且需要启动预热时设置 `AIOPS_PREWARM=true`。Prometheus 地址使用 `PROMETHEUS_HOST=prometheus:9090`，不带协议。RAG 使用普通 Redis 存储文档、缓存与元数据，使用本地 FAISS 做向量检索；无需 Redis Stack。WebSocket 与 HTTP 使用同样的服务密钥，禁止将内部密钥下发浏览器。
 
-MCP 文件工具仅能访问 `MCP_FILE_ROOT`（默认 `data/knowledge_base`），相对路径以此为基准，拒绝越界路径及符号链接越界，单文件读取上限 1 MiB。不要将此目录配置为应用根目录或凭据目录。计算器使用受限算术 AST，拒绝 Python 属性访问、代码执行和超大指数。
+MCP 文件工具仅能访问 `MCP_FILE_ROOT`（默认 `data/knowledge_base`），相对路径以此为基准，拒绝越界路径及符号链接越界，单文件读取上限 1 MiB。不要将此目录配置为应用根目录或凭据目录。SEC-33 起 MCP 启动时检查该目录：生产环境为 `/` 或包含/位于 /etc、~/.kube、凭据或项目配置目录时拒绝启动，非生产只告警；文件工具报错只显示相对路径。MCP 写工具默认关闭（`MCP_WRITE_TOOLS_ENABLED`）、Secret 读取默认关闭（`MCP_SECRET_READ_ENABLED`），详见 `docs/release/SEC-33-mcp-write-gate.md`。计算器使用受限算术 AST，拒绝 Python 属性访问、代码执行和超大指数。
 
 预测要求真实历史指标。Prometheus 请求失败或返回空集时返回明确错误，不生成模拟历史数据；缺模型时的规则外推仍是启发式估计，其置信度不是经过校准的统计保证，不应直接据此自动扩缩容。生产容量策略需要独立的负载回放与模型评估。
 
@@ -148,3 +148,16 @@ RAG 冷启动也先校验会话归属，拒绝请求不会因为已有知识文�
 网络请求连接/读取期限5/15秒，PATCH禁隐式重试；SDK操作在线程中执行。超时/取消不能保证正在运行的线程或API请求未生效，应核对资源实际状态，禁止盲目重试或将404解释为从未执行。预检不能消除与其他写入者之间的竞态，也不提供跨资源原子回滚。独立 MCP HTTP 保持既有200协议外壳，明确失败的工具返回status=error及非空error，结构化部分结果仍保留在result。
 
 本阶段只在显式本地kind配置、随机自有namespace中验证ConfigMap创建、重复apply更新与另一fieldManager冲突409，读取验证原值/所有权未被抢占并finally删除命名空间；没有生产或模型调用。真实业务资源上线仍由用户按其集群准入/RBAC独立验收。
+
+## 生产环境开启 debug 拒绝启动
+
+debug 模式下 5xx 响应会带出 `message` 与 `data.details`（可能包含内部信息），因此**生产环境开启 debug 拒绝启动**：API（`app/main.py`）与 MCP（`app/mcp/main.py`）在 lifespan 开始时调用 `app/config/envmode.py::ensure_debug_safe`，抛出 `DebugInProductionError`，进程不会开始服务。
+
+- **环境取值**：`config.env`，即 `ENV` 环境变量 > YAML `app.env` > 默认 `development`（`ENV` 同时决定加载 `config/config.{ENV}.yaml`，不存在时回退 `config/config.yaml`）。
+- **debug 取值**：`DEBUG` 环境变量 > YAML `app.debug`。
+- **什么算生产**（与 Go 后端 `pkg/envmode` 一致）：先 strip 再 lower；`production`/`prod`/`prd` 为生产；`development`/`dev` 为开发；`test`/`testing` 为测试（复用开发配置，允许 debug）；**空值或无法识别的取值（如 `staging`）按生产处理**（fail-closed）。
+- 与 Go 的唯一差异：`ENV` 与 `app.env` 都未设置时，aiops 沿用既有默认 `development`（这是本地默认启动加载 `config/config.yaml` 的前提）；Go 侧未设置按生产。Docker 镜像与 Compose 均显式设置 `ENV=production`，不受此差异影响。
+- 注意：`ENV=prod`/`prd` 会被判为生产，但没有 `config/config.prod.yaml` 时会回退到 `config/config.yaml`（其中 `debug: true`），此时会拒绝启动；生产请使用 `ENV=production`（加载 `config.production.yaml`，`debug: false`），或同时设置 `DEBUG=false`。
+- 双保险：即使 debug 被意外打开，错误处理器在生产环境下也不回显 5xx 的 `message`/`details`（`_debug_details()` = debug 且非生产）。
+
+恢复启动：设置 `DEBUG=false`（或 `app.debug: false`）；若确实不是生产环境，把 `ENV` 设为 `development`/`dev` 或 `test`/`testing`。

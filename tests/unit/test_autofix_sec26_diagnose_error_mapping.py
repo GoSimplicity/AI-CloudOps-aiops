@@ -53,8 +53,10 @@ def test_diagnose_validation_error_stays_400(monkeypatch) -> None:
     assert "格式无效" in response.text
 
 
-def test_diagnose_unknown_error_still_502_generic(monkeypatch) -> None:
+def test_diagnose_unknown_error_is_500_internal_generic(monkeypatch) -> None:
+    # 合并说明：sec33 分支承接 SEC-26 s1，未预期的非领域异常为 500 AUTOFIX_INTERNAL_ERROR
+    # （K8s ApiException / 上游超时仍为 502 AUTOFIX_ERROR），这里按 s1 契约断言
     response = diagnose_raising(monkeypatch, RuntimeError(SECRET))
-    assert response.status_code == 502
+    assert response.status_code == 500
     assert SECRET not in response.text
-    assert response.json()["data"]["error_code"] == "AUTOFIX_ERROR"
+    assert response.json()["data"]["error_code"] == "AUTOFIX_INTERNAL_ERROR"

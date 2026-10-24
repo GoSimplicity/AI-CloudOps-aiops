@@ -11,7 +11,7 @@ from tests.unit.test_autofix_approval_isolation import (
     pending_result,
     service,  # noqa: F401 - pytest fixture
 )
-from tests.unit.test_autofix_sec26_run_lockdown import mock_k8s
+from tests.unit.test_autofix_sec26_run_lockdown import assert_no_writes, live_pods, mock_k8s
 
 CRASHLOOP = "CrashLoopBackOff restarting failed container"
 REQUEST = {"problem_description": f"deployment api {CRASHLOOP}", "deployment": "api", "namespace": "default", "event": CRASHLOOP}
@@ -26,7 +26,7 @@ def two_action_service(service):  # noqa: F811
     original["review"]["confirmation_required"] = True
     service._ops_workflow.run.side_effect = lambda _, **__: deepcopy(original)
     service._remediation_engine.build_plan.side_effect = lambda _, **__: deepcopy(original["plan"])
-    service._remediation_engine.execute_plan.side_effect = lambda plan: {
+    service._remediation_engine.execute_plan.side_effect = lambda plan, **__: {
         "status": "completed",
         "executed_actions": [{"action_id": action["action_id"], "status": "succeeded"} for action in plan["allowed_actions"]],
     }
@@ -62,14 +62,27 @@ async def test_confirming_all_actions_at_once_clears_confirmation_required(servi
     assert done["approval"]["confirmation_required"] is False
 
 
-async def test_reviewer_sets_confirmation_required_false_when_nothing_pending() -> None:
-    """reviewer 各分支都给出 confirmation_required：自动执行分支为 False，需确认分支为 True"""
-    client = mock_k8s()
+async def test_reviewer_sets_confirmation_required_false_when_nothing_pending(allow_autofix_writes) -> None:
+    """reviewer 各分支都给出 confirmation_required：自动执行分支为 False，需确认分支为 True
+
+    SEC-44 改写：自动执行分支必须有与诊断匹配的实时 Pod 证据，且写执行点按当前配置放行；
+    同样的请求在没有实时证据时走需确认分支（confirmation_required=True、不写集群）。
+    """
+    allow_autofix_writes("default", auto_execute=True)
+    client = mock_k8s(pods=live_pods())
     engine = AutoFixRemediationEngine(client, allowed_namespaces=["default"], auto_execute=True)
 
     executed = await OpsMultiAgentWorkflow(remediation_engine=engine, auto_execute=True).run(dict(REQUEST))
     assert executed["status"] == "completed"
     assert executed["review"]["confirmation_required"] is False
+
+    no_evidence_client = mock_k8s()
+    no_evidence_engine = AutoFixRemediationEngine(no_evidence_client, allowed_namespaces=["default"], auto_execute=True)
+    text_only = await OpsMultiAgentWorkflow(remediation_engine=no_evidence_engine, auto_execute=True).run(dict(REQUEST))
+    assert text_only["status"] == "needs_human_confirmation"
+    assert text_only["review"]["confirmation_required"] is True
+    assert text_only["executed_actions"] == []
+    assert_no_writes(no_evidence_client)
 
     planned = await OpsMultiAgentWorkflow(remediation_engine=engine, auto_execute=True).run(dict(REQUEST), plan_only=True)
     assert planned["review"]["confirmation_required"] is True

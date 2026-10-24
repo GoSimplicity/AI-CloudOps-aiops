@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
-from app.config.base import BaseAppSettings
+from app.config.base import BaseAppSettings, InvalidExplicitBool
 
 ROOT_DIR = Path(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -621,6 +621,18 @@ class MCPConfig:
             "MCP_HEALTH_CHECK_INTERVAL", "mcp.health_check_interval", 30, int
         )
     )
+    # SEC-33：MCP 写工具总开关，默认关闭；解析规则同 autofix 开关（strip+lower，仅 "true" 开启）
+    write_tools_enabled: bool = field(
+        default_factory=lambda: _parse_autofix_bool(
+            "MCP_WRITE_TOOLS_ENABLED", "mcp.write_tools_enabled"
+        )
+    )
+    # SEC-33：list_secrets/get_secret 开关，默认关闭；开启后仍受 autofix.allowed_namespaces 约束且不返回 data
+    secret_read_enabled: bool = field(
+        default_factory=lambda: _parse_autofix_bool(
+            "MCP_SECRET_READ_ENABLED", "mcp.secret_read_enabled"
+        )
+    )
 
 
 @dataclass
@@ -754,23 +766,37 @@ def _get_autofix_switch_value(env_key: str, config_path: str) -> Any:
 
 
 def _parse_autofix_bool(env_key: str, config_path: str) -> bool:
-    """autofix 开关只认 true（大小写不敏感）；false 为关闭；其它任何值（含空串、0/1、yes/no/on/off、YAML 数字）按关闭处理并告警
+    """autofix 开关解析规则：先 strip，再 lower，等于 true 才开启；false 为关闭。
 
-    YAML 中只有原生布尔 true/True/TRUE 为开；不加引号的 yes/on/On 不再按 YAML 1.1 视为 true。
+    其它任何值（含空串、0/1、yes/no/on/off、YAML 数字 1/0）按关闭处理并告警。
+    YAML 中只有原生布尔 true/True/TRUE 为开（SEC-26 第二层审查 P2-2）；不加引号的 yes/on/On 不再按
+    YAML 1.1 视为 true。SEC-33 的 mcp.write_tools_enabled / mcp.secret_read_enabled 沿用同一规则。
+    显式 !!bool 标签只接受不加引号的 true/false（SEC-26 复审 P3-d）：!!bool yes / !!bool on / !!bool 'true'
+    由 StrictBoolSafeLoader 构造为 InvalidExplicitBool 哨兵，这里按关闭处理并告警。
     """
     value = _get_autofix_switch_value(env_key, config_path)
     if value is None:
         return False
+    if isinstance(value, InvalidExplicitBool):
+        # 哨兵不保存原值；告警只给字段名与类别提示
+        _autofix_config_logger.warning(
+            "开关 %s / %s 使用了显式 !!bool 标签，但值不是不加引号的 true/false，已按 false（关闭）处理；"
+            "显式 !!bool 标签只接受不加引号的 true/false",
+            env_key,
+            config_path,
+        )
+        return False
     if value is True or value is False:
         return value
-    if isinstance(value, str) and value.lower() in ("true", "false"):
-        return value.lower() == "true"
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
     hint = "（yes/on 等 YAML 1.1 布尔写法不被接受，请写 true）" if isinstance(value, str) and value.strip().lower() in _YAML11_BOOL_ALIASES else ""
+    # 只输出字段名与值的类型，不输出值本身（SEC-26 P3-c：配置值可能被误填为敏感内容）
     _autofix_config_logger.warning(
-        "autofix 开关 %s / %s 的值 %r 不是 true/false，已按 false（关闭）处理；只有 true 会开启%s",
+        "开关 %s / %s 的值（类型 %s）不是 true/false，已按 false（关闭）处理；只有 true 会开启%s",
         env_key,
         config_path,
-        value,
+        type(value).__name__,
         hint,
     )
     return False
@@ -778,16 +804,17 @@ def _parse_autofix_bool(env_key: str, config_path: str) -> bool:
 
 def _warn_suspicious_namespaces(namespaces: List[str]) -> None:
     """白名单大小写敏感且不支持通配符：出现 * 或含大写字母的条目时告警（不改写，按字面匹配）"""
-    for name in namespaces:
+    # 只输出条目序号（从 1 开始），不输出条目值本身（SEC-26 P3-c）
+    for index, name in enumerate(namespaces, start=1):
         if "*" in name:
             _autofix_config_logger.warning(
-                "autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 含 %r：* 不是通配符，只会按字面匹配（实际不会匹配任何命名空间）",
-                name,
+                "autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 第 %d 项含 *：* 不是通配符，只会按字面匹配（实际不会匹配任何命名空间）",
+                index,
             )
         if any(ch.isupper() for ch in name):
             _autofix_config_logger.warning(
-                "autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 含大写条目 %r：白名单大小写敏感，Kubernetes 命名空间均为小写，该条目不会匹配",
-                name,
+                "autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 第 %d 项含大写字母：白名单大小写敏感，Kubernetes 命名空间均为小写，该条目不会匹配",
+                index,
             )
 
 
