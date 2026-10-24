@@ -112,10 +112,17 @@ Kubernetes 故障自动修复模块是 AI-CloudOps 系统中的核心组件，�
 SEC-44 起，`auto_execute_enabled=true` 时一个动作要免确认执行，必须**同时**满足以下条件，任一条不满足就转人工确认（pending），不写集群：
 
 1. **免确认白名单**：只有 `restart_deployment` 在白名单内。`patch_image_pull_policy` 风险等级仍为 low，但一律需要确认（auto 开启时照样读取并记录证据，只是不放行）。`scale_deployment` 和 `adjust_resource_requests`（medium）即使证据匹配也必须确认。
-2. **实时证据**：执行前实时读取 Deployment 和 Pod，信号必须与动作对应的故障类型匹配（CrashLoop 只认 `state.waiting.reason=CrashLoopBackOff` 或重启次数 ≥3，「未 Ready 且重启 ≥1」不算；镜像拉取对应 `ImagePullBackOff`/`ErrImagePull`）。读取失败、超时（15 秒）、没有 Pod 或信号不匹配时一律转确认；请求文字或 `diagnosis` 不参与判定。
+2. **实时证据**：执行前实时读取 Deployment 和 Pod，信号必须与动作对应的故障类型匹配（CrashLoop 只认 `state.waiting.reason=CrashLoopBackOff`，或「重启次数 ≥3 且容器当前**未** Ready」；「未 Ready 且重启 ≥1」不算；镜像拉取对应 `ImagePullBackOff`/`ErrImagePull`）。读取失败、超时（15 秒）、没有 Pod 或信号不匹配时一律转确认；请求文字或 `diagnosis` 不参与判定。
+   - **只认目标 Deployment 当前 ReplicaSet 的 Pod**（二次修正）：Pod 的 controller owner 必须是名为 `<deployment>-<pod-template-hash>` 的 ReplicaSet；该 ReplicaSet 还要实时读取（`read_namespaced_replica_set`，**需要 RBAC `apps/replicasets get`**），其 controller owner 必须是目标 Deployment，且 `deployment.kubernetes.io/revision` 与 Deployment 一致。缺 owner、缺 revision 注解、ReplicaSet 读取失败或超时一律转确认。
+   - **selector 含 `matchExpressions` 时不支持，直接转确认**（fail-closed，不读 Pod），避免只按 `matchLabels` 扩大匹配范围。
+   - **执行前复核**：auto 触发在写入口之前再实时读一次 Deployment 与 Pod 重新判定证据（缩小 TOCTOU 窗口）；复核不通过时整份计划转确认。外部传入的计划里自带的 `live_evidence` 不被采信，一律由服务端重新推导。
 3. **写入口门禁**：写集群前按当前配置调用 `ensure_mutation_allowed`。auto 触发要求 `auto_execute_enabled` 仍为开启，且命名空间在白名单内；confirm 触发只要求命名空间在白名单内，**不要求** `repair_enabled`（这一点待用户早上审批）。被拒绝时不写集群：run 退回人工确认，confirm 返回 403。直接构造引擎（不经过 `build_namespace_policy`）的调用方，必须同时在 `autofix.allowed_namespaces` 中配置目标命名空间，否则写入口门禁会拒绝。
-4. **审计先行**：执行前写 intent 审计，失败则不执行（confirm 返回 503），执行后写 result 审计；result 审计失败时写操作已提交、无法回退，会单独打一条只含异常类名的 ERROR 日志，并在 confirm 响应和 run 状态里带 `audit_result_recorded=false`（正常为 `true`）。审计是一行 JSON，写到 logger `aiops.audit.autofix`，字段包括 principal、target、action、auto_executed、result、time、error_type，不含 patch 内容和异常文本。
-5. **确认需要可信用户主体**：confirm 路径在写入口检查主体，必须是 `user:<id>`（来自 `X-CloudOps-User-ID`）。缺少该头（中间件记为 `service:internal`）或无主体（`unknown`）时不执行：记一条 `refused` 审计（`reason="principal missing"`），0 写入，返回 **401**。auto 路径的调用方仍记为 `service:internal`。
+4. **审计先行**：执行前写 intent 审计，失败则不执行（confirm 返回 503 `confirm_audit_unavailable`，审批释放回 pending，可用同一 `plan_id` 稍后重试，见下文），执行后写 result 审计；result 审计失败时写操作已提交、无法回退，会单独打一条只含异常类名的 ERROR 日志，并在 confirm 响应和 run 状态里带 `audit_result_recorded=false`（正常为 `true`）。
+   默认审计 sink 把每条记录写成 **stdout 上的一行纯 JSON**（不带时间/级别前缀）：logger `aiops.audit.autofix` 固定 INFO、`propagate=False`，**不受 `LOG_LEVEL` 和根 logger handler 影响**；写入或 flush 失败原样上抛，按上面的规则阻止执行。字段包括 principal、target、action、auto_executed、result、time、error_type，不含 patch 内容和异常文本。
+5. **确认需要可信用户主体**：confirm 路径在写入口检查主体，必须是 `user:<id>`。`X-CloudOps-User-ID` **只能由网关注入**（网关会删除客户端自带的同名头，再按 JWT 的 Uid 设置；aiops 只信任持有服务 API Key 的调用方传来的该头）。缺少该头（中间件记为 `service:internal`）或无主体（`unknown`）时不执行：记一条 `refused` 审计（`reason="principal missing"`），0 写入，返回 **403**，`data.error_code="confirm_principal_required"`（二次修正：原为 401，改为 403 以免前端当成 token 过期去刷新/登出）。auto 路径的调用方仍记为 `service:internal`。
+6. **确认接口错误契约**（二次修正）：`/autofix/workflow/confirm` 的所有错误响应都带 `data.approval_state`，取值 `pending`（仍可用同一 `plan_id` 确认）/ `voided`（已作废、不存在、已过期或无权查看）/ `consumed`（已被领取或已执行，含结果不确定）。各状态码来源与审批状态的完整对照见发布说明。
+
+残余风险：Pod/ReplicaSet 的 owner 与名字都来自集群 API，能在目标命名空间里创建 ReplicaSet 并伪造 ownerReferences/revision 注解的主体，仍可能让证据匹配；这类主体本身已能直接改写工作负载，不在本防护目标内。
 
 完整的映射表、字段说明和升级影响见 `docs/release/SEC-44-autofix-auto-execute.md`。
 

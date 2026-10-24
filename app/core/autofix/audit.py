@@ -14,7 +14,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import logging
-from typing import Any, Dict, Optional, Protocol, runtime_checkable
+import sys
+from typing import IO, Any, Dict, Optional, Protocol, runtime_checkable
 import uuid
 
 from app.common.identity import principal_context
@@ -26,6 +27,9 @@ PHASE_RESULT = "result"
 PHASE_REFUSED = "refused"
 
 audit_logger = logging.getLogger("aiops.audit.autofix")
+# SEC-44 修正 P2-3：审计 logger 固定 INFO、不向上传播（不受 LOG_LEVEL / 控制台前缀格式影响）
+audit_logger.setLevel(logging.INFO)
+audit_logger.propagate = False
 
 
 @runtime_checkable
@@ -35,14 +39,41 @@ class AuditSink(Protocol):
     def write(self, record: Dict[str, Any]) -> None: ...
 
 
-class LoggerAuditSink:
-    """默认 sink：一行一条 JSON 写入专用 logger ``aiops.audit.autofix``（由日志采集转发）"""
+class StrictJsonLineHandler(logging.StreamHandler):
+    """只输出 ``%(message)s`` 一行；写入或 flush 失败原样上抛（不走 logging 的 handleError 吞异常）。
 
-    def __init__(self, target: Optional[logging.Logger] = None) -> None:
-        self._logger = target or audit_logger
+    stream 为 None 时每次写入都解析当前的 ``sys.stdout``（容器日志采集），避免持有启动时的旧流。
+    """
+
+    def __init__(self, stream: Optional[IO[str]] = None) -> None:
+        super().__init__(stream if stream is not None else sys.stdout)
+        self._fixed_stream = stream
+        self.setLevel(logging.INFO)
+        self.setFormatter(logging.Formatter("%(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        stream = self._fixed_stream if self._fixed_stream is not None else sys.stdout
+        stream.write(self.format(record) + self.terminator)
+        stream.flush()
+
+    def handleError(self, record: logging.LogRecord) -> None:  # noqa: N802 - logging API
+        raise
+
+
+class LoggerAuditSink:
+    """默认 sink：一行一条纯 JSON 写入 stdout（或注入的流），由容器日志采集转发。
+
+    SEC-44 修正 P2-3：不经过 logger 的级别 / disable / propagate / 根 handler，直接交给专用
+    StrictJsonLineHandler；因此 LOG_LEVEL=WARNING 也会写出，且写失败会抛给调用方（意图审计失败 → 不执行）。
+    """
+
+    def __init__(self, stream: Optional[IO[str]] = None) -> None:
+        self._handler = StrictJsonLineHandler(stream)
 
     def write(self, record: Dict[str, Any]) -> None:
-        self._logger.info(json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False))
+        line = json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False)
+        log_record = audit_logger.makeRecord(audit_logger.name, logging.INFO, __file__, 0, line, None, None)
+        self._handler.handle(log_record)
 
 
 _sink: AuditSink = LoggerAuditSink()

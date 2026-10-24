@@ -8,10 +8,23 @@ import time
 from typing import Any, Callable
 import uuid
 
-from app.common.exceptions import ValidationError, WorkflowApprovalError
-from app.common.identity import require_principal
+from app.common.exceptions import APPROVAL_STATES, ValidationError, WorkflowApprovalError
+from app.common.identity import principal_context, require_principal
+
+__all__ = ["APPROVAL_STATES", "CONFIRM_ENDPOINT", "WorkflowApproval", "WorkflowApprovals"]
 
 CONFIRM_ENDPOINT = "/api/v1/autofix/workflow/confirm"
+
+# 内部状态 → 对前端暴露的 approval_state（SEC-44 二次修正 Q6）
+#   pending：仍可用同一 plan_id 确认；consumed：已被领取/执行（含结果不确定）；voided：已作废/不存在/无权查看
+_EXPOSED_STATE = {
+    "pending": "pending",
+    "executing": "consumed",
+    "completed": "consumed",
+    "uncertain": "consumed",
+    "invalidated": "voided",
+    "building": "voided",
+}
 
 
 @dataclass
@@ -24,6 +37,8 @@ class WorkflowApproval:
     result: dict[str, Any] | None = None
     effects_started: bool = False
     reason: str = ""
+    # SEC-44 二次修正 Q1：每次 claim 生成的一次性领取令牌；release 以它做 CAS，迟到的旧领取者无法释放新领取
+    claim_token: str = ""
 
 
 class WorkflowApprovals:
@@ -92,7 +107,41 @@ class WorkflowApprovals:
         # 此处与状态检查之间没有await，同一进程内只有一个请求能先领取审批
         record.state = "executing"
         record.effects_started = False
+        record.claim_token = uuid.uuid4().hex
         return record
+
+    def release(self, record: WorkflowApproval, claim_token: str) -> bool:
+        """SEC-44 二次修正 Q1：把“已领取但确定没有执行任何动作”的审批原子地放回 pending。
+
+        CAS 条件（全部满足才释放，否则不改任何字段并返回 False）：
+        - 记录仍是 executing（未被 publish / fail 终结）；
+        - claim_token 与本次领取一致（迟到的旧领取者不能释放新领取者）；
+        - effects_started 为 False（执行器已确认未进入任何写操作）。
+        检查与赋值之间没有 await：与 claim 一样，在单进程事件循环内是原子的。
+        record.result（原计划）保持不变，重试时按原计划重新复核；过期时间不延长。
+        """
+        if record.state != "executing" or not claim_token or record.claim_token != claim_token or record.effects_started:
+            return False
+        record.state = "pending"
+        record.claim_token = ""
+        record.reason = ""
+        return True
+
+    def approval_state(self, plan_id: Any) -> str:
+        """供确认接口错误响应使用的审批状态（pending / voided / consumed），不抛异常、不泄露他人审批。
+
+        - 当前没有可信主体（尚未识别身份就被拒绝）：本请求未触碰审批 → pending；
+        - 记录不存在 / 已过期 / 属于他人：一律 voided（与 404/403 一致，不区分以免泄露）。
+        """
+        owner = principal_context.get()
+        if not owner:
+            return "pending"
+        record = self.records.get(plan_id.strip()) if isinstance(plan_id, str) else None
+        if record is None or record.owner != owner:
+            return "voided"
+        if record.state not in {"building", "executing"} and record.expires <= self.clock():
+            return "voided"
+        return _EXPOSED_STATE.get(record.state, "voided")
 
     def publish(self, record: WorkflowApproval, result: dict[str, Any]) -> None:
         plan = result.setdefault("plan", {})
@@ -136,9 +185,11 @@ class WorkflowApprovals:
         else:
             record.result = None
         record.state = state
+        record.claim_token = ""
 
     def fail(self, record: WorkflowApproval, reason: str) -> None:
         record.state = "uncertain" if record.effects_started else "invalidated"
+        record.claim_token = ""
         record.result = None
         record.reason = reason
         self._deadline(record)
