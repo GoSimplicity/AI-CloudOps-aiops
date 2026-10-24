@@ -4,9 +4,11 @@ on:
   pull_request:
 permissions:
   contents: read
+# 与 gitleaks.yml 相同：PR 的新推送可以取消旧的校验；push 不取消，且 group 带 run_id 使每次 push 运行独立
+# （GitHub 会取消同组中“排队中”的旧运行，与 cancel-in-progress 无关）。
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   offline:
     runs-on: ubuntu-latest

@@ -1,0 +1,40 @@
+# gitleaks 配置（SEC-01A）：在官方默认规则基础上扩展。
+# 规则：只对“确定的误报”（占位符/测试夹具）做窄范围 allowlist，每条写明原因；绝不对真实密钥做 allowlist。
+title = "AI-CloudOps-aiops gitleaks config"
+
+[extend]
+useDefault = true
+
+# 知识库 curl 示例改为引用环境变量 ${AIOPS_API_KEY}（SEC-01A 第三轮 E (c)），默认规则 curl-auth-header 不把变量引用当成密钥，
+# 因此删除了原来针对字面占位符 "your-api-key" 的 allowlist：知识库里再出现 your-api-key 也会照常报出。
+
+# 兜底规则（SEC-01A 第三轮 E (b)）：知识库目录下任何 "Bearer <值>" 都报，不限 curl、不限一条命令里第几个头
+# （补 curl-auth-header 只报第一个头、非 curl 的 HTTP 头示例不报的缺口，见 review3c second-bearer.log 用例 3/8/9/10）。
+# - 分隔符（review3h P3-c）：Bearer 后跟空白，或 ":" / "="（两侧可有空白）；空白包括 \s、Unicode 空格类 \p{Zs}（含不换行空格 U+00A0）和 U+FEFF。
+# - 捕获组 1 是 secret（review3h P3-c 改）：Bearer 之后到下一个空白为止的整段，只去掉一个前导引号，以及收尾的
+#   “可带反斜杠的一个引号 + 若干 , ; ) } ] 引号 反斜杠”或“若干 , ; ) ]”（无引号时不去 }，保证 $X_API_KEY} 这种不配对写法照常报）。
+#   引号中间不再截断："Bearer "${X}"TOKEN"、'Bearer '$X'TOKEN'、${S3_API_KEY}"TOKEN" 等拼接写法的 secret 是整段，
+#   不会只取到变量引用而被 allowlist 放行。旧写法（到引号即截断）会漏报这些拼接，见 review3h p3c-red.log。
+# - (?i)：bearer 大小写不敏感；不设 entropy，散文里的 "Bearer token" 也会报，知识库里请写成 ${XXX_API_KEY} 形式的变量引用
+#   （调本服务用 ${AIOPS_API_KEY}，调 OpenAI 用 ${OPENAI_API_KEY}）。
+# - 规则内 allowlist（review3f，review3g 收紧）只放行 secret 整体是“大写字母开头、只含大写字母/数字/下划线、以 _API_KEY 结尾”的变量引用，
+#   且花括号必须成对：$NAME_API_KEY 或 ${NAME_API_KEY}；${OPENAI_API_KEY、$OPENAI_API_KEY}（不配对）、$OPENAI_API_KEY_x、
+#   ${api_key}、${X_API_KEY}abc 等都照常报。
+#   不放行 your-api-key 等字面占位符，不按行、不按路径放行。
+#   只有 secret 整段恰好是变量引用才放行；变量与任何值拼接（${S3_API_KEY}TOKEN、"${S3_API_KEY}"TOKEN 等）都照常报。
+#   另：默认配置的全局 allowlist 本身会放行只含字母和下划线、不含数字的 $NAME / ${NAME}（实测大小写混写也放行），
+#   所以 $OPENAI_API_KEY_x、${api_key} 在整套配置下也是 0 条；本规则自身不放行它们（见 test-gitleaks-allowlist-bearer.sh）。
+#   因此本规则 allowlist 实际只对带数字的变量名（如 ${S3_API_KEY}）起作用；“弃用 useDefault”已记入 backlog。
+# 注意：CI 从基准提交读取本文件，引入本规则的 PR 本身仍按基准上的配置扫描，合入后才生效。
+[[rules]]
+id = "kb-bearer-token"
+description = "Bearer token in knowledge-base docs (any context, not only curl)"
+regex = '''(?i)\bBearer(?:[\s\p{Zs}\x{FEFF}]*[:=][\s\p{Zs}\x{FEFF}]*|[\s\p{Zs}\x{FEFF}]+)["'`]?([^\s\p{Zs}\x{FEFF}]+?)(?:\\?["'`][,;)}\]"'`\\]*|[,;)\]]*)(?:[\s\p{Zs}\x{FEFF}]|$)'''
+secretGroup = 1
+path = '''^data/knowledge_base/'''
+keywords = ["bearer"]
+
+[[rules.allowlists]]
+description = "environment variable reference to an *_API_KEY variable (e.g. AIOPS_API_KEY, OPENAI_API_KEY)"
+regexTarget = "secret"
+regexes = ['''^\$(\{[A-Z][A-Z0-9_]*_API_KEY\}|[A-Z][A-Z0-9_]*_API_KEY)$''']
