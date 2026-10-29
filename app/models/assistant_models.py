@@ -22,7 +22,8 @@ class AssistantRequest(BaseModel):
         default=None, description="对话历史"
     )
     use_web_search: bool = Field(default=False, description="是否使用网络搜索")
-    session_id: Optional[str] = Field(default=None, description="会话ID")
+    session_id: Optional[str] = Field(default=None, max_length=64, description="会话ID")
+    turn_id: Optional[str] = Field(default=None, max_length=36, description="本次请求的UUID，重试时保持不变")
 
 
 class AddDocumentRequest(BaseModel):
@@ -38,6 +39,7 @@ class AssistantResponse(BaseModel):
     recall_rate: Optional[float] = None
     follow_up_questions: Optional[List[str]] = None
     session_id: Optional[str] = None
+    turn_id: Optional[str] = None
 
 
 class SessionInfoResponse(BaseModel):
@@ -47,6 +49,12 @@ class SessionInfoResponse(BaseModel):
     message_count: int
     mode: int
     status: str
+    revision: Optional[int] = None
+    conversation_history: Optional[List[Dict[str, Any]]] = None
+    active_turn_id: Optional[str] = None
+    last_turn_id: Optional[str] = None
+    active_question: Optional[str] = None
+    active_mode: Optional[int] = None
 
 
 class ServiceInfoResponse(BaseModel):

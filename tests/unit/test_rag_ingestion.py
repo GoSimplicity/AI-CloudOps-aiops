@@ -158,8 +158,9 @@ def test_rag_failed_result_is_not_a_successful_api_answer(monkeypatch):
     from fastapi.testclient import TestClient
 
     from app.api.routes import assistant
+    from app.services.assistant_sessions import AssistantSessions
 
-    service = OptimizedAssistantService()
+    service = OptimizedAssistantService(sessions=AssistantSessions())
     service._initialized = True
     service._assistant = SimpleNamespace(get_answer=AsyncMock(return_value={"success": False, "answer": "provider failure"}))
     monkeypatch.setattr(assistant, "get_assistant_service", AsyncMock(return_value=service))

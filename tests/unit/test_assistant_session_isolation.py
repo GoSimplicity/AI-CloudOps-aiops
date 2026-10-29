@@ -12,6 +12,7 @@ from app.api.routes import assistant
 from app.config.settings import config
 from app.core.agents.enterprise_assistant import RAGAssistant
 from app.services.assistant_service import OptimizedAssistantService
+from app.services.assistant_sessions import AssistantSessions
 
 KEY = "offline-session-service-key-32-characters"
 
@@ -21,7 +22,7 @@ def session_client(monkeypatch):
     store = SimpleNamespace(collection_name="offline")
     rag = RAGAssistant(store, None)
     rag.graph = SimpleNamespace(ainvoke=AsyncMock(return_value={"answer": "private answer", "confidence": 0.9, "sources": []}))
-    service = OptimizedAssistantService()
+    service = OptimizedAssistantService(sessions=AssistantSessions())
     service._initialized = True
     service._assistant = rag
     monkeypatch.setattr(assistant, "get_assistant_service", AsyncMock(return_value=service))

@@ -67,7 +67,8 @@ def test_mcp_failure_is_http_error_and_does_not_initialize_rag(monkeypatch):
     mcp = MCPService()
     mcp._initialized = True
     mcp._mcp_assistant = SimpleNamespace(process_query=AsyncMock(side_effect=RuntimeError("private-token")))
-    service = OptimizedAssistantService()
+    from app.services.assistant_sessions import AssistantSessions
+    service = OptimizedAssistantService(sessions=AssistantSessions())
     service.initialize = AsyncMock(side_effect=AssertionError("MCP must not initialize RAG"))
     monkeypatch.setattr(service, "_get_mcp_service", AsyncMock(return_value=mcp))
     monkeypatch.setattr(assistant_routes, "get_assistant_service", AsyncMock(return_value=service))

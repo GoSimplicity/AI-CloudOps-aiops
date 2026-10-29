@@ -158,6 +158,7 @@ async def assistant_query(
         question=valid_req.question,
         mode=valid_req.mode,
         session_id=valid_req.session_id,
+        turn_id=valid_req.turn_id,
     )
 
     response = AssistantResponse(
@@ -167,6 +168,7 @@ async def assistant_query(
         recall_rate=result.get("recall_rate"),
         follow_up_questions=result.get("follow_up_questions"),
         session_id=result.get("session_id"),
+        turn_id=result.get("turn_id"),
     )
 
     return response.dict()
@@ -189,6 +191,12 @@ async def get_session_info(session_id: str) -> Dict[str, Any]:
         message_count=session_info.get("message_count", 0),
         mode=session_info.get("mode", 1),
         status=session_info.get("status", "active"),
+        revision=session_info.get("revision"),
+        conversation_history=session_info.get("conversation_history"),
+        active_turn_id=session_info.get("active_turn_id"),
+        last_turn_id=session_info.get("last_turn_id"),
+        active_question=session_info.get("active_question"),
+        active_mode=session_info.get("active_mode"),
     )
 
     return response.dict()

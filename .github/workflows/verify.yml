@@ -38,6 +38,7 @@ jobs:
           CLOUDOPS_TEST_GENERATION_GC=true python -m pytest -q tests/unit/test_generation_gc.py
           PYTHONPATH=. python scripts/manual_checks/rag_refresh_redis.py --execute
           PYTHONPATH=. python scripts/manual_checks/autofix_redis.py --execute
+          CLOUDOPS_TEST_ASSISTANT_REDIS=true python -m pytest -q tests/integration/test_assistant_session_redis.py
       - run: cp env.example .env
       - run: docker compose config --quiet
         env:

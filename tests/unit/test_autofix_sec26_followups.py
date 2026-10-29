@@ -140,10 +140,11 @@ async def test_s5_confirm_rereads_whitelist_from_current_config(monkeypatch) -> 
     assert_no_writes(client)
 
 
-def test_s5_docs_state_restart_required_and_pending_cleared() -> None:
+def test_s5_docs_describe_restart_and_persistent_approval() -> None:
     guide = (REPO / "docs/autofix_guide.md").read_text(encoding="utf-8")
-    assert "改白名单要重启" in guide
-    assert "重启会清掉待审批项" in guide
+    assert "修改白名单需重启" in guide
+    assert "Redis 持久审批可在重启后查询" in guide
+    assert "旧进程内审批不能迁移" in guide
 
 
 # ---------------------------------------------------------------- s6：固定文案 + error_code，状态码按异常类型映射
