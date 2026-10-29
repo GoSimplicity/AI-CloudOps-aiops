@@ -28,6 +28,7 @@ from app.core.autofix.remediation import (
 from app.services import kubernetes as k8s_module
 from app.services.autofix_service import AutoFixService
 from app.services.kubernetes import KubernetesService
+from app.services.workflow_approvals import WorkflowApprovals
 from tests.unit.test_autofix_sec26_repair_bootstrap import make_app
 
 NS = "default"
@@ -191,14 +192,14 @@ def human():
 
 
 def make_service(sdk: FakeSDK) -> AutoFixService:
-    service = AutoFixService()
+    service = AutoFixService(approvals=WorkflowApprovals())
     service._initialized = True
     service._remediation_engine = service._build_remediation_engine(make_k8s_service(sdk))
     return service
 
 
 def run_workflow(client, event: str, **extra) -> Dict[str, Any]:
-    body = {"problem_description": f"deployment api {event}", "deployment": "api", "namespace": NS, "event": event, **extra}
+    body = {"problem_description": f"deployment api {event}", "deployment": "api", "namespace": NS, "event": event, "operation_id": "11111111-1111-4111-8111-111111111111", **extra}
     response = client.post("/autofix/workflow", json=body)
     assert response.status_code == 200, response.text
     return response.json()["data"]
@@ -702,7 +703,7 @@ async def test_service_maps_gate_refusal_to_403(monkeypatch) -> None:
     from app.common.identity import principal_scope
     from tests.unit.test_autofix_approval_isolation import ACTION, create_plan, pending_result  # noqa: F401
 
-    service = AutoFixService()
+    service = AutoFixService(approvals=WorkflowApprovals())
     service._initialized = True
     original = pending_result()
     service._ops_workflow = MagicMock()
@@ -851,7 +852,7 @@ async def test_service_maps_principal_refusal_to_403() -> None:
     from app.common.identity import principal_scope
     from tests.unit.test_autofix_approval_isolation import ACTION, create_plan, pending_result
 
-    service = AutoFixService()
+    service = AutoFixService(approvals=WorkflowApprovals())
     service._initialized = True
     original = pending_result()
     service._ops_workflow = MagicMock()

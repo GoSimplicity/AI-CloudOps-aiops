@@ -16,6 +16,7 @@ from app.common.exceptions import AIOpsException
 from app.common.identity import principal_scope
 from app.config.settings import config
 from app.services.autofix_service import AutoFixService
+from app.services.workflow_approvals import WorkflowApprovals
 
 KEY = "offline-autofix-approval-service-key"
 ACTION = "restart-deployment"
@@ -37,7 +38,7 @@ def pending_result():
 
 @pytest.fixture
 def service():
-    service = AutoFixService()
+    service = AutoFixService(approvals=WorkflowApprovals())
     service._initialized = True
     service._ops_workflow = SimpleNamespace(run=AsyncMock(side_effect=lambda _, **__: deepcopy(pending_result())))
     service._remediation_engine = SimpleNamespace(

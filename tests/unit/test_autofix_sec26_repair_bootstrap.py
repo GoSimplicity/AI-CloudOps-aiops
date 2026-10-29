@@ -14,6 +14,7 @@ from app.common.exceptions import AIOpsException, FeatureDisabledError
 from app.common.identity import principal_scope
 from app.config.settings import AutoFixConfig, config
 from app.services.autofix_service import AutoFixService
+from app.services.workflow_approvals import WorkflowApprovals
 from tests.unit.test_autofix_sec26_run_lockdown import assert_no_writes, make_service, mock_k8s
 
 KEY = "offline-autofix-sec26-service-key"
@@ -58,7 +59,7 @@ def test_repair_and_bootstrap_config_defaults_are_off(monkeypatch) -> None:
 def test_disabled_endpoints_return_403_without_initializing(monkeypatch, path, body, switch) -> None:
     monkeypatch.setattr(config.autofix, "repair_enabled", False)
     monkeypatch.setattr(config.autofix, "bootstrap_enabled", False)
-    service = AutoFixService()
+    service = AutoFixService(approvals=WorkflowApprovals())
     initialize = AsyncMock(side_effect=AssertionError("disabled endpoint must not initialize kubernetes"))
     monkeypatch.setattr(service, "initialize", initialize)
     client = make_app(monkeypatch, service)
@@ -198,7 +199,7 @@ def bootstrap_service(monkeypatch):
     from app.services import kubernetes as kubernetes_module
 
     monkeypatch.setattr(kubernetes_module, "KubernetesService", MagicMock(side_effect=AssertionError("must not build k8s client")))
-    service = AutoFixService()
+    service = AutoFixService(approvals=WorkflowApprovals())
     service._initialized = True
     k8s_service = AsyncMock()
     k8s_service.apply_yaml_file.return_value = {"success": True}

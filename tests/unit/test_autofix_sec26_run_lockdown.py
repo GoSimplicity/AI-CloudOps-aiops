@@ -10,6 +10,7 @@ from app.common.identity import principal_scope
 from app.config.settings import AutoFixConfig, _parse_namespace_list, config
 from app.core.autofix.remediation import AutoFixRemediationEngine
 from app.services.autofix_service import AutoFixService
+from app.services.workflow_approvals import WorkflowApprovals
 
 WRITE_METHODS = ("patch_deployment", "scale_deployment", "restart_deployment")
 
@@ -78,7 +79,7 @@ def assert_no_writes(client: AsyncMock) -> None:
 
 
 def make_service(client: AsyncMock) -> AutoFixService:
-    service = AutoFixService()
+    service = AutoFixService(approvals=WorkflowApprovals())
     service._initialized = True
     service._remediation_engine = service._build_remediation_engine(client)
     return service
@@ -238,7 +239,7 @@ async def test_legacy_switch_restores_auto_execution_inside_whitelist_only(monke
     client = mock_k8s(pods=live_pods())
     service = make_service(client)
     result = await service.execute_multi_agent_workflow(
-        {"problem_description": "deployment api CrashLoopBackOff", "deployment": "api", "namespace": "default", "event": EVENTS["crashloop"]}
+        {"problem_description": "deployment api CrashLoopBackOff", "deployment": "api", "namespace": "default", "event": EVENTS["crashloop"], "operation_id": "11111111-1111-4111-8111-111111111111"}
     )
     assert result["status"] == "completed"
     assert client.restart_deployment.await_count == 1

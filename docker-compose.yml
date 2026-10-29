@@ -108,13 +108,13 @@ services:
   #            wait"
 
   redis:
-    image: redis:6.2.5
+    image: redis:7.4.11-alpine
     container_name: redis
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD}"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD}"]
     restart: unless-stopped
     networks:
       - aiops-network

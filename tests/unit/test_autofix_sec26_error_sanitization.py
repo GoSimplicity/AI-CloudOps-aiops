@@ -10,6 +10,7 @@ from app.config.settings import config
 from app.core.autofix.remediation import AutoFixRemediationEngine
 from app.services import kubernetes as kubernetes_module
 from app.services.autofix_service import AutoFixService
+from app.services.workflow_approvals import WorkflowApprovals
 from tests.unit.test_autofix_sec26_repair_bootstrap import make_app
 from tests.unit.test_autofix_sec26_run_lockdown import mock_k8s
 
@@ -49,7 +50,7 @@ def debug_on(monkeypatch):
 
 
 def service_with_fixer(k8s) -> AutoFixService:
-    service = AutoFixService()
+    service = AutoFixService(approvals=WorkflowApprovals())
     service._initialized = True
     service._k8s_fixer = MagicMock(k8s_service=k8s)
     service._remediation_engine = service._build_remediation_engine(k8s)
@@ -101,7 +102,7 @@ def test_diagnose_route_hides_exception(monkeypatch, caplog) -> None:
 
 async def test_service_initialize_hides_exception(monkeypatch, caplog) -> None:
     monkeypatch.setattr(kubernetes_module, "KubernetesService", MagicMock(side_effect=leak()))
-    service = AutoFixService()
+    service = AutoFixService(approvals=WorkflowApprovals())
     with caplog.at_level(logging.ERROR), pytest.raises(AutoFixError) as raised:
         await service._do_initialize()
     assert SECRET not in raised.value.message and SECRET not in str(raised.value.details)

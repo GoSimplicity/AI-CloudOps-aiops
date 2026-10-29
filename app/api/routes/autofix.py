@@ -218,27 +218,61 @@ async def confirm_workflow(
             raise WorkflowApprovalError(409, "审批执行超时，可能已产生副作用，禁止重试同一计划，请人工核对") from error
     except AIOpsException as error:
         # SEC-44 二次修正 Q6：所有确认错误都带上请求结束时该审批对当前请求者的状态（pending/voided/consumed）
-        error.approval_state = _confirm_approval_state(service, request.plan_id)
+        error.approval_state = await _confirm_approval_state(service, request.plan_id)
         raise
     except HTTPException:
         raise
     except Exception as error:
         logger.error("确认自动修复工作流发生未处理异常: 错误类型=%s", type(error).__name__)
         wrapped = WorkflowApprovalError(500, "确认自动修复工作流失败: 服务器内部错误", error_code="confirm_internal_error")
-        wrapped.approval_state = _confirm_approval_state(service, request.plan_id)
+        wrapped.approval_state = await _confirm_approval_state(service, request.plan_id)
         raise wrapped from error
 
 
-def _confirm_approval_state(service: Any, plan_id: Any) -> str:
-    """服务未就绪（尚未拿到审批存储）时本请求没有触碰审批 → pending；查询本身出错时保守返回 voided"""
+async def _confirm_approval_state(service: Any, plan_id: Any) -> str:
+    """服务未就绪（尚未拿到审批存储）时本请求没有触碰审批 → pending；查询本身出错时保守返回 consumed，禁止盲目重试"""
     approvals = getattr(service, "_approvals", None)
     if approvals is None:
         return "pending"
     try:
-        return approvals.approval_state(plan_id)
+        result = approvals.approval_state(plan_id)
+        return await result if hasattr(result, "__await__") else result
     except Exception as error:
         logger.error("查询审批状态失败: 错误类型=%s", type(error).__name__)
-        return "voided"
+        return "consumed"
+
+
+@router.get("/workflow/history", summary="查询当前用户的修复操作历史", response_model=BaseResponse)
+@api_response("查询修复操作历史")
+async def workflow_history(limit: int = 50) -> Dict[str, Any]:
+    require_principal()
+    if limit < 1 or limit > 50:
+        raise DomainValidationError("limit", "每次最多读取50条记录")
+    service = await get_autofix_service()
+    if not hasattr(service._approvals, "history"):
+        raise WorkflowApprovalError(503, "审批历史不可用")
+    return {"items": await service._approval_call("history", limit)}
+
+
+@router.get("/workflow/operations/{operation_id}", summary="查询当前用户的修复操作", response_model=BaseResponse)
+@api_response("查询修复操作")
+async def workflow_operation(operation_id: str) -> Dict[str, Any]:
+    require_principal()
+    normalized = AutoFixService._normalize_operation_id(operation_id)
+    service = await get_autofix_service()
+    if not hasattr(service._approvals, "get_operation"):
+        raise WorkflowApprovalError(503, "审批历史不可用")
+    return await service._approval_call("get_operation", normalized)
+
+
+@router.get("/workflow/plans/{plan_id}", summary="查询当前用户的修复计划", response_model=BaseResponse)
+@api_response("查询修复计划")
+async def workflow_plan(plan_id: str) -> Dict[str, Any]:
+    require_principal()
+    service = await get_autofix_service()
+    if not hasattr(service._approvals, "get_plan"):
+        raise WorkflowApprovalError(503, "审批历史不可用")
+    return await service._approval_call("get_plan", plan_id)
 
 
 @router.post(

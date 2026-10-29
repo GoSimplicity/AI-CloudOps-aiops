@@ -14,8 +14,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime
+import hashlib
+import inspect
+import json
 import logging
 from typing import Any, Dict, List, Optional
+import uuid
 
 from kubernetes.client.rest import ApiException
 import urllib3
@@ -46,7 +50,8 @@ from ..core.autofix.policy import (  # noqa: F401  ensure_repair_enabled / REPAI
 from ..core.interfaces.k8s_client import K8sClient
 from ..core.interfaces.llm_client import NullLLMClient
 from .base import BaseService, error_brief
-from .workflow_approvals import CONFIRM_ENDPOINT, WorkflowApproval, WorkflowApprovals
+from .workflow_approval_redis import RedisWorkflowApprovals
+from .workflow_approvals import CONFIRM_ENDPOINT, WorkflowApproval
 
 # SEC-26 P3-e：diagnose 原样上抛的已脱敏领域异常（ServiceUnavailableError 单独处理：去掉 details 后上抛）
 _DIAGNOSE_PASSTHROUGH_ERRORS = (
@@ -89,15 +94,39 @@ def ensure_bootstrap_namespace_allowed() -> None:
 class AutoFixService(BaseService):
     """自动修复服务"""
 
-    def __init__(self) -> None:
+    def __init__(self, approvals: Any = None) -> None:
         super().__init__("autofix")
         self._k8s_fixer: Optional[K8sFixerAgent] = None
         self._supervisor: Optional[SupervisorAgent] = None
         self._remediation_engine: Optional[AutoFixRemediationEngine] = None
         self._ops_workflow: Optional[OpsMultiAgentWorkflow] = None
-        self._approvals = WorkflowApprovals()
+        self._approvals = approvals if approvals is not None else RedisWorkflowApprovals()
         self._closing = False
         self._active_operations: dict[asyncio.Task[Any], str] = {}
+
+    async def _approval_call(self, method: str, *args: Any) -> Any:
+        result = getattr(self._approvals, method)(*args)
+        return await result if inspect.isawaitable(result) else result
+
+    async def _mark_effects_started(self, record: WorkflowApproval) -> None:
+        if hasattr(self._approvals, "mark_effects_started"):
+            await self._approval_call("mark_effects_started", record)
+        else:
+            record.effects_started = True
+
+    @staticmethod
+    def _normalize_operation_id(value: Any) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValidationError("operation_id", "操作 ID 必须是 UUID")
+        try:
+            parsed = uuid.UUID(value)
+        except ValueError as error:
+            raise ValidationError("operation_id", "操作 ID 必须是 UUID") from error
+        if str(parsed) != value.lower():
+            raise ValidationError("operation_id", "操作 ID 必须是标准 UUID")
+        return str(parsed)
 
     @asynccontextmanager
     async def _operation(self) -> AsyncIterator[None]:
@@ -187,29 +216,49 @@ class AutoFixService(BaseService):
         require_principal()
         if not isinstance(request, dict) or not isinstance(request.get("problem_description"), str) or not request["problem_description"].strip():
             raise ValidationError("problem_description", "问题描述不能为空")
-        reservation = self._approvals.reserve()
+        operation_id = self._normalize_operation_id(request.get("operation_id"))
+        normalized_request = {key: value for key, value in request.items() if key != "operation_id"}
+        try:
+            request_hash = hashlib.sha256(json.dumps(normalized_request, sort_keys=True, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode()).hexdigest()
+        except (TypeError, ValueError) as error:
+            raise ValidationError("request", "工作流请求格式无效") from error
+        reservation = await self._approval_call("reserve", operation_id, request_hash)
         try:
             await self.initialize()
         except BaseException:
-            self._approvals.discard(reservation)
+            try:
+                await self._approval_call("discard", reservation)
+            except Exception:
+                self.logger.error("审批初始化状态保存失败")
             raise
         try:
             # 工作流内部可能执行低风险动作，异常后不能假定没有副作用
-            reservation.effects_started = True
-            result = await self._run_multi_agent_workflow(request, plan_only=plan_only)
-            if plan_only and (result.get("executed_actions") or (result.get("execution") or {}).get("executed_actions")):
+            await self._mark_effects_started(reservation)
+            effective_plan_only = plan_only or operation_id is None
+            result = await self._run_multi_agent_workflow(request, plan_only=effective_plan_only)
+            if operation_id:
+                result["operation_id"] = operation_id
+            elif not plan_only:
+                result["automatic_execution"] = {"enabled": False, "reason": "缺少稳定 operation_id，本次仅生成待审批计划"}
+            if effective_plan_only and (result.get("executed_actions") or (result.get("execution") or {}).get("executed_actions")):
                 # 防御：plan_only 调用绝不允许出现执行记录；一旦出现按结果不确定处理（下方 except 记为 uncertain 并返回 409）
                 raise AutoFixError("只出计划的调用出现了执行记录")
             if result.get("status") == "failed" or (result.get("execution") or {}).get("status") == "failed":
                 raise WorkflowApprovalError(409, "工作流执行失败，可能已产生副作用，禁止盲目重试，请人工核对")
-            self._approvals.publish(reservation, result)
+            await self._approval_call("publish", reservation, result)
             return result
         except asyncio.CancelledError:
-            self._approvals.fail(reservation, "工作流已中断，可能已产生副作用，不能盲目重试，请人工核对")
+            try:
+                await self._approval_call("fail", reservation, "工作流已中断，可能已产生副作用，不能盲目重试，请人工核对")
+            except Exception:
+                self.logger.error("工作流中断状态保存失败")
             raise
         except Exception as error:
             reason = "工作流结果不确定，可能已产生副作用，禁止盲目重试，请人工核对"
-            self._approvals.fail(reservation, reason)
+            try:
+                await self._approval_call("fail", reservation, reason)
+            except Exception:
+                self.logger.error("工作流结果状态保存失败")
             raise WorkflowApprovalError(409, reason) from error
 
     async def _run_multi_agent_workflow(self, request: Dict[str, Any], *, plan_only: bool = False) -> Dict[str, Any]:
@@ -266,7 +315,7 @@ class AutoFixService(BaseService):
         require_principal()
         if not isinstance(plan_id, str) or not plan_id.strip():
             raise ValidationError("plan_id", "计划ID不能为空")
-        record = self._approvals.claim(plan_id.strip(), approved_action_ids)
+        record = await self._approval_call("claim", plan_id.strip(), approved_action_ids)
         claim_token = record.claim_token
         normalized_ids = [action_id.strip() for action_id in approved_action_ids]
         try:
@@ -274,21 +323,27 @@ class AutoFixService(BaseService):
             result = await self._confirm_claimed_workflow(record, normalized_ids)
             if (result.get("execution") or {}).get("status") != "completed":
                 raise WorkflowApprovalError(409, "动作执行未全部确认成功，可能已产生副作用，禁止重试同一计划，请人工核对")
-            self._approvals.publish(record, result)
+            await self._approval_call("publish", record, result)
             return result
         except asyncio.CancelledError:
-            self._approvals.fail(record, "审批执行已中断，可能已产生副作用，不能重试同一计划，请人工核对")
+            try:
+                await self._approval_call("fail", record, "审批执行已中断，可能已产生副作用，不能重试同一计划，请人工核对")
+            except Exception:
+                self.logger.error("审批中断状态保存失败")
             raise
         except Exception as error:
             # SEC-44 二次修正 Q1：仅“意图审计写入失败、确定没有执行任何动作”时把审批释放回 pending（CAS，见
             # WorkflowApprovals.release）；其它任何失败照旧作废（invalidated）或标记结果不确定（uncertain）
-            if isinstance(error, WorkflowApprovalError) and error.release_approval and self._approvals.release(record, claim_token):
+            if isinstance(error, WorkflowApprovalError) and error.release_approval and await self._approval_call("release", record, claim_token):
                 raise
             if record.effects_started:
                 reason = "审批执行结果不确定，可能已产生副作用，禁止重试同一计划，请人工核对"
             else:
                 reason = "审批已失效，尚未执行确认动作，请重新生成计划，不能重试原审批"
-            self._approvals.fail(record, reason)
+            try:
+                await self._approval_call("fail", record, reason)
+            except Exception:
+                self.logger.error("审批结果状态保存失败")
             if isinstance(error, WorkflowApprovalError):
                 raise
             raise WorkflowApprovalError(409, reason) from error
@@ -434,7 +489,7 @@ class AutoFixService(BaseService):
         if self._namespace_precheck_refusal(plan.get("namespace", "default"), plan["allowed_actions"], engine, shared_engine):
             raise WorkflowApprovalError(403, "执行前重新校验命名空间限制未通过，未执行任何动作，请重新诊断")
 
-        record.effects_started = True
+        await self._mark_effects_started(record)
         # SEC-44：确认后执行显式标记 trigger="confirm"（不做自动执行条件校验，仍经写操作门禁与审计）
         execution = await engine.execute_plan(plan, trigger="confirm")
         current_executed_actions = execution.get("executed_actions", [])
@@ -900,7 +955,10 @@ class AutoFixService(BaseService):
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
             self._active_operations.clear()
-            self._approvals.clear()
+            if hasattr(self._approvals, "close"):
+                await self._approval_call("close")
+            else:
+                await self._approval_call("clear")
             self.logger.info("开始清理自动修复服务资源...")
 
             # 清理K8s修复代理

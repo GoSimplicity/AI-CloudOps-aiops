@@ -74,7 +74,7 @@ async def test_repair_plan_only_does_not_leak_into_concurrent_run(both_switches_
     """plan_only 只随本次调用的状态传递：并发的 /autofix/run 仍按 auto_execute_enabled 执行，repair 仍只出计划"""
     client = mock_k8s(pods=live_pods())
     service = make_service(client)
-    run_request = {"problem_description": f"deployment api {CRASHLOOP}", "deployment": "api", "namespace": "default", "event": CRASHLOOP}
+    run_request = {"problem_description": f"deployment api {CRASHLOOP}", "deployment": "api", "namespace": "default", "event": CRASHLOOP, "operation_id": "11111111-1111-4111-8111-111111111111"}
 
     repaired, ran = await asyncio.gather(
         service.fix_kubernetes_deployment("api", "default", event=CRASHLOOP),

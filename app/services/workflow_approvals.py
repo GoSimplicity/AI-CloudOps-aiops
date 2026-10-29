@@ -1,7 +1,7 @@
 """单进程有界审批记录，随机ID仅定位，归属与原子状态负责授权"""
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import json
 import time
@@ -34,11 +34,16 @@ class WorkflowApproval:
     state: str
     expires: float
     expires_at: str
-    result: dict[str, Any] | None = None
+    result: dict[str, Any] | None = field(default=None, repr=False)
     effects_started: bool = False
     reason: str = ""
     # SEC-44 二次修正 Q1：每次 claim 生成的一次性领取令牌；release 以它做 CAS，迟到的旧领取者无法释放新领取
     claim_token: str = ""
+    operation_id: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+    payload_snapshot: str = field(default="", repr=False)
+    claimed_action_ids: list[str] = field(default_factory=list, repr=False)
 
 
 class WorkflowApprovals:
@@ -62,7 +67,7 @@ class WorkflowApprovals:
         record.expires = self.clock() + self.ttl
         record.expires_at = (datetime.now(timezone.utc) + timedelta(seconds=self.ttl)).isoformat()
 
-    def reserve(self) -> WorkflowApproval:
+    def reserve(self, operation_id: str | None = None, request_hash: str = "") -> WorkflowApproval:
         owner = require_principal()
         self.cleanup_expired()
         if len(self.records) >= self.maximum or sum(record.owner == owner for record in self.records.values()) >= self.per_owner:
@@ -71,6 +76,7 @@ class WorkflowApprovals:
         if record.plan_id in self.records:
             raise WorkflowApprovalError(503, "审批标识生成冲突，请稍后重新生成")
         self._deadline(record)
+        record.operation_id = operation_id or ""
         self.records[record.plan_id] = record
         return record
 

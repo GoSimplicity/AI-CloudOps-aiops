@@ -9,6 +9,7 @@ from app.common.exceptions import AIOpsException
 from app.common.identity import principal_scope
 from app.config.settings import config
 from app.services.autofix_service import AutoFixService
+from app.services.workflow_approvals import WorkflowApprovals
 from tests.unit.test_autofix_sec26_repair_bootstrap import (
     KEY,
     REPAIR_BODY,
@@ -37,7 +38,7 @@ def confirming_user():
 def test_repair_unauthenticated_is_401_regardless_of_switch(monkeypatch, enabled, headers) -> None:
     monkeypatch.setattr(config.autofix, "repair_enabled", enabled)
     monkeypatch.setattr(config.autofix, "allowed_namespaces", ["default"] if enabled else [])
-    service = AutoFixService()
+    service = AutoFixService(approvals=WorkflowApprovals())
     monkeypatch.setattr(service, "initialize", AsyncMock(side_effect=AssertionError("must not initialize")))
     monkeypatch.setattr(service, "fix_kubernetes_deployment", AsyncMock(side_effect=AssertionError("must not run")))
     client = make_app(monkeypatch, service)
