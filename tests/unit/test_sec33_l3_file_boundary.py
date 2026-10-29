@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -117,15 +118,21 @@ async def test_stats_of_unreadable_file_works_without_opening(root):
     assert result["size_bytes"] == 3 and result["permissions"] == "000"
 
 
-async def test_stats_of_unix_socket_works_without_opening(root):
+async def test_stats_of_unix_socket_works_without_opening(monkeypatch):
     import socket
 
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        server.bind(str(root / "sock"))
-        result = await FileStatsTool().execute({"path": "sock"})
-    finally:
-        server.close()
+    # macOS AF_UNIX 路径长度有限；使用自有短目录而不依赖 pytest 临时目录长度
+    with tempfile.TemporaryDirectory(prefix="co-", dir="/tmp") as folder:
+        root = Path(folder).resolve()
+        monkeypatch.setenv("MCP_FILE_ROOT", str(root))
+        file_boundary.reset_file_root_cache()
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            server.bind(str(root / "sock"))
+            result = await FileStatsTool().execute({"path": "sock"})
+        finally:
+            server.close()
+            file_boundary.reset_file_root_cache()
     assert result["exists"] is True and result["type"] == "file"
 
 
