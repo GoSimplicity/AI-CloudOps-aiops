@@ -25,6 +25,7 @@ from app.core.interfaces.prometheus_client import (
 from app.models.rca_models import MetricData
 
 from .base_collector import BaseDataCollector, CollectionBatch
+from .recovering_client import RecoveringClient
 
 
 class MetricsCollector(BaseDataCollector):
@@ -70,6 +71,8 @@ class MetricsCollector(BaseDataCollector):
     async def _do_initialize(self) -> None:
         """初始化Prometheus客户端连接（通过依赖注入）"""
         try:
+            if isinstance(self.prometheus, RecoveringClient):
+                return
             # 如果是空实现，直接返回，让上层服务感知健康状态
             if isinstance(self.prometheus, NullPrometheusClient):
                 self.logger.warning("未注入Prometheus客户端，将以降级模式运行")
@@ -472,5 +475,5 @@ class MetricsCollector(BaseDataCollector):
                 return False
             return await self.prometheus.health_check()
         except Exception as e:
-            self.logger.error(f"指标收集器健康检查失败: {e}")
+            self.logger.error("指标收集器健康检查失败: %s", type(e).__name__)
             return False

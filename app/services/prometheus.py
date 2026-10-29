@@ -40,12 +40,14 @@ class PrometheusService(BaseService):
         super().__init__("prometheus")
         self.base_url = config.prometheus.url
         self.timeout = config.prometheus.timeout
-        self.logger.info(f"初始化Prometheus服务: {self.base_url}")
+        self.logger.info("初始化Prometheus服务")
 
     async def _do_initialize(self) -> None:
         """初始化Prometheus服务"""
         # 测试连接
         await self._test_connection()
+        self._health_status = True
+        self._last_health_check = datetime.now()
 
     async def _do_health_check(self) -> bool:
         """健康检查"""
@@ -72,7 +74,7 @@ class PrometheusService(BaseService):
             response.raise_for_status()
             self.logger.info("Prometheus连接测试成功")
         except Exception as e:
-            self.logger.error(f"Prometheus连接测试失败: {str(e)}")
+            self.logger.error("Prometheus连接测试失败: %s", type(e).__name__)
             raise
 
     async def query_range(
@@ -218,7 +220,7 @@ class PrometheusService(BaseService):
             self.logger.debug(f"Prometheus健康状态: {is_healthy}")
             return is_healthy
         except Exception as e:
-            self.logger.error(f"Prometheus健康检查失败: {str(e)}")
+            self.logger.error("Prometheus健康检查失败: %s", type(e).__name__)
             return False
 
     async def health_check(self) -> bool:

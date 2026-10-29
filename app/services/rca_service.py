@@ -23,6 +23,7 @@ from ..core.rca.events_collector import EventsCollector
 from ..core.rca.logs_collector import LogsCollector
 from ..core.rca.metrics_collector import MetricsCollector
 from ..core.rca.rca_engine import RCAAnalysisEngine
+from ..core.rca.recovering_client import RecoveringClient
 from .base import BaseService, HealthCheckMixin
 from .prometheus import PrometheusService
 
@@ -38,6 +39,7 @@ class RCAService(BaseService, HealthCheckMixin):
     self._metrics_collector: Optional[MetricsCollector] = None
     self._events_collector: Optional[EventsCollector] = None
     self._logs_collector: Optional[LogsCollector] = None
+    self._recovery_clients: List[RecoveringClient] = []
 
     # Redis缓存管理器
     self._cache_manager = None
@@ -72,33 +74,26 @@ class RCAService(BaseService, HealthCheckMixin):
         self._cache_manager = None
 
       # 初始化依赖（LLM、Prometheus、K8s）
-      from ..core.interfaces.k8s_client import NullK8sClient
-      from ..core.interfaces.prometheus_client import NullPrometheusClient
       from ..services.kubernetes import KubernetesService
       from ..services.llm import LLMService
       from ..services.prometheus import PrometheusService
 
       llm_service = LLMService()
 
-      # Prometheus 客户端，失败时降级为空实现
-      prometheus_client = None
-      try:
-        prometheus_client = PrometheusService()
-        await prometheus_client.initialize()
-      except Exception as e:
-        self.logger.warning("Prometheus初始化失败，启用降级模式: %s", type(e).__name__)
-        prometheus_client = NullPrometheusClient()
+      async def connect_prometheus():
+        client = PrometheusService()
+        await client.initialize()
+        return client
 
-      # Kubernetes 客户端，失败或不健康时降级为空实现
-      try:
-        k8s_client = await asyncio.to_thread(KubernetesService)
-        # 明确健康性检查，不健康则使用空实现
-        if not await k8s_client.health_check():
-          self.logger.warning("Kubernetes不健康，启用降级模式")
-          k8s_client = NullK8sClient()
-      except Exception as e:
-        self.logger.warning("Kubernetes初始化失败，启用降级模式: %s", type(e).__name__)
-        k8s_client = NullK8sClient()
+      async def connect_kubernetes():
+        client = await asyncio.to_thread(KubernetesService)
+        if not await client.health_check():
+          raise RuntimeError("Kubernetes不可用")
+        return client
+
+      prometheus_client = RecoveringClient(connect_prometheus)
+      k8s_client = RecoveringClient(connect_kubernetes)
+      self._recovery_clients = [prometheus_client, k8s_client]
 
       # 初始化收集器（依赖注入）
       self._metrics_collector = MetricsCollector(
@@ -476,7 +471,7 @@ class RCAService(BaseService, HealthCheckMixin):
             else cache_health
           )
         except Exception as e:
-          self.logger.warning(f"Redis健康检查失败: {str(e)}")
+          self.logger.warning("Redis健康检查失败: %s", type(e).__name__)
           redis_connected = False
 
       # 判断总体状态
@@ -496,7 +491,7 @@ class RCAService(BaseService, HealthCheckMixin):
       }
 
     except Exception as e:
-      self.logger.error(f"健康检查失败: {str(e)}")
+      self.logger.error("健康检查失败: %s", type(e).__name__)
       return {
         "status": "unhealthy",
         "prometheus_connected": False,
@@ -1148,6 +1143,10 @@ class RCAService(BaseService, HealthCheckMixin):
     """清理RCA服务资源"""
     try:
       self.logger.info("开始清理RCA服务资源...")
+
+      for client in self._recovery_clients:
+        await client.close()
+      self._recovery_clients = []
 
       # 清理缓存管理器
       if self._cache_manager:

@@ -19,6 +19,7 @@ from app.core.interfaces.k8s_client import K8sClient, NullK8sClient
 from app.models.rca_models import EventData, SeverityLevel
 
 from .base_collector import BaseDataCollector, CollectionBatch
+from .recovering_client import RecoveringClient
 
 
 class EventsCollector(BaseDataCollector):
@@ -88,6 +89,8 @@ class EventsCollector(BaseDataCollector):
     async def _do_initialize(self) -> None:
         """初始化Kubernetes客户端（通过依赖注入）"""
         try:
+            if isinstance(self.k8s, RecoveringClient):
+                return
             if isinstance(self.k8s, NullK8sClient):
                 self.logger.warning("未注入K8s客户端，将以降级模式运行")
                 return
@@ -362,7 +365,7 @@ class EventsCollector(BaseDataCollector):
                 return False
             return await self.k8s.health_check()
         except Exception as e:
-            self.logger.error(f"事件收集器健康检查失败: {e}")
+            self.logger.error("事件收集器健康检查失败: %s", type(e).__name__)
             return False
 
     async def get_event_patterns(
