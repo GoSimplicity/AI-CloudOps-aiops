@@ -15,6 +15,7 @@ import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter, Body, HTTPException
+from pydantic import ValidationError as PydanticValidationError
 
 from app.api.decorators import api_response, log_api_call
 from app.common.constants import ErrorMessages, HttpStatusCodes
@@ -24,6 +25,7 @@ from app.common.exceptions import (
     ServiceUnavailableError,
     ValidationError as DomainValidationError,
 )
+from app.core.prediction.backtest import ForecastObservation, rolling_backtest
 from app.models import (
     BaseResponse,
     CpuPredictionRequest,
@@ -35,6 +37,7 @@ from app.models import (
     ServiceInfoResponse,
     ServiceReadyResponse,
 )
+from app.models.prediction_backtest import BacktestRequest
 from app.services.factory import ServiceFactory
 from app.services.prediction_service import PredictionService
 
@@ -47,6 +50,7 @@ except Exception:
 
 router = APIRouter(tags=["prediction"])
 prediction_service = None
+_backtest_slots = asyncio.Semaphore(2)
 
 
 async def get_prediction_service() -> PredictionService:
@@ -56,6 +60,40 @@ async def get_prediction_service() -> PredictionService:
             "prediction", PredictionService
         )
     return prediction_service
+
+
+@router.post("/backtest", summary="滚动评估已记录的预测与观测", response_model=BaseResponse)
+@api_response("预测回测")
+async def backtest_prediction(payload: Any = Body(...)) -> Dict[str, Any]:
+    # Validate locally so Pydantic errors never echo the submitted observations.
+    try:
+        request = BacktestRequest.model_validate(payload)
+    except PydanticValidationError:
+        raise HTTPException(status_code=400, detail="回测请求格式无效") from None
+    records = [ForecastObservation(**row.model_dump()) for row in request.records]
+    try:
+        await asyncio.wait_for(_backtest_slots.acquire(), timeout=0.5)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="回测服务繁忙，请稍后重试") from None
+    try:
+        task = asyncio.create_task(asyncio.to_thread(
+            rolling_backtest, records, window=request.window, min_history=request.min_history
+        ))
+    except BaseException:
+        _backtest_slots.release()
+        raise
+    # Cancellation of the HTTP request must not release a slot while its thread
+    # is still running; the callback owns release until the computation finishes.
+    def release_slot(completed: asyncio.Task) -> None:
+        _backtest_slots.release()
+        if not completed.cancelled():
+            completed.exception()  # consume exceptions even if the caller disconnected
+
+    task.add_done_callback(release_slot)
+    try:
+        return await asyncio.shield(task)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 @router.post(
