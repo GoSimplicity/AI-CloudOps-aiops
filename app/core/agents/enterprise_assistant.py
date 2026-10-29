@@ -331,6 +331,31 @@ class IntentClassifier:
         return base_score
 
 
+async def _knowledge_revision(store) -> Optional[str]:
+    """无版本接口的旧存储不复用缓存；版本读取失败必须显式失败"""
+    from app.core.vector.redis_vector_store import VectorSearchError
+
+    get_revision = getattr(store, "get_revision", None)
+    if not callable(get_revision):
+        return None
+    try:
+        revision = await get_revision()
+    except VectorSearchError:
+        raise
+    except Exception as error:
+        raise VectorSearchError("无法读取知识库版本") from error
+    if not isinstance(revision, str) or not revision:
+        raise VectorSearchError("知识库版本无效")
+    return revision
+
+
+async def _require_knowledge_revision(store, expected: Optional[str]) -> None:
+    if expected is not None and await _knowledge_revision(store) != expected:
+        from app.core.vector.redis_vector_store import VectorSearchError
+
+        raise VectorSearchError("知识库在查询期间发生变化，请重试")
+
+
 class DocumentRetriever:
     def __init__(self, vector_store, strategy: RetrievalStrategy, config=None):
         from app.config.settings import config as app_config
@@ -350,22 +375,27 @@ class DocumentRetriever:
         """文档检索"""
         start_time = time.time()
 
-        # 简化的缓存检查
+        revision = await _knowledge_revision(self.vector_store)
+        # 未提供版本接口的旧存储只能禁用缓存，不能假设内容未变化
         cache_key = None
-        if self.strategy.enable_cache and len(queries) == 1:  # 只为单查询缓存
-            cache_key = hashlib.md5(f"{cache_identity()}:{queries[0]}:{weight}".encode()).hexdigest()
+        if revision is not None and self.strategy.enable_cache and len(queries) == 1:
+            cache_key = hashlib.md5(f"{cache_identity()}:{revision}:{queries[0]}:{weight}".encode()).hexdigest()
             if cache_key in self._cache:
                 cached_time, cached_docs = self._cache[cache_key]
                 if time.time() - cached_time < self.strategy.cache_ttl:
+                    await _require_knowledge_revision(self.vector_store, revision)
                     logger.debug("缓存命中")
                     self._cache_stats["hits"] += 1
                     return cached_docs
 
         self._cache_stats["misses"] += 1
 
+        from app.core.vector.redis_vector_store import VectorSearchError
+
         try:
             all_docs = await self._parallel_retrieval(queries, weight)
             final_docs = self._apply_diversity_filter(all_docs)
+            await _require_knowledge_revision(self.vector_store, revision)
 
             # 更新缓存（简化版）
             if self.strategy.enable_cache and cache_key:
@@ -381,8 +411,10 @@ class DocumentRetriever:
             )
             return final_docs
 
+        except VectorSearchError:
+            raise
         except Exception as e:
-            logger.error(f"检索失败: {e}")
+            logger.error("检索失败，异常类型: %s", type(e).__name__)
             # 提供fallback机制
             return (
                 []
@@ -394,6 +426,8 @@ class DocumentRetriever:
         self, queries: List[str], weight: float
     ) -> List[Document]:
         """并行检索所有查询"""
+        from app.core.vector.redis_vector_store import VectorSearchError
+
         tasks = [self._retrieve_single(q, weight) for q in queries]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -401,8 +435,10 @@ class DocumentRetriever:
         seen_hashes = set()
 
         for docs in results:
+            if isinstance(docs, VectorSearchError):
+                raise docs
             if isinstance(docs, Exception):
-                logger.warning(f"检索失败: {docs}")
+                logger.warning("检索失败，异常类型: %s", type(docs).__name__)
                 continue
 
             for doc in docs:
@@ -449,13 +485,14 @@ class DocumentRetriever:
 
     async def _retrieve_single(self, query: str, weight: float) -> List[Document]:
         """单查询检索"""
+        from app.core.vector.redis_vector_store import VectorSearchError
+
         try:
             if not self.vector_store:
                 logger.warning("向量存储未初始化")
                 return []
 
-            query_preview_length = 50
-            logger.info(f"向量检索: {query[:query_preview_length]}, 权重: {weight}")
+            logger.info("向量检索，权重: %s", weight)
             logger.info(
                 f"配置: k={self.strategy.initial_k}, sim={self.strategy.min_similarity}"
             )
@@ -487,13 +524,14 @@ class DocumentRetriever:
                 doc.metadata = doc.metadata or {}
                 doc.metadata["score"] = score
                 docs.append(doc)
-                logger.debug(f"文档得分: {score:.3f}, 内容: {doc.page_content[:50]}")
+                logger.debug("文档得分: %.3f", score)
 
             return docs
 
+        except VectorSearchError:
+            raise
         except Exception as e:
-            logger.error(f"检索失败: {e}")
-            logger.debug(f"错误详情: {str(e)}")
+            logger.error("检索失败，异常类型: %s", type(e).__name__)
             return []
 
 
@@ -586,8 +624,7 @@ class RAGAssistant:
         return state
 
     async def _retrieve(self, state: EnhancedRAGState) -> EnhancedRAGState:
-        logger.info(f"检索阶段 - 问题: {state.question}")
-        logger.info(f"扩展查询: {state.expanded_queries}")
+        logger.info("检索阶段，扩展查询数: %d", len(state.expanded_queries))
 
         context = self.context_manager.get_context(state.session_id)
         docs = await self.retriever.retrieve(
@@ -596,7 +633,6 @@ class RAGAssistant:
 
         logger.info(f"检索文档: {len(docs) if docs else 0}")
         if docs:
-            logger.info(f"文档预览: {[doc.page_content[:100] for doc in docs[:2]]}")
             docs = await self.reranker.rerank(
                 state.question, docs, context=context, top_k=self.strategy.final_k
             )
@@ -645,28 +681,26 @@ class RAGAssistant:
         self._stats["total_queries"] += 1
 
         try:
-            if self.cache_manager:
+            revision = await _knowledge_revision(self.vector_store)
+            if self.cache_manager and revision is not None:
                 history = self.context_manager.get_session_details(session_id).get("conversation_history", []) if session_id else []
                 scope = cache_identity(session_id, history)
-                cache_input = f"{ServiceConstants.KNOWLEDGE_CACHE_VERSION}:{self.vector_store.collection_name}:{scope}:{question}"
+                cache_input = f"{ServiceConstants.KNOWLEDGE_CACHE_VERSION}:{self.vector_store.collection_name}:{revision}:{scope}:{question}"
                 cache_key = hashlib.md5(cache_input.encode()).hexdigest()
                 cached = await asyncio.to_thread(self.cache_manager.get, cache_key)
                 if cached:
+                    await _require_knowledge_revision(self.vector_store, revision)
                     self._stats["cache_hits"] += 1
                     cached["cache_hit"] = True
                     cached["processing_time"] = time.time() - start_time
                     return cached
-
-            if session_id:
-                self.context_manager.update_context(
-                    session_id, {"recent_queries": [question]}
-                )
 
             initial_state = EnhancedRAGState(question=question, session_id=session_id)
             owner = principal_context.get() or INTERNAL_PRINCIPAL
             config = {"configurable": {"thread_id": f"{owner}:{session_id or 'stateless'}"}}
 
             result = await self.graph.ainvoke(initial_state, config=config)
+            await _require_knowledge_revision(self.vector_store, revision)
 
             if isinstance(result, dict):
                 answer = result.get("answer", "")
@@ -687,7 +721,7 @@ class RAGAssistant:
             }
 
             cache_threshold = getattr(self.config, "cache_confidence_threshold", 0.6)
-            if self.cache_manager and response["confidence_score"] > cache_threshold:
+            if self.cache_manager and revision is not None and response["confidence_score"] > cache_threshold:
                 await asyncio.to_thread(
                     self.cache_manager.set,
                     cache_key,
@@ -695,24 +729,25 @@ class RAGAssistant:
                     ttl=self.strategy.cache_ttl,
                 )
 
+            await _require_knowledge_revision(self.vector_store, revision)
             if session_id:
+                # 一轮仅在确认成功后写入，失败和取消不改变会话历史
                 self.context_manager.update_context(
-                    session_id, {"assistant_response": answer}
+                    session_id, {"recent_queries": [question], "assistant_response": answer}
                 )
-
             self._stats["successful_queries"] += 1
 
             return response
 
         except Exception as e:
-            logger.error(f"处理失败: {e}")
+            logger.error("处理失败，异常类型: %s", type(e).__name__)
             self._stats["failed_queries"] += 1
             return {
-                "answer": f"处理出错: {str(e)}",
+                "answer": "智能助手处理失败，请检查知识库与模型服务",
                 "confidence_score": 0.0,
                 "source_documents": [],
                 "success": False,
-                "error": str(e),
+                "error": "智能助手处理失败",
                 "processing_time": time.time() - start_time,
             }
 
@@ -777,16 +812,12 @@ class RAGAssistant:
                         logger.info(f"缓存管理器已清理: {cache_manager_count} 项")
                     else:
                         cache_errors.append("answer_cache")
-                        logger.warning(
-                            f"缓存管理器清理失败: {cache_manager_result.get('message')}"
-                        )
-                        cache_results["cache_manager"] = (
-                            f"失败: {cache_manager_result.get('message')}"
-                        )
+                        logger.warning("缓存管理器清理失败")
+                        cache_results["cache_manager"] = "失败"
                 except Exception as cache_mgr_error:
                     cache_errors.append("answer_cache")
-                    logger.error(f"缓存管理器清理异常: {cache_mgr_error}")
-                    cache_results["cache_manager"] = f"异常: {str(cache_mgr_error)}"
+                    logger.error("缓存管理器清理异常，类型: %s", type(cache_mgr_error).__name__)
+                    cache_results["cache_manager"] = "失败"
 
             # 清理向量存储查询缓存
             if getattr(self, "vector_store", None):
@@ -814,8 +845,8 @@ class RAGAssistant:
 
                 except Exception as vector_error:
                     cache_errors.append("vector_cache")
-                    logger.error(f"向量存储缓存清理失败: {vector_error}")
-                    cache_results["vector_cache"] = f"失败: {str(vector_error)}"
+                    logger.error("向量存储缓存清理失败，类型: %s", type(vector_error).__name__)
+                    cache_results["vector_cache"] = "失败"
 
             # 重置助手统计信息
             self._stats = {
@@ -838,142 +869,133 @@ class RAGAssistant:
             }
 
         except Exception as e:
-            logger.error(f"清理缓存失败: {e}")
-            import traceback
-
-            traceback.print_exc()
+            logger.error("清理缓存失败，异常类型: %s", type(e).__name__)
             return {
                 "success": False,
-                "message": f"缓存清理失败: {str(e)}",
+                "message": "缓存清理失败",
                 "cleared_items": 0,
                 "timestamp": datetime.now().isoformat(),
             }
 
-    async def refresh_knowledge_base(self) -> Dict[str, Any]:
-        """刷新知识库 - 从文件系统重新加载所有文档"""
+    def _read_knowledge_files(self, directory: str):
+        """固定目录并逐项无跟随读取，拒绝链接、非普通文件和超过上传限制的内容"""
+        import stat
+
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        if nofollow is None or not hasattr(os, "O_DIRECTORY"):
+            raise RuntimeError("当前平台不支持安全知识文件读取")
+        from app.utils.knowledge_directory import open_knowledge_directory, verify_knowledge_directory
+
+        directory_fd, resolved = open_knowledge_directory(directory)
         try:
-            logger.info("开始刷新知识库...")
-
-            # 1. 清理缓存和向量存储
-            try:
-                logger.info("清理缓存...")
-                cache_result = await self.clear_cache()
-                logger.info(f"缓存清理结果: {cache_result}")
-
-                logger.info("清理向量存储...")
-                clear_result = await self.vector_store.clear()
-                if not cache_result.get("success") or not clear_result.get("success"):
-                    return {"success": False, "message": "旧索引或查询缓存未能清理，刷新已停止"}
-                logger.info(f"向量存储清理结果: {clear_result}")
-            except Exception as clear_error:
-                logger.error(f"清理阶段失败: {clear_error}")
-                return {"success": False, "message": "索引清理失败，刷新已停止"}
-
-            # 2. 从文件系统加载知识库
-            knowledge_base_path = self.config.rag.knowledge_base_path
-            logger.info(f"知识库路径: {knowledge_base_path}")
-
-            if not os.path.exists(knowledge_base_path):
-                return {
-                    "success": False,
-                    "message": f"知识库路径不存在: {knowledge_base_path}",
-                }
-
-            # 3. 扫描知识库文件
-            loaded_files = []
-            failed_files = []
-            total_docs = 0
-
-            # 列出所有文件
-            all_files = [
-                f
-                for f in os.listdir(knowledge_base_path)
-                if f.endswith((".md", ".txt"))
-            ]
-            logger.info(f"发现 {len(all_files)} 个知识库文件: {all_files}")
-
-            for filename in all_files:
-                file_path = os.path.join(knowledge_base_path, filename)
+            files = []
+            for filename in sorted(os.listdir(directory_fd)):
+                if not filename.endswith((".md", ".txt")):
+                    continue
+                before = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+                    raise ValueError("知识库包含不安全文件")
+                flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+                file_fd = os.open(filename, flags, dir_fd=directory_fd)
                 try:
-                    logger.info(f"开始加载文件: {filename}")
+                    opened = os.fstat(file_fd)
+                    if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)):
+                        raise ValueError("知识文件发生变化")
+                    limit = 10 * 1024 * 1024  # 与知识上传大小上限一致
+                    if opened.st_size > limit:
+                        raise ValueError("知识文件超过大小上限")
+                    data = bytearray()
+                    while len(data) <= limit:
+                        chunk = os.read(file_fd, min(65536, limit + 1 - len(data)))
+                        if not chunk:
+                            break
+                        data.extend(chunk)
+                    after = os.fstat(file_fd)
+                    named = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                    if (len(data) > limit or (after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino)
+                            or (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino)
+                            or (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)):
+                        raise ValueError("知识文件读取期间发生变化")
+                    content = data.decode("utf-8")
+                    if content.strip():
+                        files.append((filename, os.path.join(directory, filename), content))
+                finally:
+                    os.close(file_fd)
+            verify_knowledge_directory(directory, resolved, directory_fd)
+            return files
+        finally:
+            os.close(directory_fd)
 
-                    # 读取文件内容
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        content = f.read()
+    async def refresh_knowledge_base(self) -> Dict[str, Any]:
+        """构建完整的新知识版本，发布失败时保留当前可用版本"""
+        knowledge_path = self.config.rag.knowledge_base_path
+        if not os.path.isdir(knowledge_path):
+            return {"success": False, "message": "知识库路径不存在"}
 
-                    if not content.strip():
-                        logger.warning(f"文件为空，跳过: {filename}")
-                        continue
+        from app.core.vector.redis_vector_store import RefreshPublishOutcomeUnknown
 
-                    logger.info(f"文件内容长度: {len(content)} 字符")
+        stage = None
+        published = False
+        outcome_unknown = False
+        cancelled = False
+        loaded_files = []
+        total_docs = 0
+        try:
+            # 在读取文件前记录写入版本，覆盖读取期间发生的并发上传
+            stage = await self.vector_store.create_refresh_stage()
+            files = self._read_knowledge_files(knowledge_path)
 
-                    # 创建文档数据
-                    document_data = {
-                        "content": content,
-                        "title": filename.split(".")[0],  # 添加标题
+            for filename, path, content in files:
+                document_data = {
+                    "content": content,
+                    "title": filename.rsplit(".", 1)[0],
+                    "source": filename,
+                    "metadata": {
                         "source": filename,
-                        "metadata": {
-                            "source": filename,
-                            "file_path": file_path,
-                            "file_type": filename.split(".")[-1],
-                            "loaded_at": datetime.now().isoformat(),
-                        },
-                    }
+                        "file_path": path,
+                        "file_type": filename.rsplit(".", 1)[-1],
+                        "loaded_at": datetime.now().isoformat(),
+                    },
+                }
+                ids, _ = await self._index_knowledge(document_data, stage)
+                if not ids:
+                    raise RuntimeError("暂存索引未返回文档")
+                loaded_files.append(filename)
+                total_docs += len(ids)
 
-                    # 上传到向量存储
-                    logger.info(f"上传文档到向量存储: {filename}")
-                    upload_result = await self.upload_knowledge(document_data)
-                    logger.info(f"上传结果: {upload_result}")
-
-                    if upload_result.get("success"):
-                        loaded_files.append(filename)
-                        doc_count = upload_result.get("document_count", 1)
-                        total_docs += doc_count
-                        logger.info(f"✅ 成功加载 {filename}: {doc_count} 个文档片段")
-                    else:
-                        failed_files.append(filename)
-                        logger.error(
-                            f"❌ 加载失败 {filename}: {upload_result.get('message', '未知错误')}"
-                        )
-
-                except Exception as e:
-                    failed_files.append(filename)
-                    logger.error(f"❌ 加载文件 {filename} 时出错: {e}")
-                    # 打印详细的错误堆栈
-                    import traceback
-
-                    logger.error(f"错误堆栈: {traceback.format_exc()}")
-
-            # 4. 验证向量存储状态
-            try:
-                doc_count = await self.vector_store.get_document_count()
-                logger.info(f"向量存储中现有文档数量: {doc_count}")
-            except Exception as count_error:
-                logger.warning(f"无法获取文档数量: {count_error}")
-
-            # 5. 返回结果
-            success = not failed_files
-            message = f"知识库刷新{'成功' if success else '失败'}。加载了 {len(loaded_files)} 个文件，共 {total_docs} 个文档片段"
-            if failed_files:
-                message += (
-                    f"，{len(failed_files)} 个文件加载失败: {', '.join(failed_files)}"
-                )
-
-            logger.info(message)
+            # 存储层检查并发写版本，单事务切换；发生冲突时不覆盖新数据
+            await self.vector_store.publish_refresh_stage(stage)
+            published = True
+            cache_result = await self.clear_cache()
+            if not cache_result.get("success"):
+                return {"success": False, "published": True, "outcome_unknown": False, "retry_safe": False, "message": "知识库已发布，但查询缓存清理失败"}
             return {
-                "success": success,
-                "message": message,
+                "success": True,
+                "message": f"知识库刷新成功。加载了 {len(loaded_files)} 个文件，共 {total_docs} 个文档片段",
                 "loaded_files": loaded_files,
-                "failed_files": failed_files,
+                "failed_files": [],
                 "total_documents": total_docs,
             }
-
-        except Exception as e:
-            logger.error(f"刷新知识库失败: {e}")
-            import traceback
-
-            logger.error(f"错误堆栈: {traceback.format_exc()}")
-            return {"success": False, "message": f"刷新知识库失败: {str(e)}"}
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        except RefreshPublishOutcomeUnknown:
+            outcome_unknown = True
+            return {"success": False, "published": None, "outcome_unknown": True, "retry_safe": False, "message": "刷新结果未知，请先核对知识库，勿自动重试"}
+        except Exception as error:
+            logger.error("刷新知识库失败，异常类型: %s", type(error).__name__)
+            return {"success": False, "published": published, "outcome_unknown": False, "retry_safe": False, "message": "知识库刷新失败"}
+        finally:
+            if stage is not None:
+                try:
+                    await self.vector_store.discard_refresh_stage(stage)
+                except Exception as error:
+                    logger.error("清理知识库暂存版本失败，异常类型: %s", type(error).__name__)
+                    if not cancelled:
+                        return {"success": False, "published": None if outcome_unknown else published,
+                                "outcome_unknown": outcome_unknown, "retry_safe": False,
+                                "message": "知识库已发布，但后续清理失败" if published else "知识库清理未完成，请核对状态"}
 
     async def create_session(
         self, session_id: str, info: Optional[Dict[str, Any]] = None
@@ -999,27 +1021,17 @@ class RAGAssistant:
 
     async def upload_knowledge(self, document_data: Dict[str, Any]) -> Dict[str, Any]:
         """索引写入与缓存失效完成后才确认上传成功"""
+        from app.core.vector.redis_vector_store import RefreshPublishedCacheError, RefreshPublishOutcomeUnknown
+
         try:
-            content = document_data.get("content", "")
-            if not content:
+            if not document_data.get("content", ""):
                 return {"success": False, "message": "内容为空"}
-            metadata = {
-                "title": document_data.get("title"),
-                "source": document_data.get("source", "user_upload"),
-                "category": document_data.get("category", "general"),
-                "tags": document_data.get("tags", []),
-                **document_data.get("metadata", {}),
-            }
-            markdown = self._is_markdown_content(content)
-            if markdown and hasattr(self.vector_store, "add_md_documents"):
-                ids = await self.vector_store.add_md_documents([content], [metadata])
-            else:
-                ids = await self.vector_store.add_documents([Document(page_content=content, metadata=metadata)])
+            ids, markdown = await self._index_knowledge(document_data, self.vector_store)
             if not ids:
                 return {"success": False, "message": "索引未返回已写入的文档"}
             cache_result = await self.clear_cache()
             if not cache_result.get("success"):
-                return {"success": False, "message": "索引已写入，但查询缓存更新失败"}
+                return {"success": False, "published": True, "outcome_unknown": False, "retry_safe": False, "message": "索引已写入，但查询缓存更新失败"}
             return {
                 "success": True,
                 "document_id": ids[0],
@@ -1028,9 +1040,30 @@ class RAGAssistant:
                 "document_type": "markdown" if markdown else "plain",
                 "message": f"知识上传成功，生成 {len(ids)} 个文档块",
             }
+        except RefreshPublishOutcomeUnknown:
+            return {"success": False, "published": None, "outcome_unknown": True, "retry_safe": False, "message": "知识写入结果未知，请先核对，勿自动重试"}
+        except RefreshPublishedCacheError:
+            return {"success": False, "published": True, "outcome_unknown": False, "retry_safe": False, "message": "知识已写入，但后续清理失败"}
         except Exception as e:
             logger.error("上传知识失败，异常类型: %s", type(e).__name__)
             return {"success": False, "message": "知识索引写入失败，文档尚未确认可检索"}
+
+    async def _index_knowledge(self, document_data: Dict[str, Any], store):
+        """向指定存储构建文档索引，暂存与普通上传共用处理逻辑"""
+        content = document_data.get("content", "")
+        metadata = {
+            "title": document_data.get("title"),
+            "source": document_data.get("source", "user_upload"),
+            "category": document_data.get("category", "general"),
+            "tags": document_data.get("tags", []),
+            **document_data.get("metadata", {}),
+        }
+        markdown = self._is_markdown_content(content)
+        if markdown and hasattr(store, "add_md_documents"):
+            ids = await store.add_md_documents([content], [metadata])
+        else:
+            ids = await store.add_documents([Document(page_content=content, metadata=metadata)])
+        return ids, markdown
 
     def _is_markdown_content(self, content: str) -> bool:
         """检测内容是否是Markdown格式"""
@@ -1332,7 +1365,7 @@ class AnswerGenerator:
     ) -> Dict[str, Any]:
         """生成答案"""
         if not docs:
-            logger.warning(f"未找到相关文档进行回答：{question}")
+            logger.warning("未找到相关文档进行回答")
             return {
                 "answer": f"针对您的问题「{question}」，我暂时没有找到匹配的资料。建议使用更具体的关键词重新提问。",
                 "confidence": self.config.rag.similarity_threshold * 0.3,
@@ -1761,11 +1794,11 @@ async def get_enterprise_assistant(
                         else:
                             logger.info("向量存储中已有数据，跳过自动加载")
                     except Exception as e:
-                        logger.warning(f"检查向量存储状态失败: {e}")
+                        logger.warning("检查向量存储状态失败，异常类型: %s", type(e).__name__)
                         # 不中断初始化过程
 
                 except Exception as e:
-                    logger.error(f"RAG助手初始化失败: {e}")
+                    logger.error("RAG助手初始化失败，异常类型: %s", type(e).__name__)
                     _assistant_instance = None
                     raise
 

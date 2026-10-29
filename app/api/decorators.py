@@ -68,7 +68,7 @@ def api_response(operation_name: str = "操作") -> Callable:
             except AIOpsException as e:
                 # 保留领域异常的 error_code / details：由 custom_http_exception_handler 写入
                 # data.error_code / data.details；>=500 时 message 与 details 仍由处理器统一脱敏
-                logger.error(f"{operation_name}失败: [{e.error_code}] {e.message}")
+                logger.error("%s失败，错误码: %s", operation_name, e.error_code)
                 raise AIOpsHTTPException(
                     status_code=_get_http_status_for_aiops_exception(e),
                     detail=e.message,
@@ -77,7 +77,7 @@ def api_response(operation_name: str = "操作") -> Callable:
                     approval_state=e.approval_state,
                 ) from e
             except Exception as e:
-                logger.error(f"{operation_name}发生未处理异常: {str(e)}", exc_info=True)
+                logger.error("%s发生未处理异常，类型: %s", operation_name, type(e).__name__)
                 raise HTTPException(
                     status_code=HttpStatusCodes.INTERNAL_SERVER_ERROR,
                     detail=f"{operation_name}失败: 服务器内部错误",
@@ -161,6 +161,8 @@ def _get_http_status_for_aiops_exception(exc: AIOpsException) -> int:
         ExternalServiceError,
         FeatureDisabledError,
         HistoricalDataError,
+        KnowledgeRefreshError,
+        KnowledgeWriteError,
         NamespaceNotAllowedError,
         PredictionError,
         RCAError,
@@ -172,7 +174,7 @@ def _get_http_status_for_aiops_exception(exc: AIOpsException) -> int:
         WorkflowApprovalError,
     )
 
-    if isinstance(exc, (SessionAccessError, WorkflowApprovalError, FeatureDisabledError, NamespaceNotAllowedError)):
+    if isinstance(exc, (SessionAccessError, WorkflowApprovalError, FeatureDisabledError, NamespaceNotAllowedError, KnowledgeRefreshError, KnowledgeWriteError)):
         return exc.status_code
     if isinstance(exc, HistoricalDataError):
         return HttpStatusCodes.UNPROCESSABLE_ENTITY

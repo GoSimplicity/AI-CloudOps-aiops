@@ -25,7 +25,7 @@ curl --fail -H "X-API-Key: $AIOPS_API_KEY" http://127.0.0.1:8080/api/v1/predict/
 
 依据：[FastAPI 鉴权与定时安全比较](https://fastapi.tiangolo.com/advanced/security/http-basic-auth/)、[Docker 构建最佳实践](https://docs.docker.com/build/building/best-practices/)。
 
-服务默认按需初始化业务依赖，启动与存活检查不会调用模型。仅在依赖配置完成且需要启动预热时设置 `AIOPS_PREWARM=true`。Prometheus 地址使用 `PROMETHEUS_HOST=prometheus:9090`，不带协议。RAG 使用普通 Redis 存储文档、缓存与元数据，使用本地 FAISS 做向量检索；无需 Redis Stack。WebSocket 与 HTTP 使用同样的服务密钥，禁止将内部密钥下发浏览器。
+服务默认按需初始化业务依赖，启动与存活检查不会调用模型。仅在依赖配置完成且需要启动预热时设置 `AIOPS_PREWARM=true`。Prometheus 地址使用 `PROMETHEUS_HOST=prometheus:9090`，不带协议。RAG 使用普通 Redis 存储文档、向量、缓存与元数据，当前语义检索按活动版本扫描持久向量；无需 Redis Stack。版本切换和容量边界见 [知识库版本合同](release/rag-generation.md)。WebSocket 与 HTTP 使用同样的服务密钥，禁止将内部密钥下发浏览器。
 
 MCP 文件工具仅能访问 `MCP_FILE_ROOT`（默认 `data/knowledge_base`），相对路径以此为基准，拒绝越界路径及符号链接越界，单文件读取上限 1 MiB。不要将此目录配置为应用根目录或凭据目录。SEC-33 起 MCP 启动时检查该目录：生产环境为 `/` 或包含/位于 /etc、~/.kube、凭据或项目配置目录时拒绝启动，非生产只告警；文件工具报错只显示相对路径。MCP 写工具默认关闭（`MCP_WRITE_TOOLS_ENABLED`）、Secret 读取默认关闭（`MCP_SECRET_READ_ENABLED`），详见 `docs/release/SEC-33-mcp-write-gate.md`。计算器使用受限算术 AST，拒绝 Python 属性访问、代码执行和超大指数。
 
@@ -95,7 +95,7 @@ FAISS HNSW 使用归一化向量的内积度量，使返回分数和余弦相似
 
 MCP 服务端和客户端日志只保留工具名称、参数字段数、耗时与异常类型，不记录参数值、工具输出、带凭据的服务地址或异常正文。工具协议错误也不直接回显第三方异常正文；成功结果仍正常交付给已鉴权的调用方。此规则覆盖工具HTTP入口、执行核心、SSE与MCP服务生命周期，不改变工具调用成功结果。
 
-RAG 缓存带 `cosine-ip-owner-v2` 契约版本。答案缓存键同时包含知识集合与版本；向量查询缓存前缀为 `<collection>:query_cache:cosine-ip-owner-v2:`。升级后不会命中旧 L2 检索或旧答案缓存，也不会为了迁移扫描删除旧全局 `query_cache:*` 或其他集合键；旧缓存按原 TTL 自然到期。新缓存的写入失效和清理仅针对当前集合的命名空间。
+RAG 缓存带 `cosine-ip-owner-v2` 契约版本。答案缓存键同时包含知识集合与版本；向量查询缓存前缀为 `<collection>:query_cache:cosine-ip-owner-v2:fullscan-v1:`，缓存键绑定活动 generation 和 revision。升级后不会命中旧 L2 检索或旧答案缓存，也不会为了迁移扫描删除旧全局 `query_cache:*` 或其他集合键；旧缓存按原 TTL 自然到期。新缓存的写入失效和清理仅针对当前集合的命名空间。
 
 ## 可信用户身份与会话归属
 

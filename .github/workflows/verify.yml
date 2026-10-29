@@ -32,6 +32,11 @@ jobs:
       - run: ruff check app tests
       - run: python -m compileall -q app
       - run: python -m pytest -q
+      - name: Verify atomic knowledge refresh with isolated Redis
+        run: |
+          docker pull redis:7.4.11-alpine
+          CLOUDOPS_TEST_GENERATION_GC=true python -m pytest -q tests/unit/test_generation_gc.py
+          PYTHONPATH=. python scripts/manual_checks/rag_refresh_redis.py --execute
       - run: cp env.example .env
       - run: docker compose config --quiet
         env:

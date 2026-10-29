@@ -77,9 +77,12 @@ async def test_execute_with_timeout_error_log_is_redacted(capture):
     def boom():
         raise LeakyError(MARKER)
 
-    with pytest.raises(ServiceUnavailableError):
+    with pytest.raises(ServiceUnavailableError) as failure:
         await service.execute_with_timeout(boom, timeout=5, operation_name="op_marker_check")
-    assert_marker_only_in_debug(capture)
+    assert failure.value.error_code == "SERVICE_UNAVAILABLE"
+    assert failure.value.details == {"error": "服务操作失败", "operation": "op_marker_check"}
+    assert MARKER not in str(failure.value) and MARKER not in str(failure.value.details)
+    assert all(MARKER not in _rendered(record) for record in capture.records)
     messages = [r.getMessage() for r in _error_records(capture)]
     assert any("op_marker_check" in m and "LeakyError" in m for m in messages)
 

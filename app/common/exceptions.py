@@ -181,6 +181,33 @@ class AssistantError(AIOpsException):
         )
 
 
+class KnowledgeRefreshError(AIOpsException):
+    """刷新可能已提交，调用方需核对状态而不是自动重试"""
+
+    def __init__(self, published: Optional[bool], outcome_unknown: bool) -> None:
+        message = "知识库刷新结果未知，请先核对状态，勿自动重试" if outcome_unknown else "知识库已发布，但后续清理失败，请核对后处理"
+        super().__init__(message, "KNOWLEDGE_REFRESH_UNCERTAIN", {
+            "published": published,
+            "outcome_unknown": outcome_unknown,
+            "retry_safe": False,
+        })
+        self.status_code = 409
+
+
+class KnowledgeWriteError(AIOpsException):
+    """文档已保存但索引提交结果不确定或缓存失效失败"""
+
+    def __init__(self, published: Optional[bool], outcome_unknown: bool, *, file_saved: Optional[bool] = True) -> None:
+        message = "知识写入结果未知，请先核对状态，勿自动重试" if outcome_unknown else "知识已写入，但后续清理失败，请核对后处理"
+        super().__init__(message, "KNOWLEDGE_WRITE_UNCERTAIN", {
+            "published": published,
+            "outcome_unknown": outcome_unknown,
+            "retry_safe": False,
+            "file_saved": file_saved,
+        })
+        self.status_code = 409
+
+
 class ExternalServiceError(AIOpsException):
     """外部服务调用异常"""
 

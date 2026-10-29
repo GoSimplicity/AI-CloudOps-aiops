@@ -58,11 +58,11 @@ class BaseService(ABC):
                 self.logger.info(f"服务 {self.service_name} 初始化完成")
             except Exception as e:
                 self._initialized = False
-                self.logger.error(f"服务 {self.service_name} 初始化失败: {str(e)}")
+                self.logger.error("服务 %s 初始化失败，异常类型: %s", self.service_name, type(e).__name__)
                 raise ServiceUnavailableError(
                     service_name=self.service_name,
-                    details={"error": str(e), "phase": "initialization"},
-                )
+                    details={"error": "初始化失败", "phase": "initialization"},
+                ) from e
 
     @abstractmethod
     async def _do_initialize(self) -> None:
@@ -85,7 +85,7 @@ class BaseService(ABC):
             return self._health_status
 
         except Exception as e:
-            self.logger.warning(f"服务 {self.service_name} 健康检查失败: {str(e)}")
+            self.logger.warning("服务 %s 健康检查失败，异常类型: %s", self.service_name, type(e).__name__)
             self._health_status = False
             return False
 
@@ -138,13 +138,12 @@ class BaseService(ABC):
                 details={"error": f"操作 {operation_name} 超时", "timeout": timeout},
             )
         except Exception as e:
-            # SEC-33 L2 P3-1：ERROR 只记操作名、异常类型与状态；原始异常文本可能含凭据/集群地址，只进 DEBUG
+            # 不记录原始异常文本或堆栈，避免泄露凭据和内部地址
             self.logger.error(f"服务 {self.service_name} 执行 {operation_name} 失败: {error_brief(e)}")
-            self.logger.debug(f"服务 {self.service_name} 执行 {operation_name} 失败详情", exc_info=True)
             raise ServiceUnavailableError(
                 service_name=self.service_name,
-                details={"error": str(e), "operation": operation_name},
-            )
+                details={"error": "服务操作失败", "operation": operation_name},
+            ) from e
 
     def get_service_info(self) -> Dict[str, Any]:
         """获取服务信息"""
@@ -171,7 +170,7 @@ class BaseService(ABC):
             self._health_status = False
             self.logger.info(f"服务 {self.service_name} 资源清理完成")
         except Exception as e:
-            self.logger.error(f"服务 {self.service_name} 资源清理失败: {str(e)}")
+            self.logger.error("服务 %s 资源清理失败，异常类型: %s", self.service_name, type(e).__name__)
             raise
 
 

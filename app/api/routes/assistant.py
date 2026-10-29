@@ -26,6 +26,7 @@ from app.common.constants import (
 )
 from app.common.exceptions import (
     AIOpsException,
+    AssistantError,
     ServiceUnavailableError,
     ValidationError as DomainValidationError,
 )
@@ -266,7 +267,6 @@ async def assistant_ready() -> Dict[str, Any]:
     except Exception as e:
         # 承接 SEC-26 P3-5：503 不把 str(e) 放进 details；日志只记异常类型，完整内容放 debug
         logger.error("就绪检查失败，异常类型: %s", type(e).__name__)
-        logger.debug("就绪检查失败详情: %s", e, exc_info=True)
         raise ServiceUnavailableError("assistant") from e
 
 
@@ -279,6 +279,8 @@ async def assistant_ready() -> Dict[str, Any]:
 async def clear_cache() -> Dict[str, Any]:
     await (await get_assistant_service()).initialize()
     clear_result = await (await get_assistant_service()).clear_cache()
+    if clear_result.get("cleared") is not True:
+        raise AssistantError("缓存清除未完成")
 
     response = ClearCacheResponse(
         cleared=clear_result.get("cleared", True),

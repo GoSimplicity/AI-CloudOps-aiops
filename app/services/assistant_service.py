@@ -15,14 +15,13 @@ import json
 import logging
 import os
 import time
-import traceback
 from typing import TYPE_CHECKING, Any, Dict, Optional, Type, Union
 import uuid
 
 from pydantic import BaseModel
 from starlette.websockets import WebSocket
 
-from ..common.exceptions import AssistantError, ServiceUnavailableError, SessionAccessError, ValidationError
+from ..common.exceptions import AIOpsException, AssistantError, KnowledgeRefreshError, KnowledgeWriteError, ServiceUnavailableError, SessionAccessError, ValidationError
 from ..common.identity import conversation_context, require_principal
 from ..config.settings import config
 from ..core.agents.enterprise_assistant import get_enterprise_assistant
@@ -70,12 +69,12 @@ class OptimizedAssistantService(BaseService):
                 timestamp=datetime.now().isoformat(), message=error.message,
             ).model_dump())
             await websocket.close(code=1008)
-        except Exception as e:
+        except Exception:
 
             await websocket.send_json(StreamResponse(
                 success=False,
                 timestamp=datetime.now().isoformat(),
-                message=str(e),
+                message="请求处理失败，请稍后重试",
             ).dict())
 
     async def _do_initialize(self) -> None:
@@ -136,6 +135,11 @@ class OptimizedAssistantService(BaseService):
         try:
             result = await self._assistant.refresh_knowledge_base()
             if not result.get("success"):
+                if result.get("outcome_unknown") is True or result.get("published") is True:
+                    raise KnowledgeRefreshError(
+                        published=None if result.get("outcome_unknown") is True else True,
+                        outcome_unknown=result.get("outcome_unknown") is True,
+                    )
                 raise AssistantError("知识库刷新未完成，请检查失败文件与索引服务")
             self._performance_monitor.reset()
 
@@ -145,9 +149,11 @@ class OptimizedAssistantService(BaseService):
                 "timestamp": datetime.now().isoformat(),
             }
 
+        except AIOpsException:
+            raise
         except Exception as e:
-            logger.error(f"刷新知识库失败: {str(e)}")
-            raise AssistantError(f"刷新失败: {str(e)}")
+            logger.error("刷新知识库失败，异常类型: %s", type(e).__name__)
+            raise AssistantError("刷新失败") from e
 
     async def clear_cache(self) -> Dict[str, Any]:
         try:
@@ -171,11 +177,12 @@ class OptimizedAssistantService(BaseService):
             }
 
         except Exception as e:
-            logger.error(f"清除缓存失败: {str(e)}")
+            logger.error("清除缓存失败，异常类型: %s", type(e).__name__)
             self._performance_monitor.reset()
             return {
-                "cache_cleared": False,
-                "message": f"缓存清除失败: {str(e)}",
+                "cleared": False,
+                "cache_keys_cleared": 0,
+                "message": "缓存清除失败",
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -233,11 +240,11 @@ class OptimizedAssistantService(BaseService):
                 "timestamp": datetime.now().isoformat(),
             }
 
-        except Exception as e:
+        except Exception:
             return {
                 "service": "optimized_assistant",
                 "status": "unhealthy",
-                "error": str(e),
+                "error": "健康检查失败",
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -521,8 +528,8 @@ class OptimizedAssistantService(BaseService):
                 mcp_service = await self._get_mcp_service()
                 mcp_health = await mcp_service.get_service_health_info()
             except Exception as e:
-                logger.debug(f"获取MCP健康信息失败: {e}")
-                mcp_health = {"status": "unavailable", "error": str(e)}
+                logger.debug("获取MCP健康信息失败，异常类型: %s", type(e).__name__)
+                mcp_health = {"status": "unavailable", "error": "健康检查失败"}
 
             return {
                 "service": "assistant_service_unified",
@@ -542,11 +549,11 @@ class OptimizedAssistantService(BaseService):
                 "timestamp": datetime.now().isoformat(),
             }
 
-        except Exception as e:
+        except Exception:
             return {
                 "service": "assistant_service_unified",
                 "status": "unhealthy",
-                "error": str(e),
+                "error": "健康检查失败",
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -581,17 +588,9 @@ class OptimizedAssistantService(BaseService):
             # 确保知识库目录存在
             os.makedirs(knowledge_base_path, exist_ok=True)
 
-            # 处理文件名冲突
-            final_filename = self._resolve_filename_conflict(
-                knowledge_base_path, original_filename
+            final_filename, file_path = self._save_knowledge_file(
+                knowledge_base_path, original_filename, file_content
             )
-
-            # 文件完整路径
-            file_path = os.path.join(knowledge_base_path, final_filename)
-
-            # 写入文件到知识库路径
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(file_content)
 
             # 生成文档ID
             import hashlib
@@ -600,7 +599,7 @@ class OptimizedAssistantService(BaseService):
                 f"{final_filename}{file_content}".encode()
             ).hexdigest()
 
-            logger.info(f"知识库文件已保存: {file_path}")
+            logger.info("知识库文件已保存，大小: %d 字节", len(content))
 
             await self._index_saved_document(file_content, {
                 "title": os.path.splitext(final_filename)[0],
@@ -618,11 +617,11 @@ class OptimizedAssistantService(BaseService):
                 "file_path": file_path,
             }
 
-        except ValidationError:
+        except AIOpsException:
             raise
         except Exception as e:
-            logger.error(f"上传文件失败: {str(e)}")
-            raise AssistantError(f"文件上传失败: {str(e)}")
+            logger.error("上传文件失败，异常类型: %s", type(e).__name__)
+            raise AssistantError("文件上传失败") from e
 
     async def _index_saved_document(self, content: str, metadata: Dict[str, Any]) -> None:
         """文件保留用于恢复，但未成功索引时不报告知识添加完成"""
@@ -633,6 +632,11 @@ class OptimizedAssistantService(BaseService):
             "title": metadata["title"], "source": metadata["source"],
         })
         if not result.get("success") or result.get("document_count", 0) <= 0:
+            if result.get("outcome_unknown") is True or result.get("published") is True:
+                raise KnowledgeWriteError(
+                    published=None if result.get("outcome_unknown") is True else True,
+                    outcome_unknown=result.get("outcome_unknown") is True,
+                )
             raise AssistantError("文件已保存，但知识索引未完成，请检查索引服务后刷新知识库")
 
     def _resolve_filename_conflict(self, directory: str, filename: str) -> str:
@@ -661,6 +665,84 @@ class OptimizedAssistantService(BaseService):
         new_filename = f"{name_part}_{unique_id}{ext_part}"
 
         return new_filename
+
+    def _save_knowledge_file(self, directory: str, filename: str, content: str):
+        """在固定目录描述符中完整写入，再原子发布，绝不覆盖已有文件"""
+        import stat
+
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        if nofollow is None or not hasattr(os, "O_DIRECTORY"):
+            raise RuntimeError("当前平台不支持安全文件创建")
+        from app.utils.knowledge_directory import open_knowledge_directory, verify_knowledge_directory
+
+        directory_fd, resolved = open_knowledge_directory(directory)
+        temporary = f".cloudops-upload-{uuid.uuid4().hex}"
+        file_fd = None
+        owned = None
+        linked = False
+        try:
+            file_fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600, dir_fd=directory_fd)
+            owned = os.fstat(file_fd)
+            remaining = memoryview(content.encode("utf-8"))
+            while remaining:
+                written = os.write(file_fd, remaining)
+                if written <= 0:
+                    raise OSError("文件写入未完成")
+                remaining = remaining[written:]
+            os.fsync(file_fd)
+            name, ext = os.path.splitext(filename)
+            for attempt in range(32):
+                if attempt == 0:
+                    candidate = filename
+                else:
+                    suffix = "_" + uuid.uuid4().hex
+                    budget = 255 - len(suffix.encode()) - len(ext.encode("utf-8"))
+                    candidate = name.encode("utf-8")[:budget].decode("utf-8", "ignore") + suffix + ext
+                try:
+                    os.link(temporary, candidate, src_dir_fd=directory_fd, dst_dir_fd=directory_fd, follow_symlinks=False)
+                    linked = True
+                    break
+                except FileExistsError:
+                    try:
+                        existing = os.stat(candidate, dir_fd=directory_fd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        continue
+                    if stat.S_ISLNK(existing.st_mode):
+                        raise ValidationError("file_name", "不允许写入符号链接") from None
+            else:
+                raise RuntimeError("无法生成唯一文件名")
+            actual = os.stat(candidate, dir_fd=directory_fd, follow_symlinks=False)
+            if (actual.st_dev, actual.st_ino) != (owned.st_dev, owned.st_ino) or not stat.S_ISREG(actual.st_mode):
+                raise RuntimeError("文件在创建时发生变化")
+            verify_knowledge_directory(directory, resolved, directory_fd)
+            os.fsync(directory_fd)
+            return candidate, os.path.join(directory, candidate)
+        except Exception as error:
+            if linked:
+                # 已发布的文件可能被其他流程观察，不能将结果报告为安全重试
+                raise KnowledgeWriteError(published=False, outcome_unknown=True, file_saved=None) from error
+            raise
+        finally:
+            cleanup_error = None
+            try:
+                if file_fd is not None:
+                    os.close(file_fd)
+                if owned is not None:
+                    try:
+                        current = os.stat(temporary, dir_fd=directory_fd, follow_symlinks=False)
+                        if (current.st_dev, current.st_ino) == (owned.st_dev, owned.st_ino):
+                            os.unlink(temporary, dir_fd=directory_fd)
+                            os.fsync(directory_fd)
+                    except FileNotFoundError:
+                        pass
+            except OSError as error:
+                cleanup_error = error
+            finally:
+                os.close(directory_fd)
+            if cleanup_error is not None:
+                if linked:
+                    raise KnowledgeWriteError(published=False, outcome_unknown=True, file_saved=True) from cleanup_error
+                raise RuntimeError("暂存文件清理失败") from cleanup_error
 
     async def add_document(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         require_principal()
@@ -705,14 +787,9 @@ class OptimizedAssistantService(BaseService):
 
             await self._ensure_ready()
             os.makedirs(knowledge_base_path, exist_ok=True)
-            final_filename = self._resolve_filename_conflict(knowledge_base_path, file_name)
-
-            # 文件完整路径
-            file_path = os.path.join(knowledge_base_path, final_filename)
-
-            # 写入文件到知识库路径
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(file_content)
+            final_filename, file_path = self._save_knowledge_file(
+                knowledge_base_path, file_name, file_content
+            )
 
             # 生成文档ID
             import hashlib
@@ -721,7 +798,7 @@ class OptimizedAssistantService(BaseService):
                 f"{final_filename}{file_content}".encode()
             ).hexdigest()
 
-            logger.info(f"知识库文档已保存: {file_path}")
+            logger.info("知识库文档已保存，大小: %d 字节", len(encoded_content))
 
             await self._index_saved_document(file_content, {
                 "title": title, "source": "user_add", "category": payload.get("category", "general"),
@@ -737,11 +814,11 @@ class OptimizedAssistantService(BaseService):
                 "filename": final_filename,
             }
 
-        except ValidationError:
+        except AIOpsException:
             raise
         except Exception as e:
-            logger.error(f"添加文档失败: {str(e)}")
-            raise AssistantError(f"文档添加失败: {str(e)}")
+            logger.error("添加文档失败，异常类型: %s", type(e).__name__)
+            raise AssistantError("文档添加失败") from e
 
 
 class PerformanceMonitor:
@@ -854,8 +931,7 @@ class WebSocketManager:
             await self.websocket_handler(websocket, message_queue)
 
         except Exception as e:
-            logger.error(f"Error handling WebSocket connection: {str(e)}")
-            logger.error(traceback.format_exc())
+            logger.error("WebSocket处理失败，异常类型: %s", type(e).__name__)
         finally:
             receiver_task.cancel()
             await self.checker.stop(websocket)
@@ -879,7 +955,7 @@ class WebSocketManager:
                 else:
                     logger.debug("WebSocket接收结束或空消息")
         except Exception as e:
-            logger.error(f"WebSocket receiver error: {str(e)}")
+            logger.error("WebSocket接收失败，异常类型: %s", type(e).__name__)
         finally:
             task = asyncio.current_task()
             if task is None or not task.cancelling():
@@ -913,8 +989,8 @@ class WebSocketManager:
             else:
                 return data_dict
         except Exception as e:
-            logger.error(f"Message parse/validation error: {str(e)}")
-            await websocket.send_json({"error": f"参数校验失败: {str(e)}"})
+            logger.error("WebSocket消息校验失败，异常类型: %s", type(e).__name__)
+            await websocket.send_json({"error": "参数校验失败"})
             return None
 
     class Checker:
