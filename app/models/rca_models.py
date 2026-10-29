@@ -14,7 +14,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SeverityLevel(str, Enum):
@@ -139,16 +139,15 @@ class MetricDataResponse(BaseModel):
     anomaly_score: float = Field(ge=0, le=1)
     trend: str
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "name": "container_memory_usage_bytes",
-                "values": [{"timestamp": "2024-01-01T00:00:00Z", "value": 1024000}],
-                "labels": {"pod": "app-pod-1", "container": "app"},
-                "anomaly_score": 0.85,
-                "trend": "increasing",
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "name": "container_memory_usage_bytes",
+            "values": [{"timestamp": "2024-01-01T00:00:00Z", "value": 1024000}],
+            "labels": {"pod": "app-pod-1", "container": "app"},
+            "anomaly_score": 0.85,
+            "trend": "increasing",
         }
+    })
 
 
 class EventDataResponse(BaseModel):
@@ -162,22 +161,21 @@ class EventDataResponse(BaseModel):
     severity: SeverityLevel
     count: int = 1
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "timestamp": "2024-01-01T00:00:00Z",
-                "type": "Warning",
-                "reason": "OOMKilled",
-                "message": "Container was killed due to OOM",
-                "involved_object": {
-                    "kind": "Pod",
-                    "name": "app-pod-1",
-                    "namespace": "default",
-                },
-                "severity": "critical",
-                "count": 1,
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "type": "Warning",
+            "reason": "OOMKilled",
+            "message": "Container was killed due to OOM",
+            "involved_object": {
+                "kind": "Pod",
+                "name": "app-pod-1",
+                "namespace": "default",
+            },
+            "severity": "critical",
+            "count": 1,
         }
+    })
 
 
 class LogDataResponse(BaseModel):
@@ -191,18 +189,17 @@ class LogDataResponse(BaseModel):
     error_type: Optional[str] = None
     stack_trace: Optional[str] = None
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "timestamp": "2024-01-01T00:00:00Z",
-                "pod_name": "app-pod-1",
-                "container_name": "app",
-                "level": "ERROR",
-                "message": "Connection refused to database",
-                "error_type": "Connection Error",
-                "stack_trace": "at connect()...",
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "pod_name": "app-pod-1",
+            "container_name": "app",
+            "level": "ERROR",
+            "message": "Connection refused to database",
+            "error_type": "Connection Error",
+            "stack_trace": "at connect()...",
         }
+    })
 
 
 # API请求模型
@@ -217,18 +214,17 @@ class RCAAnalyzeRequest(BaseModel):
         None, description="要分析的Prometheus指标列表，为空则使用默认指标"
     )
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "namespace": "production",
-                "time_window_hours": 2.0,
-                "metrics": [
-                    "container_cpu_usage_seconds_total",
-                    "container_memory_working_set_bytes",
-                    "kube_pod_container_status_restarts_total",
-                ],
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "namespace": "production",
+            "time_window_hours": 2.0,
+            "metrics": [
+                "container_cpu_usage_seconds_total",
+                "container_memory_working_set_bytes",
+                "kube_pod_container_status_restarts_total",
+            ],
         }
+    })
 
 
 class RCAMetricsDataRequest(BaseModel):
@@ -239,15 +235,14 @@ class RCAMetricsDataRequest(BaseModel):
     end_time: Optional[str] = Field(None, description="结束时间 (ISO格式)")
     metrics: Optional[str] = Field(None, description="逗号分隔的指标名称")
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "namespace": "production",
-                "start_time": "2024-01-01T00:00:00Z",
-                "end_time": "2024-01-01T01:00:00Z",
-                "metrics": "container_cpu_usage_seconds_total,container_memory_usage_bytes",
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "namespace": "production",
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": "2024-01-01T01:00:00Z",
+            "metrics": "container_cpu_usage_seconds_total,container_memory_usage_bytes",
         }
+    })
 
 
 class RCAEventsDataRequest(BaseModel):
@@ -258,15 +253,14 @@ class RCAEventsDataRequest(BaseModel):
     end_time: Optional[str] = Field(None, description="结束时间 (ISO格式)")
     severity: Optional[str] = Field(None, description="严重程度过滤")
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "namespace": "production",
-                "start_time": "2024-01-01T00:00:00Z",
-                "end_time": "2024-01-01T01:00:00Z",
-                "severity": "critical",
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "namespace": "production",
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": "2024-01-01T01:00:00Z",
+            "severity": "critical",
         }
+    })
 
 
 class RCALogsDataRequest(BaseModel):
@@ -279,17 +273,16 @@ class RCALogsDataRequest(BaseModel):
     error_only: bool = Field(True, description="只返回错误日志")
     max_lines: int = Field(100, le=1000, description="最大日志行数")
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "namespace": "production",
-                "start_time": "2024-01-01T00:00:00Z",
-                "end_time": "2024-01-01T01:00:00Z",
-                "pod_name": "app-pod-1",
-                "error_only": True,
-                "max_lines": 100,
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "namespace": "production",
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": "2024-01-01T01:00:00Z",
+            "pod_name": "app-pod-1",
+            "error_only": True,
+            "max_lines": 100,
         }
+    })
 
 
 class RCAQuickDiagnosisRequest(BaseModel):
@@ -352,23 +345,22 @@ class RCADataResponse(BaseModel):
     query_params: Dict[str, Any] = {}
     timestamp: str
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "namespace": "production",
-                "items": [
-                    {
-                        "name": "cpu_usage",
-                        "values": [{"timestamp": "2024-01-01T00:00:00Z", "value": 0.5}],
-                    }
-                ],
-                "total": 1,
-                "start_time": "2024-01-01T00:00:00Z",
-                "end_time": "2024-01-01T01:00:00Z",
-                "query_params": {"metrics": "cpu_usage"},
-                "timestamp": "2024-01-01T01:00:00Z",
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "namespace": "production",
+            "items": [
+                {
+                    "name": "cpu_usage",
+                    "values": [{"timestamp": "2024-01-01T00:00:00Z", "value": 0.5}],
+                }
+            ],
+            "total": 1,
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": "2024-01-01T01:00:00Z",
+            "query_params": {"metrics": "cpu_usage"},
+            "timestamp": "2024-01-01T01:00:00Z",
         }
+    })
 
 
 class RCACacheStatsResponse(BaseModel):
@@ -384,20 +376,19 @@ class RCACacheStatsResponse(BaseModel):
     timestamp: str
     message: Optional[str] = None
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "available": True,
-                "healthy": True,
-                "cache_prefix": "rca_cache:",
-                "default_ttl": 1800,
-                "hit_rate": 0.85,
-                "total_keys": 150,
-                "memory_usage": "2.5MB",
-                "timestamp": "2024-01-01T01:00:00Z",
-                "message": "缓存运行正常",
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "available": True,
+            "healthy": True,
+            "cache_prefix": "rca_cache:",
+            "default_ttl": 1800,
+            "hit_rate": 0.85,
+            "total_keys": 150,
+            "memory_usage": "2.5MB",
+            "timestamp": "2024-01-01T01:00:00Z",
+            "message": "缓存运行正常",
         }
+    })
 
 
 class RCAClearCacheResponse(BaseModel):
@@ -410,15 +401,14 @@ class RCAClearCacheResponse(BaseModel):
     namespace: Optional[str] = None
     timestamp: str
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "success": True,
-                "message": "成功清理 50 个缓存项",
-                "cleared_count": 50,
-                "timestamp": "2024-01-01T01:00:00Z",
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "success": True,
+            "message": "成功清理 50 个缓存项",
+            "cleared_count": 50,
+            "timestamp": "2024-01-01T01:00:00Z",
         }
+    })
 
 
 class RCAHealthResponse(BaseModel):
