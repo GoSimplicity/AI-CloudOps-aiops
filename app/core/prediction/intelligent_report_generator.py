@@ -469,19 +469,12 @@ class IntelligentReportGenerator:
 
     def _extract_key_metrics(self, context: ReportContext) -> Dict[str, Any]:
         """提取关键指标"""
-        metrics = self._safe_get_dict(context.quantitative_metrics)
         prediction_results = self._safe_get_dict(context.prediction_results)
         prediction_summary = self._safe_get_dict(
             self._safe_get_value(prediction_results, "prediction_summary", {})
         )
 
-        # 安全获取置信度统计信息
-        confidence_stats = self._safe_get_dict(
-            self._safe_get_value(metrics, "confidence_statistics", {})
-        )
-        prediction_accuracy = self._safe_get_value(
-            confidence_stats, "mean_confidence", 0
-        )
+        prediction_accuracy = prediction_results.get("model_accuracy")
 
         # 安全获取预测摘要信息
         trend_direction = self._safe_get_value(prediction_summary, "trend", "unknown")
@@ -540,29 +533,9 @@ class IntelligentReportGenerator:
         else:
             return "低节省潜力"
 
-    def _assess_data_quality(self, context: ReportContext) -> float:
-        """评估数据质量分数"""
-        score = 0.8  # 基础分数
-
-        metrics = self._safe_get_dict(context.quantitative_metrics)
-        pred_count = self._safe_get_value(metrics, "prediction_count", 0)
-
-        if pred_count >= 24:
-            score += 0.1
-        elif pred_count < 12:
-            score -= 0.1
-
-        confidence_stats = self._safe_get_dict(
-            self._safe_get_value(metrics, "confidence_statistics", {})
-        )
-        avg_confidence = self._safe_get_value(confidence_stats, "mean_confidence", 0)
-
-        if avg_confidence > 0.8:
-            score += 0.1
-        elif avg_confidence < 0.6:
-            score -= 0.1
-
-        return min(1.0, max(0.0, score))
+    def _assess_data_quality(self, context: ReportContext) -> Optional[float]:
+        """缺少可验证的质量评估依据时不生成分数。"""
+        return None
 
     def _format_prediction_overview(self, context: ReportContext) -> str:
         """格式化预测概览"""
@@ -605,10 +578,11 @@ class IntelligentReportGenerator:
             for i, rec in enumerate(recommendations[:5], 1):
                 action = rec.get("action", "unknown")
                 trigger_time = rec.get("trigger_time", "N/A")
-                confidence = rec.get("confidence", 0)
+                confidence = rec.get("confidence")
                 reason = rec.get("reason", "N/A")
 
-                rec_text = f"{i}. 动作: {action}, 时间: {trigger_time}, 置信度: {confidence:.2f}, 原因: {reason}"
+                confidence_text = f"{confidence:.2f}" if isinstance(confidence, (int, float)) else "未知"
+                rec_text = f"{i}. 动作: {action}, 时间: {trigger_time}, 置信度: {confidence_text}, 原因: {reason}"
                 formatted_recs.append(rec_text)
 
             return "\n".join(formatted_recs)
@@ -831,7 +805,7 @@ class IntelligentReportGenerator:
                     "generated_at": datetime.now(),
                     "prediction_type": context.prediction_type.value,
                     "report_style": "fallback",
-                    "data_quality_score": 0.5,
+                    "data_quality_score": None,
                 },
             },
         }

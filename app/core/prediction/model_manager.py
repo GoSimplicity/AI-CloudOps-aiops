@@ -311,13 +311,14 @@ class ModelManager:
 
         return {
             "model_name": f"{pred_type.value}_prediction_model",
-            "model_version": "1.0",
+            "model_version": None,
+            "metadata_missing": True,
             "model_type": "unknown",
             "created_at": datetime.now().isoformat(),
             "features": self._get_default_features(pred_type),
             "target": pred_type.value,
             "algorithm": "default",
-            "performance": {"r2": 0.0, "rmse": 0.0, "mae": 0.0},
+            "performance": {},
         }
 
     def _get_default_features(self, pred_type: PredictionType) -> List[str]:

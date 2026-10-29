@@ -21,6 +21,27 @@ from app.models import PredictionDataPoint, PredictionGranularity, PredictionTyp
 logger = logging.getLogger("aiops.core.predictor")
 
 
+class PredictionBatch(list):
+    """单次预测及其来源，避免并发请求共用可变的最近结果。"""
+
+    def __init__(self, points, *, method, model_version=None, fallback_reason=None, model_accuracy=None):
+        super().__init__(points)
+        self.method = method
+        self.model_version = model_version
+        self.fallback_reason = fallback_reason
+        self.model_accuracy = model_accuracy
+
+
+def prediction_provenance(predictions):
+    return {
+        "method": getattr(predictions, "method", None),
+        "model_version": getattr(predictions, "model_version", None),
+        "fallback_reason": getattr(predictions, "fallback_reason", None),
+        "fallback_mode": bool(getattr(predictions, "fallback_reason", None)),
+        "model_accuracy": getattr(predictions, "model_accuracy", None),
+    }
+
+
 class UnifiedPredictor:
     """统一预测引擎 - 支持多种资源类型预测"""
 
@@ -61,6 +82,7 @@ class UnifiedPredictor:
 
             raise PredictionError("预测器未初始化")
 
+        initial_value = current_value
         try:
             # 获取对应类型的模型
             model = self.model_manager.get_model(prediction_type)
@@ -119,25 +141,11 @@ class UnifiedPredictor:
                     predicted_value, prediction_type
                 )
 
-                # 计算置信度
-                confidence = self._calculate_confidence(
-                    predicted_value, current_value, prediction_type, i
-                )
-
                 # 创建预测点
                 prediction_point = PredictionDataPoint(
                     timestamp=future_time,
                     predicted_value=float(predicted_value),
-                    confidence_level=confidence,
                 )
-
-                # 如果需要置信区间
-                if consider_pattern:
-                    lower, upper = self._calculate_confidence_interval(
-                        predicted_value, confidence
-                    )
-                    prediction_point.confidence_lower = lower
-                    prediction_point.confidence_upper = upper
 
                 predictions.append(prediction_point)
 
@@ -145,13 +153,25 @@ class UnifiedPredictor:
                 if consider_pattern:
                     current_value = predicted_value
 
-            return predictions
+            metadata = self.model_manager.metadata.get(prediction_type, {})
+            backtest = metadata.get("backtest") if isinstance(metadata, dict) else None
+            samples = backtest.get("sample_count") if isinstance(backtest, dict) else None
+            accuracy = backtest.get("accuracy") if isinstance(samples, int) and not isinstance(samples, bool) and samples > 0 else None
+            if metadata.get("adapted_for") or metadata.get("adapted_from"):
+                accuracy = None
+            if not isinstance(accuracy, (int, float)) or isinstance(accuracy, bool) or not np.isfinite(accuracy) or not 0 <= accuracy <= 1:
+                accuracy = None
+            return PredictionBatch(predictions, method=f"model:{type(model).__module__}.{type(model).__qualname__}",
+                                   model_version=metadata.get("model_version") if not metadata.get("metadata_missing") else None,
+                                   fallback_reason="使用其他指标的模型" if metadata.get("adapted_for") or metadata.get("adapted_from") else None,
+                                   model_accuracy=accuracy)
 
         except Exception as e:
-            logger.error(f"预测执行失败: {str(e)}")
+            logger.error("预测执行失败，使用规则预测: %s", type(e).__name__)
             # 降级到规则基础预测
             return await self._rule_based_prediction(
-                prediction_type, current_value, prediction_hours, granularity
+                prediction_type, initial_value, prediction_hours, granularity,
+                fallback_reason="模型预测失败",
             )
 
     async def _rule_based_prediction(
@@ -160,6 +180,7 @@ class UnifiedPredictor:
         current_value: float,
         prediction_hours: int,
         granularity: PredictionGranularity,
+        fallback_reason: str = "预测模型不可用",
     ) -> List[PredictionDataPoint]:
         """基于规则的预测（降级方案）"""
 
@@ -214,25 +235,14 @@ class UnifiedPredictor:
                 predicted_value, prediction_type
             )
 
-            # 置信度随时间递减
-            confidence = max(0.5, 0.95 - (i * 0.01))
-
-            # 计算置信区间
-            lower, upper = self._calculate_confidence_interval(
-                predicted_value, confidence
-            )
-
             predictions.append(
                 PredictionDataPoint(
                     timestamp=future_time,
                     predicted_value=float(predicted_value),
-                    confidence_lower=float(lower),
-                    confidence_upper=float(upper),
-                    confidence_level=float(confidence),
                 )
             )
 
-        return predictions
+        return PredictionBatch(predictions, method="rule_based", fallback_reason=fallback_reason)
 
     def _adjust_prediction_range(
         self, value: float, prediction_type: PredictionType
@@ -249,59 +259,6 @@ class UnifiedPredictor:
             return np.clip(value, 0, 100)
         else:
             return max(0, value)
-
-    def _calculate_confidence(
-        self,
-        predicted_value: float,
-        current_value: float,
-        prediction_type: PredictionType,
-        steps_ahead: int,
-    ) -> float:
-        """计算预测置信度"""
-
-        # 基础置信度
-        base_confidence = 0.95
-
-        # 时间衰减因子（每步降低1%）
-        time_decay = max(0.5, base_confidence - (steps_ahead * 0.01))
-
-        # 值变化因子
-        if current_value > 0:
-            change_ratio = abs(predicted_value - current_value) / current_value
-            change_factor = max(0.6, 1 - change_ratio * 0.5)
-        else:
-            change_factor = 0.8
-
-        # 类型因子（不同类型的预测难度不同）
-        type_factors = {
-            PredictionType.QPS: 0.9,  # QPS变化快，置信度略低
-            PredictionType.CPU: 0.85,  # CPU波动大
-            PredictionType.MEMORY: 0.95,  # 内存相对稳定
-            PredictionType.DISK: 0.98,  # 磁盘最稳定
-        }
-        type_factor = type_factors.get(prediction_type, 0.9)
-
-        # 综合置信度
-        confidence = time_decay * change_factor * type_factor
-
-        return round(confidence, 2)
-
-    def _calculate_confidence_interval(
-        self, predicted_value: float, confidence_level: float
-    ) -> tuple:
-        """计算置信区间"""
-
-        # 根据置信度计算区间宽度
-        # 置信度越高，区间越窄
-        interval_width = predicted_value * (1 - confidence_level) * 0.5
-
-        lower = predicted_value - interval_width
-        upper = predicted_value + interval_width
-
-        # 确保下限不为负
-        lower = max(0, lower)
-
-        return lower, upper
 
     async def is_healthy(self) -> bool:
         """检查预测器健康状态"""

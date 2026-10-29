@@ -10,19 +10,23 @@ Description: AI-CloudOps智能预测引擎 - 结合大模型的全流程预测�
 """
 
 import asyncio
+from copy import deepcopy
 from datetime import datetime
 import json
 import logging
+import time
 from typing import Any, Dict, List, Optional, Union
+from uuid import uuid4
 
 from app.common.exceptions import PredictionError
+from app.common.identity import INTERNAL_PRINCIPAL, principal_context
 from app.core.interfaces.llm_client import LLMClient, NullLLMClient
 from app.core.prediction.intelligent_report_generator import (
     IntelligentReportGenerator,
     ReportContext,
 )
 from app.core.prediction.prediction_analyzer import PredictionAnalyzer
-from app.core.prediction.unified_predictor import UnifiedPredictor
+from app.core.prediction.unified_predictor import UnifiedPredictor, prediction_provenance
 from app.models import PredictionDataPoint, PredictionGranularity, PredictionType
 
 logger = logging.getLogger("aiops.core.prediction.intelligent")
@@ -69,6 +73,7 @@ class IntelligentPredictor:
         consider_pattern: bool = True,
         enable_ai_insights: bool = True,
         report_style: str = "professional",
+        result_enricher=None,
     ) -> Dict[str, Any]:
         """执行增强的预测分析"""
 
@@ -76,7 +81,7 @@ class IntelligentPredictor:
             raise PredictionError("智能预测引擎未初始化")
 
         start_time = datetime.now()
-        analysis_id = f"{prediction_type.value}_{int(start_time.timestamp())}"
+        analysis_id = f"{prediction_type.value}_{uuid4().hex}"
 
         try:
             logger.info(f"开始执行增强预测分析 - ID: {analysis_id}")
@@ -118,6 +123,8 @@ class IntelligentPredictor:
                 prediction_hours=prediction_hours,
                 granularity=granularity,
             )
+            if result_enricher is not None:
+                base_prediction_results = await result_enricher(base_prediction_results)
 
             # 阶段3: 预测后 - 解读和分析
             interpretation = None
@@ -217,11 +224,17 @@ class IntelligentPredictor:
             end_time = datetime.now()
             processing_time = (end_time - start_time).total_seconds()
 
+            ai_completed = bool(
+                enable_ai_insights
+                and isinstance(context_analysis, dict) and context_analysis.get("status") == "success"
+                and isinstance(interpretation, dict) and interpretation.get("status") == "success"
+            )
             response = {
                 # 基础预测结果
                 **base_prediction_results,
                 # 增强结果
-                "ai_enhanced": enable_ai_insights,
+                "ai_enhanced": ai_completed,
+                "ai_fallback_reason": "AI分析未完成" if enable_ai_insights and not ai_completed else None,
                 "analysis_context": context_analysis,
                 "prediction_interpretation": interpretation,
                 "ai_insights": insights,
@@ -247,23 +260,28 @@ class IntelligentPredictor:
             return response
 
         except Exception as e:
-            logger.error(f"增强预测分析失败 - ID: {analysis_id}: {str(e)}")
+            logger.error("增强预测分析失败 - ID: %s, 类型: %s", analysis_id, type(e).__name__)
             # 如果AI增强失败，返回基础预测结果
-            return await self._fallback_to_basic_prediction(
+            fallback = await self._fallback_to_basic_prediction(
                 prediction_type,
                 current_value,
                 historical_data,
                 prediction_hours,
                 granularity,
                 consider_pattern,
-                str(e),
+                "AI分析失败",
+                result_enricher,
             )
+            fallback["analysis_id"] = analysis_id
+            self._cache_analysis_result(analysis_id, fallback)
+            return fallback
 
     async def predict_multi_dimension_with_correlation(
         self,
         prediction_configs: List[Dict[str, Any]],
         enable_correlation_analysis: bool = True,
         report_style: str = "professional",
+        result_enricher=None,
     ) -> Dict[str, Any]:
         """多维度预测与关联分析"""
 
@@ -271,7 +289,7 @@ class IntelligentPredictor:
             raise PredictionError("智能预测引擎未初始化")
 
         start_time = datetime.now()
-        analysis_id = f"multi_dim_{int(start_time.timestamp())}"
+        analysis_id = f"multi_dim_{uuid4().hex}"
 
         try:
             logger.info(f"开始多维度预测分析 - ID: {analysis_id}")
@@ -279,6 +297,9 @@ class IntelligentPredictor:
             # 并行执行所有维度的预测
             prediction_tasks = []
             for config in prediction_configs:
+                async def enrich(result, request_config=config):
+                    return await result_enricher(result, request_config)
+
                 task = self.predict_with_ai_analysis(
                     prediction_type=PredictionType(config["prediction_type"]),
                     current_value=config["current_value"],
@@ -290,6 +311,7 @@ class IntelligentPredictor:
                     consider_pattern=config.get("consider_pattern", True),
                     enable_ai_insights=False,  # 单独处理AI洞察
                     report_style=report_style,
+                    result_enricher=enrich if result_enricher else None,
                 )
                 prediction_tasks.append(task)
 
@@ -319,6 +341,29 @@ class IntelligentPredictor:
                 results_by_type, correlation_analysis
             )
 
+            # 各维度业务分析及关联分析都完成后再生成报告。
+            report_contexts = {
+                kind.value: ReportContext(
+                    prediction_type=kind,
+                    analysis_context={"correlation_analysis": correlation_analysis},
+                    prediction_results=result,
+                    interpretation={},
+                    insights=multi_dim_insights,
+                    scaling_recommendations=result.get("scaling_recommendations", []),
+                    cost_analysis=result.get("cost_analysis"),
+                    quantitative_metrics={},
+                )
+                for kind, result in results_by_type.items()
+            }
+            report_values = await asyncio.gather(*[
+                self.report_generator.generate_comprehensive_report(context, report_style)
+                for context in report_contexts.values()
+            ], return_exceptions=True)
+            multi_dimension_reports = {
+                kind: ({"status": "failed", "message": "报告生成失败"} if isinstance(value, Exception) else value)
+                for kind, value in zip(report_contexts, report_values)
+            }
+
             end_time = datetime.now()
             processing_time = (end_time - start_time).total_seconds()
 
@@ -327,6 +372,7 @@ class IntelligentPredictor:
                 "prediction_results": {k.value: v for k, v in results_by_type.items()},
                 "correlation_analysis": correlation_analysis,
                 "multi_dimension_insights": multi_dim_insights,
+                "multi_dimension_reports": multi_dimension_reports,
                 "summary_statistics": self._calculate_multi_dimension_stats(
                     results_by_type
                 ),
@@ -375,7 +421,7 @@ class IntelligentPredictor:
             "resource_utilization": [],
             "pattern_analysis": {},
             "trend_insights": [],
-            "model_accuracy": 0.85,
+            **prediction_provenance(predictions),
             "timestamp": datetime.now(),
         }
 
@@ -388,6 +434,7 @@ class IntelligentPredictor:
         granularity: PredictionGranularity,
         consider_pattern: bool,
         error_message: str,
+        result_enricher=None,
     ) -> Dict[str, Any]:
         """降级到基础预测"""
         try:
@@ -409,13 +456,14 @@ class IntelligentPredictor:
                 prediction_hours,
                 granularity,
             )
+            if result_enricher is not None:
+                base_result = await result_enricher(base_result)
 
             # 添加降级标记
             base_result.update(
                 {
                     "ai_enhanced": False,
-                    "fallback_mode": True,
-                    "fallback_reason": error_message,
+                    "ai_fallback_reason": error_message,
                     "ai_insights": [
                         "AI增强功能暂时不可用",
                         "当前为基础预测模式",
@@ -428,8 +476,8 @@ class IntelligentPredictor:
             return base_result
 
         except Exception as e:
-            logger.error(f"基础预测也失败: {str(e)}")
-            raise PredictionError(f"预测完全失败: {str(e)}")
+            logger.error("基础预测也失败，异常类型: %s", type(e).__name__)
+            raise PredictionError("预测完全失败") from e
 
     async def _generate_multi_dimension_insights(
         self,
@@ -536,15 +584,18 @@ class IntelligentPredictor:
             "context_analysis": (
                 "skipped"
                 if not enable_ai
-                else ("completed" if context_analysis else "failed")
+                else ("completed" if context_analysis and context_analysis.get("status") == "success" else "fallback")
             ),
             "interpretation": (
                 "skipped"
                 if not enable_ai
-                else ("completed" if interpretation else "failed")
+                else ("completed" if interpretation and interpretation.get("status") == "success" else "fallback")
             ),
             "report_generation": (
-                "skipped" if not enable_ai else ("completed" if ai_report else "failed")
+                "skipped" if not enable_ai else (
+                    "completed" if ai_report and isinstance(ai_report.get("comprehensive_report"), dict)
+                    and ai_report["comprehensive_report"].get("status") == "success" else "fallback"
+                )
             ),
         }
         return stages
@@ -557,53 +608,14 @@ class IntelligentPredictor:
     ) -> Dict[str, Union[float, str]]:
         """评估整体数据质量"""
 
-        # 历史数据质量
-        historical_quality = 0.8
-        if historical_data:
-            if len(historical_data) >= 48:  # 足够的历史数据
-                historical_quality += 0.1
-            elif len(historical_data) < 12:  # 数据不足
-                historical_quality -= 0.2
-
-        # 预测质量
-        prediction_quality = 0.8
-        if predictions:
-            if len(predictions) >= 24:
-                prediction_quality += 0.1
-            # 检查是否有置信度信息
-            confidences = [
-                p.confidence_level
-                for p in predictions
-                if p.confidence_level is not None
-            ]
-            if confidences:
-                avg_confidence = sum(confidences) / len(confidences)
-                if avg_confidence > 0.8:
-                    prediction_quality += 0.1
-
-        # AI分析质量
-        ai_quality = 0.5  # 基础值
-        if interpretation and interpretation.get("status") == "success":
-            ai_quality = 0.8
-
-        overall_score = (
-            historical_quality * 0.3 + prediction_quality * 0.5 + ai_quality * 0.2
-        )
-
         return {
-            "overall_score": min(1.0, max(0.0, overall_score)),
-            "historical_data_quality": historical_quality,
-            "prediction_quality": prediction_quality,
-            "ai_analysis_quality": ai_quality,
-            "assessment": (
-                "excellent"
-                if overall_score > 0.9
-                else (
-                    "good"
-                    if overall_score > 0.7
-                    else "fair" if overall_score > 0.5 else "poor"
-                )
-            ),
+            "overall_score": None,
+            "historical_data_quality": None,
+            "prediction_quality": None,
+            "ai_analysis_quality": None,
+            "assessment": "unknown",
+            "historical_sample_count": len(historical_data),
+            "prediction_point_count": len(predictions),
         }
 
     def _cache_analysis_result(self, analysis_id: str, result: Dict[str, Any]) -> None:
@@ -612,11 +624,14 @@ class IntelligentPredictor:
             # 简单的内存缓存，实际应用可以使用Redis等
             cache_data = {
                 "timestamp": datetime.now(),
-                "result_summary": {
-                    "prediction_type": result.get("prediction_type"),
-                    "ai_enhanced": result.get("ai_enhanced", False),
-                    "processing_time": result.get("processing_time_seconds", 0),
-                },
+                "expires_at": time.monotonic() + 7200,
+                "owner": principal_context.get() or INTERNAL_PRINCIPAL,
+                "result": deepcopy(result),
+            }
+            now = time.monotonic()
+            self._analysis_cache = {
+                key: value for key, value in self._analysis_cache.items()
+                if value.get("expires_at", 0) > now
             }
             self._analysis_cache[analysis_id] = cache_data
 
@@ -640,7 +655,7 @@ class IntelligentPredictor:
             "total_dimensions": len(results_by_type),
             "successful_predictions": 0,
             "total_prediction_points": 0,
-            "avg_confidence": 0,
+            "avg_confidence": None,
             "trend_distribution": {"increasing": 0, "decreasing": 0, "stable": 0},
         }
 
@@ -654,7 +669,7 @@ class IntelligentPredictor:
 
                 # 统计置信度
                 for point in result["predicted_data"]:
-                    if point.get("confidence_level"):
+                    if point.get("confidence_level") is not None:
                         total_confidence += point["confidence_level"]
                         confidence_count += 1
 

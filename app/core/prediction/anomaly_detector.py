@@ -97,8 +97,8 @@ class AnomalyDetector:
             return anomalies
 
         except Exception as e:
-            logger.error(f"异常检测失败: {str(e)}")
-            return []
+            logger.error("异常检测失败: %s", type(e).__name__)
+            raise
 
     def _zscore_detection(
         self, values: np.ndarray, sensitivity: float

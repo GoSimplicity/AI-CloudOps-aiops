@@ -97,7 +97,8 @@ async def test_generated_points_are_utc_with_exact_step_and_real_zero(monkeypatc
         for index, point in enumerate(points, start=1):
             assert point.timestamp.tzinfo is not None and point.timestamp.utcoffset() == timedelta(0)
             assert point.timestamp == FIXED_UTC + step * index
-            assert point.predicted_value == point.confidence_lower == point.confidence_upper == 0.0
+            assert point.predicted_value == 0.0
+            assert point.confidence_lower is None and point.confidence_upper is None and point.confidence_level is None
         if path == 'model':
             assert model.calls == count
             assert features.timestamps
@@ -198,7 +199,8 @@ async def test_legacy_naive_cache_isolated_and_new_utc_cache_hits(monkeypatch, e
 
     async def local_enhanced(**kwargs):
         points = await predictor.predict(kwargs['prediction_type'], kwargs['current_value'], kwargs['historical_data'], kwargs['prediction_hours'], kwargs['granularity'])
-        return {'prediction_type': 'cpu', 'current_value': 0.0, 'predicted_data': [point.model_dump() for point in points]}
+        result = {'prediction_type': 'cpu', 'current_value': 0.0, 'predicted_data': [point.model_dump() for point in points]}
+        return await kwargs['result_enricher'](result)
 
     service._intelligent_predictor = SimpleNamespace(predict_with_ai_analysis=AsyncMock(side_effect=local_enhanced))
 

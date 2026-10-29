@@ -13,9 +13,12 @@ from datetime import datetime, timedelta
 import hashlib
 import logging
 import math
+import time
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from app.common.exceptions import HistoricalDataError, PredictionError, ValidationError
+from app.common.identity import INTERNAL_PRINCIPAL, principal_context
 from app.core.prediction import (
     AnomalyDetector,
     CostAnalyzer,
@@ -27,6 +30,8 @@ from app.core.prediction import (
     ScalingAdvisor,
     UnifiedPredictor,
 )
+from app.core.prediction.intelligent_report_generator import ReportContext
+from app.core.prediction.unified_predictor import prediction_provenance
 from app.models import (
     AnomalyPrediction,
     CostAnalysis,
@@ -666,6 +671,9 @@ class PredictionService(BaseService, HealthCheckMixin):
             cached_result = await self._get_from_cache(cache_key)
             if cached_result:
                 self.logger.info("AI增强预测缓存命中，直接返回结果")
+                cache_analysis = getattr(self._intelligent_predictor, "_cache_analysis_result", None)
+                if callable(cache_analysis) and cached_result.get("analysis_id"):
+                    cache_analysis(cached_result["analysis_id"], cached_result)
                 return cached_result
 
             # 检查增强组件是否可用
@@ -688,6 +696,11 @@ class PredictionService(BaseService, HealthCheckMixin):
             )
 
             # 执行增强预测
+            async def enrich(result):
+                return await self._enhance_ai_prediction_result(
+                    result, resource_constraints, target_utilization, sensitivity
+                )
+
             ai_prediction_result = (
                 await self._intelligent_predictor.predict_with_ai_analysis(
                     prediction_type=pred_type,
@@ -698,23 +711,19 @@ class PredictionService(BaseService, HealthCheckMixin):
                     consider_pattern=True,
                     enable_ai_insights=enable_ai_insights,
                     report_style=report_style,
+                    result_enricher=enrich,
                 )
             )
 
-            # 增强结果（添加扩缩容建议和成本分析）
-            enhanced_result = await self._enhance_ai_prediction_result(
-                ai_prediction_result, resource_constraints, target_utilization
-            )
-
             # 保存到缓存（增强预测缓存2小时）
-            await self._save_to_cache(cache_key, enhanced_result, ttl=7200)
+            await self._save_to_cache(cache_key, ai_prediction_result, ttl=7200)
 
-            return enhanced_result
+            return ai_prediction_result
 
         except (ValidationError, HistoricalDataError):
             raise
         except Exception as e:
-            self.logger.error(f"增强预测失败: {str(e)}")
+            self.logger.error("增强预测失败，异常类型: %s", type(e).__name__)
             # 降级到基础预测
             return await self._fallback_to_basic_prediction(
                 PredictionType(prediction_type),
@@ -764,10 +773,18 @@ class PredictionService(BaseService, HealthCheckMixin):
                 validated_configs.append(config)
 
             # 执行多维度预测
+            async def enrich(result, prediction_config):
+                return await self._enhance_ai_prediction_result(
+                    result, prediction_config.get("resource_constraints"),
+                    prediction_config.get("target_utilization", 0.7),
+                    prediction_config.get("sensitivity", 0.8),
+                )
+
             result = await self._intelligent_predictor.predict_multi_dimension_with_correlation(
                 prediction_configs=validated_configs,
                 enable_correlation_analysis=enable_correlation_analysis,
                 report_style=report_style,
+                result_enricher=enrich,
             )
 
             return result
@@ -791,26 +808,53 @@ class PredictionService(BaseService, HealthCheckMixin):
             if not self._report_generator:
                 raise PredictionError("报告生成器不可用")
 
-            # 从缓存获取分析结果（这里简化处理）
-            # 实际应用中应该有完整的分析结果缓存机制
-
-            return {
-                "analysis_id": analysis_id,
-                "report_type": report_type,
-                "report_style": report_style,
-                "status": "report_generation_not_implemented_for_cache_lookup",
-                "message": "报告生成功能需要完整的分析上下文，请使用预测方法中的集成报告功能",
-            }
+            if report_type not in {"comprehensive", "executive", "action_plan", "risk_assessment"}:
+                raise PredictionError("不支持的报告类型")
+            engine = self._intelligent_predictor
+            entry = engine._analysis_cache.get(analysis_id) if engine else None
+            owner = principal_context.get() or INTERNAL_PRINCIPAL
+            result = entry.get("result") if entry and entry.get("owner") == owner and entry.get("expires_at", 0) > time.monotonic() else None
+            if not isinstance(result, dict):
+                raise PredictionError("分析快照不存在或已过期；请在原实例重新执行预测")
+            interpretation = result.get("prediction_interpretation") or {}
+            context = ReportContext(
+                prediction_type=PredictionType(result["prediction_type"]),
+                analysis_context=result.get("analysis_context") or {},
+                prediction_results=result,
+                interpretation=interpretation,
+                insights=result.get("ai_insights") or [],
+                scaling_recommendations=result.get("scaling_recommendations") or [],
+                cost_analysis=result.get("cost_analysis"),
+                quantitative_metrics=interpretation.get("quantitative_metrics") or {},
+            )
+            if report_type == "comprehensive":
+                report = await self._report_generator.generate_comprehensive_report(context, report_style)
+            elif report_type == "executive":
+                report = await self._report_generator.generate_executive_summary(context)
+            elif report_type == "action_plan":
+                report = await self._report_generator.generate_action_plan(context)
+            else:
+                report = await self._report_generator.generate_risk_assessment_report(context)
+            return {"analysis_id": analysis_id, "report_type": report_type,
+                    "report_style": report_style, **report}
 
         except Exception as e:
-            self.logger.error(f"生成预测报告失败: {str(e)}")
-            raise PredictionError(f"生成预测报告失败: {str(e)}")
+            self.logger.error("生成预测报告失败: %s", type(e).__name__)
+            safe_errors = {
+                "预测服务错误: 报告生成器不可用",
+                "预测服务错误: 不支持的报告类型",
+                "预测服务错误: 分析快照不存在或已过期；请在原实例重新执行预测",
+            }
+            if isinstance(e, PredictionError) and str(e) in safe_errors:
+                raise
+            raise PredictionError("生成预测报告失败") from None
 
     async def _enhance_ai_prediction_result(
         self,
         ai_result: Dict[str, Any],
         resource_constraints: Optional[Dict] = None,
         target_utilization: float = 0.7,
+        sensitivity: float = 0.8,
     ) -> Dict[str, Any]:
         """增强AI预测结果 - 添加扩缩容建议和成本分析"""
         try:
@@ -828,6 +872,18 @@ class PredictionService(BaseService, HealthCheckMixin):
             # 生成扩缩容建议
             scaling_recommendations = []
             cost_analysis = None
+            anomaly_predictions = []
+            analysis_failures = []
+
+            if self._anomaly_detector:
+                try:
+                    anomaly_predictions = await self._anomaly_detector.detect_anomalies(
+                        predictions=prediction_points, sensitivity=sensitivity
+                    )
+                except Exception:
+                    analysis_failures.append("异常检测失败")
+            else:
+                analysis_failures.append("异常检测组件不可用")
 
             if self._scaling_advisor:
                 try:
@@ -847,6 +903,9 @@ class PredictionService(BaseService, HealthCheckMixin):
                     )
                 except Exception as e:
                     self.logger.warning(f"生成扩缩容建议失败: {str(e)}")
+                    analysis_failures.append("扩缩容分析失败")
+            else:
+                analysis_failures.append("扩缩容组件不可用")
 
             # 成本分析
             if self._cost_analyzer and resource_constraints:
@@ -858,6 +917,9 @@ class PredictionService(BaseService, HealthCheckMixin):
                     )
                 except Exception as e:
                     self.logger.warning(f"成本分析失败: {str(e)}")
+                    analysis_failures.append("成本分析失败")
+            elif resource_constraints:
+                analysis_failures.append("成本分析组件不可用")
 
             # 更新结果
             ai_result.update(
@@ -868,6 +930,8 @@ class PredictionService(BaseService, HealthCheckMixin):
                     "cost_analysis": (
                         cost_analysis.model_dump() if cost_analysis else None
                     ),
+                    "anomaly_predictions": [a.model_dump() for a in anomaly_predictions],
+                    "analysis_failures": analysis_failures,
                     "enhancement_timestamp": datetime.now(),
                 }
             )
@@ -936,11 +1000,11 @@ class PredictionService(BaseService, HealthCheckMixin):
             )
 
         # 添加降级标记
+        result = dict(result)
         result.update(
             {
                 "ai_enhanced": False,
-                "fallback_mode": True,
-                "fallback_reason": "AI增强组件不可用",
+                "ai_fallback_reason": "AI增强组件不可用",
                 "ai_insights": [
                     "当前使用基础预测模式",
                     "AI增强功能暂时不可用",
@@ -1177,7 +1241,10 @@ class PredictionService(BaseService, HealthCheckMixin):
             "prediction_hours": prediction_hours,
             "granularity": granularity,
             "current_value": current_value,
-            "predicted_data": [p.model_dump() for p in predictions],
+            "predicted_data": [
+                p.model_dump() if include_confidence else p.model_copy(update={"confidence_level": None, "confidence_lower": None, "confidence_upper": None}).model_dump()
+                for p in predictions
+            ],
             "resource_utilization": [r.model_dump() for r in resource_utilization],
             "scaling_recommendations": [
                 s.model_dump() for s in scaling_recommendations
@@ -1186,7 +1253,7 @@ class PredictionService(BaseService, HealthCheckMixin):
             "cost_analysis": cost_analysis.model_dump() if cost_analysis else None,
             "pattern_analysis": pattern_analysis,
             "trend_insights": trend_insights,
-            "model_accuracy": 0.85,  # 这里应该从模型获取实际准确率
+            **prediction_provenance(predictions),
             "prediction_summary": prediction_summary,
             "timestamp": datetime.now(),
         }
@@ -1346,6 +1413,8 @@ class PredictionService(BaseService, HealthCheckMixin):
                 "type": prediction_type,
                 "data_contract": "observed-hourly-v1",
                 "time_contract": "utc-v1",
+                "prediction_contract": "provenance-v2",
+                "principal": principal_context.get() or INTERNAL_PRINCIPAL,
                 "current": round(current_value, 2),  # 避免浮点数精度问题
                 "query": metric_query or "default",
                 "hours": prediction_hours,
@@ -1361,7 +1430,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             # 添加其他重要参数
             for key, value in kwargs.items():
-                if key in ["target_utilization", "sensitivity", "report_style"]:
+                if key in ["target_utilization", "sensitivity", "report_style", "include_confidence", "include_anomaly_detection", "consider_historical_pattern", "enable_ai_insights"]:
                     cache_params[key] = value
 
             # 生成缓存键字符串
@@ -1377,9 +1446,7 @@ class PredictionService(BaseService, HealthCheckMixin):
         except Exception as e:
             self.logger.error(f"生成缓存键失败: {str(e)}")
             # 降级到简单键
-            return (
-                f"prediction:{prediction_type}:utc-v1:{int(current_value)}:{prediction_hours}"
-            )
+            return f"prediction:uncacheable:{uuid4().hex}"
 
     async def _get_from_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
         """从缓存获取预测结果"""

@@ -135,8 +135,8 @@ class ScalingAdvisor:
             return recommendations
 
         except Exception as e:
-            logger.error(f"生成扩缩容建议失败: {str(e)}")
-            return []
+            logger.error("生成扩缩容建议失败: %s", type(e).__name__)
+            raise
 
     def _evaluate_scaling_need(
         self,
@@ -369,21 +369,9 @@ class ScalingAdvisor:
 
     def _calculate_recommendation_confidence(
         self, prediction: PredictionDataPoint, action: ScalingAction
-    ) -> float:
-        """计算建议置信度"""
-
-        # 基于预测置信度
-        base_confidence = (
-            prediction.confidence_level if prediction.confidence_level else 0.8
-        )
-
-        # 扩容的置信度稍高（更保守）
-        if action == ScalingAction.SCALE_UP:
-            return min(1.0, base_confidence * 1.1)
-        elif action == ScalingAction.SCALE_DOWN:
-            return base_confidence * 0.9
-        else:
-            return base_confidence
+    ) -> Optional[float]:
+        """没有经过建议级别的回测时，不推断建议置信度。"""
+        return None
 
     def _estimate_cost_change(
         self,

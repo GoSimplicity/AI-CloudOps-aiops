@@ -104,13 +104,8 @@ class CostAnalyzer:
             )
 
         except Exception as e:
-            logger.error(f"成本分析失败: {str(e)}")
-            return CostAnalysis(
-                current_hourly_cost=0.0,
-                predicted_hourly_cost=0.0,
-                cost_savings_potential=0.0,
-                cost_trend_analysis={},
-            )
+            logger.error("成本分析失败: %s", type(e).__name__)
+            raise
 
     def _calculate_current_cost(self, constraints: ResourceConstraints) -> float:
         """计算当前成本"""

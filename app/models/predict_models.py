@@ -182,7 +182,7 @@ class ScalingRecommendation(BaseModel):
 
     action: ScalingAction = Field(...)
     trigger_time: datetime = Field(...)
-    confidence: float = Field(..., ge=0, le=1)
+    confidence: Optional[float] = Field(None, ge=0, le=1)
     reason: str = Field(...)
     target_instances: Optional[int] = Field(None, gt=0)
     target_cpu_cores: Optional[float] = Field(None, gt=0)
@@ -234,6 +234,12 @@ class PredictionResponse(BaseModel):
     )
     trend_insights: List[str] = Field(default_factory=list, description="趋势洞察")
     model_accuracy: Optional[float] = Field(None, description="模型准确率", ge=0, le=1)
+    method: Optional[str] = Field(None, description="实际预测方法")
+    model_version: Optional[str] = Field(None, description="已加载模型版本；未知为 null")
+    fallback_reason: Optional[str] = Field(None, description="降级原因")
+    fallback_mode: Optional[bool] = Field(None, description="是否为降级模式")
+    analysis_failures: List[str] = Field(default_factory=list, description="未完成的分析环节")
+    ai_fallback_reason: Optional[str] = Field(None, description="AI分析降级原因")
     prediction_summary: Dict[str, Any] = Field(
         default_factory=dict, description="预测摘要信息"
     )
@@ -263,7 +269,7 @@ class ModelInfo(BaseModel):
     """预测模型信息"""
 
     model_name: str = Field(..., description="模型名称")
-    model_version: str = Field(..., description="模型版本号")
+    model_version: Optional[str] = Field(None, description="模型版本号，缺少元数据时为 null")
     model_type: str = Field(..., description="模型类型")
     supported_prediction_types: List[PredictionType] = Field(
         default_factory=list, description="支持的预测类型"
@@ -362,6 +368,8 @@ class AIEnhancedPredictionResponse(BaseModel):
     )
     trend_insights: List[str] = Field(default_factory=list, description="趋势洞察")
     model_accuracy: Optional[float] = Field(None, description="模型准确率", ge=0, le=1)
+    method: Optional[str] = Field(None, description="实际预测方法")
+    model_version: Optional[str] = Field(None, description="已加载模型版本；未知为 null")
     prediction_summary: Dict[str, Any] = Field(
         default_factory=dict, description="预测摘要信息"
     )
@@ -388,6 +396,8 @@ class AIEnhancedPredictionResponse(BaseModel):
     # 降级模式字段
     fallback_mode: Optional[bool] = Field(None, description="是否为降级模式")
     fallback_reason: Optional[str] = Field(None, description="降级原因")
+    ai_fallback_reason: Optional[str] = Field(None, description="AI分析降级原因")
+    analysis_failures: List[str] = Field(default_factory=list, description="未完成的分析环节")
 
     timestamp: datetime = Field(
         default_factory=datetime.now, description="预测生成时间"
@@ -407,6 +417,7 @@ class MultiDimensionPredictionResponse(BaseModel):
     multi_dimension_insights: List[str] = Field(
         default_factory=list, description="多维度洞察"
     )
+    multi_dimension_reports: Dict[str, Any] = Field(default_factory=dict, description="基于最终各维度及关联结果的报告")
     summary_statistics: Dict[str, Any] = Field(
         default_factory=dict, description="汇总统计信息"
     )
