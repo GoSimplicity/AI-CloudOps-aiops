@@ -24,7 +24,7 @@ from app.core.interfaces.prometheus_client import (
 )
 from app.models.rca_models import MetricData
 
-from .base_collector import BaseDataCollector
+from .base_collector import BaseDataCollector, CollectionBatch
 
 
 class MetricsCollector(BaseDataCollector):
@@ -89,7 +89,7 @@ class MetricsCollector(BaseDataCollector):
                             await asyncio.sleep(2**attempt)
                 except Exception as e:
                     self.logger.warning(
-                        f"Prometheus客户端连接尝试 {attempt + 1}/3 失败: {str(e)}"
+                        f"Prometheus客户端连接尝试 {attempt + 1}/3 失败: {type(e).__name__}"
                     )
                     if attempt < 2:
                         await asyncio.sleep(2**attempt)
@@ -97,7 +97,7 @@ class MetricsCollector(BaseDataCollector):
             raise RuntimeError("无法连接到Prometheus客户端，已尝试3次")
 
         except Exception as e:
-            self.logger.error(f"初始化Prometheus客户端时发生错误: {str(e)}")
+            self.logger.error("初始化Prometheus客户端时发生错误: %s", type(e).__name__)
             raise
 
     async def collect(
@@ -116,13 +116,18 @@ class MetricsCollector(BaseDataCollector):
             List[MetricData]: 指标数据列表
         """
         try:
+            await self.initialize()
             self._ensure_initialized()
+            if isinstance(self.prometheus, NullPrometheusClient):
+                raise RuntimeError("Prometheus client unavailable")
 
             # 确保时间有时区
             start_time = self._ensure_timezone(start_time)
             end_time = self._ensure_timezone(end_time)
 
-            metrics_to_collect = kwargs.get("metrics", self.default_metrics)
+            metrics_to_collect = kwargs.get("metrics")
+            if not metrics_to_collect:
+                metrics_to_collect = self.default_metrics
 
             # 安全检查指标列表
             if not metrics_to_collect:
@@ -148,20 +153,20 @@ class MetricsCollector(BaseDataCollector):
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # 处理结果
-            for i, result in enumerate(results):
+            failed = 0
+            for result in results:
                 if isinstance(result, list):
                     collected_metrics.extend(result)
                 elif isinstance(result, Exception):
-                    self.logger.warning(
-                        f"收集指标 {metrics_to_collect[i]} 失败: {result}"
-                    )
+                    failed += 1
+                    self.logger.warning("指标采集失败: %s", type(result).__name__)
 
             self.logger.info(f"成功收集 {len(collected_metrics)} 个指标数据")
-            return collected_metrics
+            return CollectionBatch(collected_metrics, succeeded=len(results) - failed, failed=failed)
 
         except Exception as e:
-            self.logger.error(f"指标收集失败: {str(e)}", exc_info=True)
-            return []
+            self.logger.error("指标收集失败: %s", type(e).__name__)
+            raise
 
     async def _collect_single_metric(
         self, metric_name: str, namespace: str, start_time: datetime, end_time: datetime
@@ -194,23 +199,7 @@ class MetricsCollector(BaseDataCollector):
                 )
 
             if data is None:
-                self.logger.warning(
-                    f"Prometheus查询返回None: {metric_name}, 查询: {query}"
-                )
-                # 尝试不带聚合的查询作为回退
-                fallback_query = metric_name
-                self.logger.info(f"尝试回退查询: {fallback_query}")
-                data = await self.prometheus.query_range(
-                    query=fallback_query,
-                    start_time=start_time,
-                    end_time=end_time,
-                    step=self.step_interval,
-                )
-                if data is None:
-                    self.logger.error(f"回退查询也失败: {metric_name}")
-                    return []
-                else:
-                    self.logger.info(f"回退查询成功: {metric_name}")
+                return []
 
             if hasattr(data, "empty") and data.empty:
                 self.logger.warning(f"Prometheus查询返回空数据: {metric_name}")
@@ -238,8 +227,8 @@ class MetricsCollector(BaseDataCollector):
             return metric_data_list
 
         except Exception as e:
-            self.logger.warning(f"收集指标 {metric_name} 失败: {str(e)}")
-            return []
+            self.logger.warning("指标采集失败: %s", type(e).__name__)
+            raise
 
     def _build_optimized_query(self, metric_name: str, namespace: str) -> str:
         """构建优化的Prometheus查询"""
@@ -336,7 +325,8 @@ class MetricsCollector(BaseDataCollector):
                 metric_data_list.append(metric_data)
 
         except Exception as e:
-            self.logger.error(f"处理指标数据失败: {str(e)}")
+            self.logger.error("处理指标数据失败: %s", type(e).__name__)
+            raise
 
         return metric_data_list
 

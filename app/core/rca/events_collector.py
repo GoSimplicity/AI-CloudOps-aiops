@@ -18,7 +18,7 @@ from app.config.settings import CONFIG, config
 from app.core.interfaces.k8s_client import K8sClient, NullK8sClient
 from app.models.rca_models import EventData, SeverityLevel
 
-from .base_collector import BaseDataCollector
+from .base_collector import BaseDataCollector, CollectionBatch
 
 
 class EventsCollector(BaseDataCollector):
@@ -105,7 +105,7 @@ class EventsCollector(BaseDataCollector):
                             await asyncio.sleep(2**attempt)
                 except Exception as e:
                     self.logger.warning(
-                        f"Kubernetes客户端连接尝试 {attempt + 1}/3 失败: {str(e)}"
+                        f"Kubernetes客户端连接尝试 {attempt + 1}/3 失败: {type(e).__name__}"
                     )
                     if attempt < 2:
                         await asyncio.sleep(2**attempt)
@@ -113,7 +113,7 @@ class EventsCollector(BaseDataCollector):
             raise RuntimeError("无法连接到Kubernetes客户端，已尝试3次")
 
         except Exception as e:
-            self.logger.error(f"初始化Kubernetes客户端时发生错误: {str(e)}")
+            self.logger.error("初始化Kubernetes客户端时发生错误: %s", type(e).__name__)
             raise
 
     async def collect(
@@ -131,6 +131,7 @@ class EventsCollector(BaseDataCollector):
         Returns:
             List[EventData]: 事件数据列表
         """
+        await self.initialize()
         self._ensure_initialized()
 
         # 确保时间有时区信息
@@ -143,7 +144,7 @@ class EventsCollector(BaseDataCollector):
         try:
             # 获取事件
             raw_events = await self.k8s.get_events(
-                namespace=namespace, limit=self.max_events_limit
+                namespace=namespace, limit=self.max_events_limit, raise_errors=True
             )
             self.logger.info(
                 f"获取到原始事件数量: {len(raw_events)}, 时间范围: {start_time} 到 {end_time}"
@@ -163,11 +164,14 @@ class EventsCollector(BaseDataCollector):
             self.logger.info(
                 f"成功收集 {len(processed_events)}/{len(raw_events)} 个事件"
             )
+            if len(raw_events) >= self.max_events_limit:
+                processed_events.error_category = "collection_incomplete" if processed_events.failed else "truncated"
+                processed_events.failed += 1
             return processed_events
 
         except Exception as e:
-            self.logger.error(f"收集K8s事件失败: {str(e)}")
-            return []
+            self.logger.error("收集K8s事件失败: %s", type(e).__name__)
+            raise
 
     async def _batch_process_events(
         self,
@@ -178,7 +182,7 @@ class EventsCollector(BaseDataCollector):
         object_names: Set[str],
     ) -> List[EventData]:
         """批量处理事件以提高性能"""
-        processed_events = []
+        processed_events = CollectionBatch(succeeded=0)
 
         # 使用异步批处理
         for i in range(0, len(raw_events), self.batch_size):
@@ -196,9 +200,15 @@ class EventsCollector(BaseDataCollector):
             for result in batch_results:
                 if isinstance(result, EventData):
                     processed_events.append(result)
+                    processed_events.succeeded += 1
                 elif isinstance(result, Exception):
-                    self.logger.warning(f"处理事件失败: {result}")
+                    processed_events.failed += 1
+                    self.logger.warning("处理事件失败: %s", type(result).__name__)
+                else:
+                    processed_events.succeeded += 1
 
+        if not raw_events:
+            processed_events.succeeded = 1
         return processed_events
 
     async def _process_single_event(
@@ -230,10 +240,8 @@ class EventsCollector(BaseDataCollector):
 
             return self._convert_to_event_data(event)
         except Exception as e:
-            self.logger.debug(
-                f"处理单个事件时出错: {e}, 事件: {event.get('reason', 'Unknown')}"
-            )
-            return None
+            self.logger.debug("处理单个事件失败: %s", type(e).__name__)
+            raise
 
     def _parse_event_time(self, event: Dict[str, Any]) -> datetime:
         """优化的时间解析"""

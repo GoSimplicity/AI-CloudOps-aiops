@@ -67,7 +67,7 @@ class RCAService(BaseService, HealthCheckMixin):
         self.logger.info("RCA服务Redis缓存管理器初始化成功")
       except Exception as cache_e:
         self.logger.warning(
-          f"Redis缓存管理器初始化失败: {str(cache_e)}，将在无缓存模式下运行"
+          f"Redis缓存管理器初始化失败: {type(cache_e).__name__}，将在无缓存模式下运行"
         )
         self._cache_manager = None
 
@@ -86,7 +86,7 @@ class RCAService(BaseService, HealthCheckMixin):
         prometheus_client = PrometheusService()
         await prometheus_client.initialize()
       except Exception as e:
-        self.logger.warning(f"Prometheus初始化失败，启用降级模式: {e}")
+        self.logger.warning("Prometheus初始化失败，启用降级模式: %s", type(e).__name__)
         prometheus_client = NullPrometheusClient()
 
       # Kubernetes 客户端，失败或不健康时降级为空实现
@@ -97,7 +97,7 @@ class RCAService(BaseService, HealthCheckMixin):
           self.logger.warning("Kubernetes不健康，启用降级模式")
           k8s_client = NullK8sClient()
       except Exception as e:
-        self.logger.warning(f"Kubernetes初始化失败，启用降级模式: {e}")
+        self.logger.warning("Kubernetes初始化失败，启用降级模式: %s", type(e).__name__)
         k8s_client = NullK8sClient()
 
       # 初始化收集器（依赖注入）
@@ -116,17 +116,12 @@ class RCAService(BaseService, HealthCheckMixin):
       )
 
       # 并发初始化所有组件（收集器允许降级空实现通过自身健康检查返回False）
-      await asyncio.gather(
-        self._metrics_collector.initialize(),
-        self._events_collector.initialize(),
-        self._logs_collector.initialize(),
-        self._engine.initialize(),
-      )
+      await self._engine.initialize()
 
       self.logger.info("RCA服务组件初始化完成")
     except Exception as e:
-      self.logger.error(f"RCA服务初始化失败: {str(e)}")
-      raise RCAError(f"初始化失败: {str(e)}")
+      self.logger.error("RCA服务初始化失败: %s", type(e).__name__)
+      raise RCAError("RCA服务初始化失败") from e
 
   async def _do_health_check(self) -> bool:
     try:
@@ -179,7 +174,8 @@ class RCAService(BaseService, HealthCheckMixin):
         time_window_hours=time_window_hours,
         metrics=metrics,
       )
-      await self._save_to_cache(cache_key, result, ttl=1800)
+      if result["status"] == "completed":
+        await self._save_to_cache(cache_key, result, ttl=1800)
 
       self.logger.info(
         f"RCA分析完成: 发现 {len(result['root_causes'])} 个根因, "
@@ -188,8 +184,8 @@ class RCAService(BaseService, HealthCheckMixin):
       return result
 
     except Exception as e:
-      self.logger.error(f"RCA分析失败: {str(e)}", exc_info=True)
-      raise RCAError(f"分析失败: {str(e)}")
+      self.logger.error("RCA分析失败: %s", type(e).__name__)
+      raise RCAError("RCA分析失败") from e
 
   async def _try_get_cached_result(
     self,
@@ -210,7 +206,7 @@ class RCAService(BaseService, HealthCheckMixin):
       )
 
       cached_result = await self._get_from_cache(cache_key)
-      if cached_result:
+      if cached_result and cached_result.get("collection", {}).get("status") == "complete":
         self.logger.info(
           f"RCA分析缓存命中，直接返回结果: namespace={namespace}"
         )
@@ -220,7 +216,7 @@ class RCAService(BaseService, HealthCheckMixin):
         return cached_result
       return None
     except Exception as e:
-      self.logger.warning(f"尝试获取缓存结果失败: {str(e)}")
+      self.logger.warning("尝试获取缓存结果失败: %s", type(e).__name__)
       return None
 
   async def _perform_analysis(
@@ -252,8 +248,12 @@ class RCAService(BaseService, HealthCheckMixin):
     # 转换关联数据
     correlations = self._convert_correlations(analysis_result.correlations)
 
+    collection = analysis_result.analysis_metadata.get("collection", {})
+    status = {"complete": "completed", "partial": "degraded", "failed": "failed"}.get(collection.get("status"), "failed")
     return {
-      "success": True,
+      "success": status != "failed",
+      "status": status,
+      "collection": collection,
       "timestamp": analysis_result.timestamp,
       "namespace": analysis_result.namespace,
       "root_causes": root_causes,
@@ -533,38 +533,17 @@ class RCAService(BaseService, HealthCheckMixin):
     try:
       self._ensure_initialized()
 
-      # 生成缓存键
-      cache_key = self._generate_rca_cache_key(
-        operation="quick_diagnosis",
-        namespace=namespace,
-        time_window_hours=1.0,
-      )
-
-      # 使用统一的缓存处理方法
-      return await self._get_cached_result_with_fallback(
-        cache_key=cache_key,
-        fallback_func=self._perform_quick_diagnosis,
-        ttl=900,  # 15分钟缓存
-        namespace=namespace,
-      )
+      return await self._perform_quick_diagnosis(namespace)
 
     except Exception as e:
-      self.logger.error(f"快速诊断失败: {str(e)}")
+      self.logger.error("快速诊断失败: %s", type(e).__name__)
       # 返回基础错误信息而不是抛出异常
-      return self._build_error_diagnosis_result(namespace, str(e))
+      return self._build_error_diagnosis_result(namespace, "诊断失败")
 
   async def _perform_quick_diagnosis(self, namespace: str) -> Dict[str, Any]:
     """
     执行快速诊断的具体逻辑（从原quick_diagnosis方法提取）
     """
-    # 检查依赖服务状态
-    health_checks = await self._gather_health_checks()
-    services_available = any(health_checks.values())
-
-    if not services_available:
-      self.logger.warning("所有依赖服务不可用，返回降级的诊断结果")
-      return self._build_degraded_diagnosis_result(namespace)
-
     # 执行快速分析（最近1小时）
     try:
       analysis_result = await self._engine.analyze(
@@ -572,10 +551,10 @@ class RCAService(BaseService, HealthCheckMixin):
       )
     except Exception as analysis_error:
       self.logger.warning(
-        f"分析引擎执行失败: {str(analysis_error)}, 返回基础诊断结果"
+        f"分析引擎执行失败: {type(analysis_error).__name__}, 返回基础诊断结果"
       )
       return self._build_analysis_error_diagnosis_result(
-        namespace, str(analysis_error)
+        namespace, "分析失败"
       )
 
     return self._build_diagnosis_result_from_analysis(namespace, analysis_result)
@@ -586,6 +565,7 @@ class RCAService(BaseService, HealthCheckMixin):
     """构建错误诊断结果"""
     return {
       "namespace": namespace,
+      "status": "failed",
       "diagnosis_time": datetime.now(timezone.utc).isoformat(),
       "critical_issues": [
         {
@@ -630,6 +610,7 @@ class RCAService(BaseService, HealthCheckMixin):
     """构建分析错误时的诊断结果"""
     return {
       "namespace": namespace,
+      "status": "failed",
       "diagnosis_time": datetime.now(timezone.utc).isoformat(),
       "critical_issues": [
         {
@@ -678,8 +659,12 @@ class RCAService(BaseService, HealthCheckMixin):
           }
         )
 
+    collection = analysis_result.analysis_metadata.get("collection", {})
+    status = {"complete": "completed", "partial": "degraded", "failed": "failed"}.get(collection.get("status"), "failed")
     return {
       "namespace": namespace,
+      "status": status,
+      "collection": collection,
       "diagnosis_time": datetime.now(timezone.utc).isoformat(),
       "critical_issues": critical_issues,
       "recommendations": analysis_result.recommendations[:3]
@@ -898,11 +883,11 @@ class RCAService(BaseService, HealthCheckMixin):
         cached_result["cache_timestamp"] = datetime.now()
         return cached_result
     except ConnectionError as e:
-      self.logger.warning(f"Redis连接错误: {str(e)}")
+      self.logger.warning("Redis连接错误: %s", type(e).__name__)
       # 连接错误时返回None，允许继续执行
       return None
     except Exception as e:
-      self.logger.warning(f"从缓存获取RCA数据失败: {str(e)}")
+      self.logger.warning("从缓存获取RCA数据失败: %s", type(e).__name__)
       # 其他错误也返回None，不影响主流程
       return None
 
@@ -940,10 +925,10 @@ class RCAService(BaseService, HealthCheckMixin):
       )
       self.logger.debug(f"RCA结果已缓存: {cache_key}")
     except ConnectionError as e:
-      self.logger.warning(f"Redis连接错误，无法保存缓存: {str(e)}")
+      self.logger.warning("Redis连接错误，无法保存缓存: %s", type(e).__name__)
       # 连接错误不影响主流程
     except Exception as e:
-      self.logger.warning(f"保存RCA结果到缓存失败: {str(e)}")
+      self.logger.warning("保存RCA结果到缓存失败: %s", type(e).__name__)
       # 缓存失败不影响主流程
 
   async def get_config_info(self) -> Dict[str, Any]:

@@ -451,7 +451,7 @@ class KubernetesService:
             return []
 
     async def get_events(
-        self, namespace: str = None, field_selector: str = None, limit: int = 100
+        self, namespace: str = None, field_selector: str = None, limit: int = 100, *, raise_errors: bool = False
     ) -> List[Dict]:
         """获取事件列表"""
         if not await asyncio.to_thread(self._ensure_initialized):
@@ -479,9 +479,13 @@ class KubernetesService:
 
         except ApiException as e:
             logger.error(f"获取事件列表失败: {type(e).__name__}")
+            if raise_errors:
+                raise
             return []
         except Exception as e:
             logger.error(f"获取事件列表异常: {type(e).__name__}")
+            if raise_errors:
+                raise
             return []
 
     async def restart_deployment(self, name: str, namespace: str = None) -> bool:
@@ -753,7 +757,7 @@ class KubernetesService:
             logger.error(f"获取Deployment状态失败: {type(e).__name__}")
             return None
 
-    async def get_pod(self, namespace: str, pod_name: str) -> Optional[Dict]:
+    async def get_pod(self, namespace: str, pod_name: str, *, raise_errors: bool = False) -> Optional[Dict]:
         """
         获取单个Pod的详细信息
 
@@ -781,6 +785,8 @@ class KubernetesService:
             return pod_dict
 
         except ApiException as e:
+            if raise_errors:
+                raise
             if e.status == 404:
                 logger.warning(f"Pod {pod_name} 不存在于命名空间 {namespace}")
             else:
@@ -788,6 +794,8 @@ class KubernetesService:
             return None
         except Exception as e:
             logger.error(f"获取Pod {pod_name} 异常: {type(e).__name__}")
+            if raise_errors:
+                raise
             return None
 
     async def get_pod_logs(
@@ -798,6 +806,8 @@ class KubernetesService:
         since_time: datetime = None,
         tail_lines: int = None,
         follow: bool = False,
+        *,
+        raise_errors: bool = False,
     ) -> Optional[str]:
         """
         获取Pod容器的日志
@@ -832,6 +842,8 @@ class KubernetesService:
                         if container_status.state.waiting:
                             reason = container_status.state.waiting.reason
                             message = container_status.state.waiting.message or ""
+                            if raise_errors:
+                                raise RuntimeError("Container logs unavailable")
                             logger.info(
                                 f"容器 {container_name} 处于waiting状态: {reason} - {message}"
                             )
@@ -846,6 +858,8 @@ class KubernetesService:
                                 container_status.last_state
                                 and container_status.last_state.terminated
                             ):
+                                if raise_errors:
+                                    raise RuntimeError("Container logs unavailable")
                                 logger.info(
                                     f"容器 {container_name} 尚未运行，无法获取日志"
                                 )
@@ -883,6 +897,8 @@ class KubernetesService:
             return logs
 
         except ApiException as e:
+            if raise_errors:
+                raise
             if e.status == 404:
                 logger.warning(f"Pod {pod_name} 或容器 {container_name} 不存在")
             else:
@@ -890,4 +906,6 @@ class KubernetesService:
             return None
         except Exception as e:
             logger.error(f"获取Pod {pod_name} 日志异常: {type(e).__name__}")
+            if raise_errors:
+                raise
             return None

@@ -30,6 +30,7 @@ from app.models.rca_models import (
     SeverityLevel,
 )
 
+from .base_collector import CollectionBatch
 from .events_collector import EventsCollector
 from .logs_collector import LogsCollector
 from .metrics_collector import MetricsCollector
@@ -136,11 +137,15 @@ class RCAAnalysisEngine:
 
     async def initialize(self) -> None:
         """初始化所有收集器"""
-        await asyncio.gather(
+        results = await asyncio.gather(
             self.metrics_collector.initialize(),
             self.events_collector.initialize(),
             self.logs_collector.initialize(),
+            return_exceptions=True,
         )
+        for result in results:
+            if isinstance(result, Exception):
+                self.logger.warning("数据源初始化失败: %s", type(result).__name__)
         self.logger.info("RCA分析引擎初始化完成")
 
     async def analyze(
@@ -162,9 +167,15 @@ class RCAAnalysisEngine:
         )
 
         # 并行收集三种数据
-        metrics_data, events_data, logs_data = await self._collect_all_data(
+        metrics_data, events_data, logs_data, collection = await self._collect_all_data(
             namespace, start_time, end_time, metrics
         )
+
+        if collection["status"] == "failed":
+            return RootCauseAnalysis(
+                timestamp=datetime.now(timezone.utc), namespace=namespace, root_causes=[],
+                analysis_metadata={"collection": collection},
+            )
 
         # 记录数据收集情况
         self._log_data_collection_summary(metrics_data, events_data, logs_data)
@@ -233,6 +244,7 @@ class RCAAnalysisEngine:
                 "events_analyzed": len(events_data),
                 "logs_analyzed": len(logs_data),
                 "data_completeness": data_completeness,
+                "collection": collection,
                 "analysis_report": analysis_report,
             },
         )
@@ -273,8 +285,6 @@ class RCAAnalysisEngine:
                 if e.severity in [SeverityLevel.CRITICAL, SeverityLevel.HIGH]
             ]
             self.logger.info(f"关键事件数: {len(critical_events)}/{len(events)}")
-            for event in critical_events[:3]:  # 记录前3个关键事件
-                self.logger.info(f"关键事件: {event.reason} - {event.message[:100]}")
         else:
             self.logger.warning("未收集到任何事件数据")
 
@@ -282,8 +292,6 @@ class RCAAnalysisEngine:
         if logs:
             error_logs = [log for log in logs if log.level in ["ERROR", "FATAL"]]
             self.logger.info(f"错误日志数: {len(error_logs)}/{len(logs)}")
-            for log in error_logs[:3]:  # 记录前3个错误日志
-                self.logger.info(f"错误日志: [{log.pod_name}] {log.message[:100]}")
         else:
             self.logger.warning("未收集到任何日志数据")
 
@@ -334,7 +342,7 @@ class RCAAnalysisEngine:
         处理分析结果，统一异常处理
         """
         if isinstance(result, Exception):
-            self.logger.error(f"{analysis_name}失败: {str(result)}")
+            self.logger.error("%s失败: %s", analysis_name, type(result).__name__)
             return {}
         return result
 
@@ -361,7 +369,7 @@ class RCAAnalysisEngine:
         start_time: datetime,
         end_time: datetime,
         metrics: Optional[List[str]] = None,
-    ) -> Tuple[List[MetricData], List[EventData], List[LogData]]:
+    ) -> Tuple[List[MetricData], List[EventData], List[LogData], Dict[str, Any]]:
         """并行收集所有数据"""
         collect_tasks = [
             self.metrics_collector.collect(
@@ -379,22 +387,37 @@ class RCAAnalysisEngine:
 
         results = await asyncio.gather(*collect_tasks, return_exceptions=True)
 
-        # 处理异常和记录收集结果
-        metrics = results[0] if not isinstance(results[0], Exception) else []
-        events = results[1] if not isinstance(results[1], Exception) else []
-        logs = results[2] if not isinstance(results[2], Exception) else []
-
-        # 记录收集异常
-        collection_names = ["指标收集", "事件收集", "日志收集"]
-        for i, result in enumerate(results):
+        values = []
+        sources = {}
+        succeeded = failed = 0
+        for name, result in zip(("metrics", "events", "logs"), results):
             if isinstance(result, Exception):
-                self.logger.warning(f"{collection_names[i]}失败: {str(result)}")
+                batch = CollectionBatch(succeeded=0, failed=1)
+                self.logger.warning("数据源 %s 采集失败: %s", name, type(result).__name__)
+            elif isinstance(result, CollectionBatch):
+                batch = result
+            elif isinstance(result, list):
+                batch = CollectionBatch(result)
             else:
-                self.logger.info(
-                    f"{collection_names[i]}成功: 获得 {len(result)} 条数据"
-                )
-
-        return metrics, events, logs
+                batch = CollectionBatch(succeeded=0, failed=1)
+            succeeded += batch.succeeded
+            failed += batch.failed
+            status = ("partial" if batch.succeeded and batch.failed else
+                      "failed" if batch.failed else "success" if batch else "empty")
+            sources[name] = {
+                "status": status, "count": len(batch),
+                "succeeded": batch.succeeded, "failed": batch.failed,
+                "error_category": batch.error_category if batch.failed else None,
+            }
+            values.append(batch)
+        total = succeeded + failed
+        collection = {
+            "status": "failed" if succeeded == 0 else "partial" if failed else "complete",
+            "coverage": None if any(source["error_category"] in ("truncated", "collection_incomplete") for source in sources.values()) else succeeded / total if total else 0.0,
+            "coverage_basis": "completed_collection_units",
+            "succeeded": succeeded, "failed": failed, "sources": sources,
+        }
+        return *values, collection
 
     async def _analyze_metrics_anomalies(
         self, metrics: List[MetricData]
@@ -804,7 +827,7 @@ class RCAAnalysisEngine:
                     return recommendations[:5]
 
         except Exception as e:
-            self.logger.error(f"生成建议失败: {str(e)}")
+            self.logger.error("生成建议失败: %s", type(e).__name__)
 
         # 备用方案：返回基础建议
         if not root_causes:
@@ -852,7 +875,7 @@ class RCAAnalysisEngine:
             return recommendations[:5]  # 最多返回5个建议
 
         except Exception as e:
-            self.logger.warning(f"解析建议响应失败: {str(e)}")
+            self.logger.warning("解析建议响应失败: %s", type(e).__name__)
             # 尝试直接使用响应文本
             if response and len(response.strip()) > 10:
                 return [response.strip()[:100]]  # 截断过长的响应
@@ -1342,7 +1365,7 @@ class RCAAnalysisEngine:
                 base_report["llm_summary"] = "分析暂时不可用，请查看基础分析数据"
 
         except Exception as e:
-            self.logger.error(f"生成分析报告失败: {str(e)}")
-            base_report["llm_summary"] = f"分析生成失败: {str(e)[:100]}"
+            self.logger.error("生成分析报告失败: %s", type(e).__name__)
+            base_report["llm_summary"] = "分析生成失败"
 
         return base_report

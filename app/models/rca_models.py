@@ -338,6 +338,7 @@ class RCAAnalysisResponse(BaseModel):
     recommendations: List[str] = []
     confidence_score: float = 0.0
     status: str = "completed"
+    collection: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RCADataResponse(BaseModel):
@@ -441,6 +442,7 @@ class QuickDiagnosisResponse(BaseModel):
     recommendations: List[str]
     timestamp: str
     analysis_duration: float
+    collection: Dict[str, Any] = Field(default_factory=dict)
 
 
 class EventPatternsResponse(BaseModel):

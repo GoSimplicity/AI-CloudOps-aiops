@@ -151,7 +151,8 @@ async def analyze_root_cause(
         correlations=analysis_result.get("correlations", []),
         recommendations=analysis_result.get("recommendations", []),
         confidence_score=analysis_result.get("confidence_score", 0.0),
-        status="completed" if analysis_result.get("success", True) else "failed",
+        status=analysis_result.get("status", "completed" if analysis_result.get("success", True) else "failed"),
+        collection=analysis_result.get("collection", {}),
     )
 
     return response.model_dump()
@@ -319,6 +320,7 @@ async def quick_diagnosis(
         recommendations=diagnosis_result.get("recommendations", []),
         timestamp=diagnosis_timestamp,
         analysis_duration=analysis_duration,
+        collection=diagnosis_result.get("collection", {}),
     )
 
     return response.model_dump()
@@ -939,5 +941,5 @@ async def analyze_root_cause_base(
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"RCA分析失败: {str(e)}")
+        logger.error("RCA分析失败: %s", type(e).__name__)
         raise RCAError(ErrorMessages.RCA_SERVICE_ERROR)

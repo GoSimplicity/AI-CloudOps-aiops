@@ -18,6 +18,16 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger("aiops.rca.collectors")
 
 
+class CollectionBatch(list):
+    """Data and per-request work counts; no mutable state is shared across requests."""
+
+    def __init__(self, values=(), *, succeeded: int = 1, failed: int = 0):
+        super().__init__(values)
+        self.succeeded = succeeded
+        self.failed = failed
+        self.error_category = "collection_failed"
+
+
 class BaseDataCollector(ABC):
     """
     数据收集器基类
@@ -59,7 +69,7 @@ class BaseDataCollector(ABC):
                 self.logger.info(f"数据收集器 {self.name} 初始化成功")
             except Exception as e:
                 self._initialized = False
-                self.logger.error(f"数据收集器 {self.name} 初始化失败: {str(e)}")
+                self.logger.error("数据收集器 %s 初始化失败: %s", self.name, type(e).__name__)
                 raise
 
     @abstractmethod

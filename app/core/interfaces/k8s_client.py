@@ -16,7 +16,7 @@ class K8sClient(Protocol):
     async def health_check(self) -> bool: ...
 
     async def get_pods(
-        self, namespace: str, label_selector: Optional[str] = None
+        self, namespace: str, label_selector: Optional[str] = None, *, raise_errors: bool = False
     ) -> List[Dict]: ...
 
     async def get_events(
@@ -24,9 +24,10 @@ class K8sClient(Protocol):
         namespace: str,
         field_selector: Optional[str] = None,
         limit: int = 100,
+        *, raise_errors: bool = False,
     ) -> List[Dict]: ...
 
-    async def get_pod(self, namespace: str, pod_name: str) -> Optional[Dict]: ...
+    async def get_pod(self, namespace: str, pod_name: str, *, raise_errors: bool = False) -> Optional[Dict]: ...
 
     async def get_pod_logs(
         self,
@@ -36,6 +37,7 @@ class K8sClient(Protocol):
         since_time: Optional[datetime] = None,
         tail_lines: Optional[int] = None,
         follow: bool = False,
+        *, raise_errors: bool = False,
     ) -> Optional[str]: ...
 
     # 可选：与Deployment相关的方法，供需要的上层使用
@@ -55,8 +57,10 @@ class NullK8sClient:
         return False
 
     async def get_pods(
-        self, namespace: str, label_selector: Optional[str] = None
+        self, namespace: str, label_selector: Optional[str] = None, *, raise_errors: bool = False
     ) -> List[Dict]:
+        if raise_errors:
+            raise RuntimeError("Kubernetes client unavailable")
         return []
 
     async def get_events(
@@ -64,10 +68,15 @@ class NullK8sClient:
         namespace: str,
         field_selector: Optional[str] = None,
         limit: int = 100,
+        *, raise_errors: bool = False,
     ) -> List[Dict]:
+        if raise_errors:
+            raise RuntimeError("Kubernetes client unavailable")
         return []
 
-    async def get_pod(self, namespace: str, pod_name: str) -> Optional[Dict]:
+    async def get_pod(self, namespace: str, pod_name: str, *, raise_errors: bool = False) -> Optional[Dict]:
+        if raise_errors:
+            raise RuntimeError("Kubernetes client unavailable")
         return None
 
     async def get_pod_logs(
@@ -78,7 +87,10 @@ class NullK8sClient:
         since_time: Optional[datetime] = None,
         tail_lines: Optional[int] = None,
         follow: bool = False,
+        *, raise_errors: bool = False,
     ) -> Optional[str]:
+        if raise_errors:
+            raise RuntimeError("Kubernetes client unavailable")
         return None
 
     async def get_deployment(

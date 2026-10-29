@@ -20,7 +20,7 @@ from app.config.settings import CONFIG, config
 from app.core.interfaces.k8s_client import K8sClient, NullK8sClient
 from app.models.rca_models import LogData
 
-from .base_collector import BaseDataCollector
+from .base_collector import BaseDataCollector, CollectionBatch
 
 
 class LogsCollector(BaseDataCollector):
@@ -135,7 +135,7 @@ class LogsCollector(BaseDataCollector):
                             await asyncio.sleep(2**attempt)
                 except Exception as e:
                     self.logger.warning(
-                        f"Kubernetes客户端连接尝试 {attempt + 1}/3 失败: {str(e)}"
+                        f"Kubernetes客户端连接尝试 {attempt + 1}/3 失败: {type(e).__name__}"
                     )
                     if attempt < 2:
                         await asyncio.sleep(2**attempt)
@@ -143,7 +143,7 @@ class LogsCollector(BaseDataCollector):
             raise RuntimeError("无法连接到Kubernetes客户端，已尝试3次")
 
         except Exception as e:
-            self.logger.error(f"初始化Kubernetes客户端时发生错误: {str(e)}")
+            self.logger.error("初始化Kubernetes客户端时发生错误: %s", type(e).__name__)
             raise
 
     async def collect(
@@ -161,6 +161,7 @@ class LogsCollector(BaseDataCollector):
         Returns:
             List[LogData]: 日志数据列表
         """
+        await self.initialize()
         self._ensure_initialized()
 
         # 确保时间有时区
@@ -173,7 +174,7 @@ class LogsCollector(BaseDataCollector):
 
         # 如果没有指定Pod，获取所有Pod
         if not pod_names:
-            pods = await self.k8s.get_pods(namespace)
+            pods = await self.k8s.get_pods(namespace, raise_errors=True)
             pod_names = [
                 pod.get("metadata", {}).get("name")
                 for pod in pods
@@ -220,13 +221,28 @@ class LogsCollector(BaseDataCollector):
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # 合并结果
-        all_logs = []
+        all_logs = CollectionBatch(succeeded=0)
         for result in results:
-            if isinstance(result, list):
+            if isinstance(result, CollectionBatch):
                 all_logs.extend(result)
+                all_logs.succeeded += result.succeeded
+                all_logs.failed += result.failed
+                if result.failed:
+                    if all_logs.error_category != result.error_category and all_logs.failed > result.failed:
+                        all_logs.error_category = "collection_incomplete"
+                    else:
+                        all_logs.error_category = result.error_category
+            elif isinstance(result, list):
+                all_logs.extend(result)
+                all_logs.succeeded += 1
             elif isinstance(result, Exception):
-                self.logger.warning(f"收集日志失败: {result}")
+                if all_logs.failed and all_logs.error_category == "truncated":
+                    all_logs.error_category = "collection_incomplete"
+                all_logs.failed += 1
+                self.logger.warning("收集日志失败: %s", type(result).__name__)
 
+        if not pod_names:
+            all_logs.succeeded = 1
         return all_logs
 
     async def _collect_pod_logs_optimized(
@@ -241,18 +257,20 @@ class LogsCollector(BaseDataCollector):
         """优化的单Pod日志收集"""
         try:
             # 获取Pod信息
-            pod_info = await self.k8s.get_pod(namespace, pod_name)
+            pod_info = await self.k8s.get_pod(namespace, pod_name, raise_errors=True)
             if not pod_info:
-                return []
+                raise RuntimeError("Pod information unavailable")
 
             containers = pod_info.get("spec", {}).get("containers", [])
-            all_logs = []
+            all_logs = CollectionBatch(succeeded=0)
 
             # 并发收集各容器日志
             container_tasks = []
+            container_names = []
             for container in containers:
                 container_name = container.get("name")
                 if container_name:
+                    container_names.append(container_name)
                     container_tasks.append(
                         self._get_container_logs(
                             namespace, pod_name, container_name, start_time, max_lines
@@ -265,8 +283,17 @@ class LogsCollector(BaseDataCollector):
 
             # 处理每个容器的日志
             for i, container_logs in enumerate(container_logs_list):
+                if isinstance(container_logs, Exception):
+                    if all_logs.failed and all_logs.error_category == "truncated":
+                        all_logs.error_category = "collection_incomplete"
+                    all_logs.failed += 1
+                    continue
+                all_logs.succeeded += 1
                 if isinstance(container_logs, str) and container_logs:
-                    container_name = containers[i].get("name", f"container_{i}")
+                    if max_lines > 0 and len(container_logs.splitlines()) >= max_lines:
+                        all_logs.error_category = "collection_incomplete" if all_logs.failed else "truncated"
+                        all_logs.failed += 1
+                    container_name = container_names[i]
                     parsed = self._parse_logs_optimized(
                         container_logs,
                         pod_name,
@@ -277,11 +304,13 @@ class LogsCollector(BaseDataCollector):
                     )
                     all_logs.extend(parsed)
 
+            if not container_tasks:
+                all_logs.succeeded = 1
             return all_logs
 
         except Exception as e:
-            self.logger.warning(f"处理Pod {pod_name} 失败: {str(e)}")
-            return []
+            self.logger.warning("处理Pod失败: %s", type(e).__name__)
+            raise
 
     async def _get_container_logs(
         self,
@@ -299,14 +328,15 @@ class LogsCollector(BaseDataCollector):
                 container_name=container_name,
                 since_time=since_time,
                 tail_lines=tail_lines,
+                raise_errors=True,
             )
-            return logs if logs else ""
+            if logs is None:
+                raise RuntimeError("Pod logs unavailable")
+            return logs
         except Exception as e:
             # 只记录debug级别日志，避免正常错误（如容器未启动）产生过多日志
-            self.logger.debug(
-                f"获取Pod {pod_name} 容器 {container_name} 日志失败: {str(e)}"
-            )
-            return ""
+            self.logger.debug("获取容器日志失败: %s", type(e).__name__)
+            raise
 
     def _parse_logs_optimized(
         self,
