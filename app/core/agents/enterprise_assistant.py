@@ -17,7 +17,7 @@ from enum import Enum
 import hashlib
 import json
 import logging
-import os
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +28,11 @@ from langgraph.graph import END, StateGraph
 from app.common.constants import ServiceConstants
 from app.common.exceptions import AssistantError
 from app.common.identity import INTERNAL_PRINCIPAL, cache_identity, principal_context
+from app.common.knowledge_budget import DEFAULT_REFRESH_FILES, DEFAULT_REFRESH_TOTAL_BYTES, KnowledgeRefreshBudget
+from app.utils.knowledge_snapshot import (
+    read_knowledge_snapshot,
+    verify_knowledge_snapshot,
+)
 
 logger = logging.getLogger("aiops.rag_assistant")
 
@@ -878,62 +883,9 @@ class RAGAssistant:
                 "timestamp": datetime.now().isoformat(),
             }
 
-    def _read_knowledge_files(self, directory: str):
-        """固定目录并逐项无跟随读取，拒绝链接、非普通文件和超过上传限制的内容"""
-        import stat
-
-        nofollow = getattr(os, "O_NOFOLLOW", None)
-        if nofollow is None or not hasattr(os, "O_DIRECTORY"):
-            raise RuntimeError("当前平台不支持安全知识文件读取")
-        from app.utils.knowledge_directory import open_knowledge_directory, verify_knowledge_directory
-
-        directory_fd, resolved = open_knowledge_directory(directory)
-        try:
-            files = []
-            for filename in sorted(os.listdir(directory_fd)):
-                if not filename.endswith((".md", ".txt")):
-                    continue
-                before = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
-                if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-                    raise ValueError("知识库包含不安全文件")
-                flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
-                file_fd = os.open(filename, flags, dir_fd=directory_fd)
-                try:
-                    opened = os.fstat(file_fd)
-                    if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
-                            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)):
-                        raise ValueError("知识文件发生变化")
-                    limit = 10 * 1024 * 1024  # 与知识上传大小上限一致
-                    if opened.st_size > limit:
-                        raise ValueError("知识文件超过大小上限")
-                    data = bytearray()
-                    while len(data) <= limit:
-                        chunk = os.read(file_fd, min(65536, limit + 1 - len(data)))
-                        if not chunk:
-                            break
-                        data.extend(chunk)
-                    after = os.fstat(file_fd)
-                    named = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
-                    if (len(data) > limit or (after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino)
-                            or (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino)
-                            or (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)):
-                        raise ValueError("知识文件读取期间发生变化")
-                    content = data.decode("utf-8")
-                    if content.strip():
-                        files.append((filename, os.path.join(directory, filename), content))
-                finally:
-                    os.close(file_fd)
-            verify_knowledge_directory(directory, resolved, directory_fd)
-            return files
-        finally:
-            os.close(directory_fd)
-
     async def refresh_knowledge_base(self) -> Dict[str, Any]:
         """构建完整的新知识版本，发布失败时保留当前可用版本"""
         knowledge_path = self.config.rag.knowledge_base_path
-        if not os.path.isdir(knowledge_path):
-            return {"success": False, "message": "知识库路径不存在"}
-
         from app.core.vector.redis_vector_store import RefreshPublishOutcomeUnknown
 
         stage = None
@@ -942,12 +894,22 @@ class RAGAssistant:
         cancelled = False
         loaded_files = []
         total_docs = 0
+        stop_reading = threading.Event()
         try:
-            # 在读取文件前记录写入版本，覆盖读取期间发生的并发上传
+            budget = KnowledgeRefreshBudget(
+                max_files=getattr(self.config.rag, "max_refresh_files", DEFAULT_REFRESH_FILES),
+                max_total_bytes=getattr(self.config.rag, "max_refresh_total_bytes", DEFAULT_REFRESH_TOTAL_BYTES),
+            )
+            # 文件、UTF8和总预算先只读预检，不创建Redis stage或调用模型。
+            snapshot = await asyncio.to_thread(read_knowledge_snapshot, knowledge_path, budget, stop_reading)
             stage = await self.vector_store.create_refresh_stage()
-            files = self._read_knowledge_files(knowledge_path)
+            # revision采样后再复核快照，避免预检期间的上传被较早文件内容覆盖。
+            await asyncio.to_thread(verify_knowledge_snapshot, snapshot, stop_reading)
 
-            for filename, path, content in files:
+            for file in snapshot.files:
+                filename, path, content = file.name, file.path, file.content
+                if not content.strip():
+                    continue
                 document_data = {
                     "content": content,
                     "title": filename.rsplit(".", 1)[0],
@@ -965,6 +927,8 @@ class RAGAssistant:
                 loaded_files.append(filename)
                 total_docs += len(ids)
 
+            # 发布前再次拒绝已经观察到的目录或文件变化。
+            await asyncio.to_thread(verify_knowledge_snapshot, snapshot, stop_reading)
             # 存储层检查并发写版本，单事务切换；发生冲突时不覆盖新数据
             await self.vector_store.publish_refresh_stage(stage)
             published = True
@@ -979,6 +943,7 @@ class RAGAssistant:
                 "total_documents": total_docs,
             }
         except asyncio.CancelledError:
+            stop_reading.set()
             cancelled = True
             raise
         except RefreshPublishOutcomeUnknown:
@@ -988,6 +953,8 @@ class RAGAssistant:
             logger.error("刷新知识库失败，异常类型: %s", type(error).__name__)
             return {"success": False, "published": published, "outcome_unknown": False, "retry_safe": False, "message": "知识库刷新失败"}
         finally:
+            # 系统调用中的线程不保证立即退出；停止信号确保后续只读步骤尽快结束。
+            stop_reading.set()
             if stage is not None:
                 try:
                     await self.vector_store.discard_refresh_stage(stage)

@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
+from app.common.knowledge_budget import DEFAULT_REFRESH_FILES, DEFAULT_REFRESH_TOTAL_BYTES, KnowledgeRefreshBudget, parse_refresh_budget_int
 from app.config.base import BaseAppSettings, InvalidExplicitBool
 
 ROOT_DIR = Path(
@@ -529,6 +530,16 @@ class RAGConfig:
             "RAG_KNOWLEDGE_BASE_PATH", "rag.knowledge_base_path", "data/knowledge_base"
         )
     )
+    max_refresh_files: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RAG_MAX_REFRESH_FILES", "rag.max_refresh_files", DEFAULT_REFRESH_FILES, parse_refresh_budget_int
+        )
+    )
+    max_refresh_total_bytes: int = field(
+        default_factory=lambda: get_env_or_config(
+            "RAG_MAX_REFRESH_TOTAL_BYTES", "rag.max_refresh_total_bytes", DEFAULT_REFRESH_TOTAL_BYTES, parse_refresh_budget_int
+        )
+    )
     chunk_size: int = field(
         default_factory=lambda: get_env_or_config(
             "RAG_CHUNK_SIZE", "rag.chunk_size", 1000, int
@@ -586,6 +597,9 @@ class RAGConfig:
             "RAG_CACHE_EXPIRY", "rag.cache_expiry", 3600, int
         )
     )
+
+    def __post_init__(self):
+        KnowledgeRefreshBudget(self.max_refresh_files, self.max_refresh_total_bytes)
 
     @property
     def effective_embedding_model(self) -> str:

@@ -37,10 +37,12 @@ class Store:
         self.version = 0
         self.stage = Stage()
         self.captured_version = None
+        self.stage_started = asyncio.Event()
         self.discards = 0
 
     async def create_refresh_stage(self):
         self.captured_version = self.version
+        self.stage_started.set()
         return self.stage
 
     async def publish_refresh_stage(self, stage):
@@ -86,10 +88,7 @@ async def test_cancellation_preserves_current_index(tmp_path):
     store = Store()
     store.stage.wait = asyncio.Event()
     operation = asyncio.create_task(assistant(tmp_path, store).refresh_knowledge_base())
-    for _ in range(100):
-        if store.captured_version is not None:
-            break
-        await asyncio.sleep(0)
+    await asyncio.wait_for(store.stage_started.wait(), timeout=2)
     assert store.captured_version is not None
     operation.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -103,10 +102,7 @@ async def test_concurrent_upload_refuses_overwriting_newer_data(tmp_path):
     store = Store()
     store.stage.wait = asyncio.Event()
     operation = asyncio.create_task(assistant(tmp_path, store).refresh_knowledge_base())
-    for _ in range(100):
-        if store.captured_version is not None:
-            break
-        await asyncio.sleep(0)
+    await asyncio.wait_for(store.stage_started.wait(), timeout=2)
     assert store.captured_version is not None
     store.docs.append("concurrent")
     store.version += 1
@@ -725,7 +721,8 @@ async def test_refresh_rejects_symlink_without_reading_outside(tmp_path):
     assert "private-outside-canary" not in str(result)
     assert store.docs == ["old"]
     assert store.stage.docs == []
-    assert store.discards == 1
+    assert store.discards == 0
+    assert store.captured_version is None
 
 
 async def test_refresh_rejects_file_replaced_after_lstat(tmp_path, monkeypatch):
@@ -754,7 +751,8 @@ async def test_refresh_rejects_file_replaced_after_lstat(tmp_path, monkeypatch):
     assert "private-outside-canary" not in str(result)
     assert store.docs == ["old"]
     assert store.stage.docs == []
-    assert store.discards == 1
+    assert store.discards == 0
+    assert store.captured_version is None
 
 
 async def test_refresh_rejects_oversized_file_and_preserves_old_index(tmp_path):
@@ -765,7 +763,8 @@ async def test_refresh_rejects_oversized_file_and_preserves_old_index(tmp_path):
     result = await assistant(tmp_path, store).refresh_knowledge_base()
     assert result["success"] is False
     assert store.docs == ["old"]
-    assert store.discards == 1
+    assert store.discards == 0
+    assert store.captured_version is None
 
 
 def test_refresh_published_but_stage_cleanup_failed_returns_409(monkeypatch, tmp_path):
@@ -823,5 +822,6 @@ async def test_refresh_rejects_configured_root_symlink_swapped_during_read(tmp_p
     assert result["success"] is False
     assert store.docs == ["old"]
     assert store.stage.docs == []
-    assert store.discards == 1
+    assert store.discards == 0
+    assert store.captured_version is None
     assert "private-outside-canary" not in str(result)

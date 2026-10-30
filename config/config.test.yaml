@@ -36,6 +36,8 @@ prometheus:
   host: 127.0.0.1:9090
   timeout: 30
 rag:
+  max_refresh_files: 128 # 单次刷新文件数预算，范围1..1024
+  max_refresh_total_bytes: 33554432 # 单次刷新总字节，默认32MiB，最大256MiB
   cache_expiry: 3600
   chunk_overlap: 200
   chunk_size: 1000

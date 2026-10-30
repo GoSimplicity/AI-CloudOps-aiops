@@ -191,6 +191,8 @@ redis:
 
 # 小助手配置
 rag:
+  max_refresh_files: 128 # 单次刷新文件数预算，范围1..1024
+  max_refresh_total_bytes: 33554432 # 单次刷新总字节，默认32MiB，最大256MiB
   vector_db_path: data/vector_db # 向量数据库路径
   collection_name: aiops-assistant # 向量集合名称
   knowledge_base_path: data/knowledge_base # 知识库路径
