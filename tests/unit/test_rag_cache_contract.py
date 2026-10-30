@@ -69,3 +69,10 @@ async def test_rag_answer_cache_does_not_return_preupgrade_answer():
     assert result["answer"] == "new-cosine-answer"
     assert result["cache_hit"] is False
     rag.graph.ainvoke.assert_awaited_once()
+
+
+def test_vector_store_constructor_creates_independent_cache_scopes(monkeypatch):
+    first = make_store(monkeypatch, MemoryRedis(), "collection-a")
+    second = make_store(monkeypatch, MemoryRedis(), "collection-a")
+    assert len(first._search_cache_scope) == len(second._search_cache_scope) == 32
+    assert first._search_cache_scope != second._search_cache_scope

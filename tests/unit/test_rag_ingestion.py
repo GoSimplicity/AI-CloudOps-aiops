@@ -487,6 +487,7 @@ async def test_batch_search_cache_uses_generation_revision_and_propagates_failur
 
     store = object.__new__(EnhancedRedisVectorStore)
     store._closed = True
+    store._search_cache_scope = "a" * 32
     store.get_revision = AsyncMock(side_effect=["v1:1", "v1:1", "v2:1", "v2:1", "v2:1"])
     entries = {}
     store.query_cache = SimpleNamespace(get=entries.get, set=lambda key, result, ttl: entries.__setitem__(key, result))

@@ -13,11 +13,13 @@ import asyncio
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from functools import wraps
 import hashlib
 import heapq
+import json
 import logging
+import math
 import pickle
 import re
 import time
@@ -104,6 +106,14 @@ class SearchConfig:
     auto_switch_retrieval: bool = True  # 自动切换检索策略
 
 
+def _snapshot_search_config(config: Optional[SearchConfig]) -> SearchConfig:
+    """默认配置与显式配置统一后，固定本次请求实际使用的参数。"""
+    effective = config or SearchConfig()
+    if type(effective) is SearchConfig and set(vars(effective)) == {field.name for field in fields(SearchConfig)}:
+        return replace(effective)
+    return effective
+
+
 def _generation_scoped(method):
     """原子采样活动版本并持租约，嵌套调用沿用同一个快照"""
     @wraps(method)
@@ -164,6 +174,8 @@ class EnhancedRedisVectorStore:
         self.redis_config = redis_config
         self.collection_name = collection_name
         self._generation_scope = ContextVar(f"knowledge_generation_{id(self)}", default=None)
+        # 缺少持久模型manifest时，只允许同一store实例复用结果。
+        self._search_cache_scope = uuid.uuid4().hex
         self.embedding_model = embedding_model
         self.vector_dim = vector_dim
         self.index_type = index_type
@@ -785,7 +797,7 @@ class EnhancedRedisVectorStore:
         if self._closed:
             raise RuntimeError("向量存储已关闭")
 
-        config = config or SearchConfig()
+        config = _snapshot_search_config(config)
         self.stats["search_count"] += 1
         start_time = time.time()
 
@@ -794,9 +806,9 @@ class EnhancedRedisVectorStore:
             revision = await self.get_revision()
             logger.debug(f"搜索配置: {config.__dict__}")
 
-            # 检查缓存
-            if config.use_cache:
-                cache_key = self._get_search_cache_key(query, k, config, revision)
+            # 无法完整解释的配置不读写缓存，但保留原搜索行为。
+            cache_key = self._get_search_cache_key(query, k, config, revision) if config.use_cache else None
+            if cache_key is not None:
                 cached = await asyncio.to_thread(self.query_cache.get, cache_key)
                 if cached:
                     if await self.get_revision() != revision:
@@ -824,7 +836,7 @@ class EnhancedRedisVectorStore:
                 raise VectorSearchError("知识库在查询期间发生变化，请重试")
 
             # 缓存结果
-            if config.use_cache and results:
+            if cache_key is not None and results:
                 await asyncio.to_thread(self.query_cache.set, cache_key, results, config.cache_ttl)
 
             elapsed_time = time.time() - start_time
@@ -1239,10 +1251,57 @@ class EnhancedRedisVectorStore:
         except Exception:
             return 0.0
 
-    def _get_search_cache_key(self, query: str, k: int, config: SearchConfig, revision: str = "0") -> str:
-        """按知识库版本隔离搜索缓存"""
-        params = f"{revision}:{cache_identity()}:{query}:{k}:{config.semantic_weight}:{config.lexical_weight}"
-        return hashlib.md5(params.encode()).hexdigest()
+    def _get_search_cache_key(
+        self, query: str, k: int, config: SearchConfig, revision: str = "0", *,
+        query_embedding: Optional[np.ndarray] = None,
+    ) -> Optional[str]:
+        """绑定完整候选/排序合同；无法证明精确合同的调用禁用缓存。"""
+        if type(config) is not SearchConfig or not isinstance(query, str) or type(k) is not int:
+            return None
+        scope = getattr(self, "_search_cache_scope", None)
+        if not isinstance(scope, str) or not re.fullmatch(r"[0-9a-f]{32}", scope):
+            return None
+        declared = fields(SearchConfig)
+        if set(vars(config)) != {field.name for field in declared}:
+            return None
+        parameters = {}
+        for field in declared:
+            value = getattr(config, field.name)
+            if field.type is bool and type(value) is bool:
+                parameters[field.name] = value
+            elif field.type is int and type(value) is int:
+                parameters[field.name] = value
+            elif field.type is float and type(value) in (int, float):
+                try:
+                    numeric = float(value)
+                except (OverflowError, ValueError):
+                    return None
+                if not math.isfinite(numeric):
+                    return None
+                parameters[field.name] = numeric
+            else:
+                return None
+        embedding_contract = None
+        if query_embedding is not None:
+            if type(query_embedding) is not np.ndarray or query_embedding.ndim != 1:
+                return None
+            if query_embedding.dtype.kind not in "fiu" or not np.all(np.isfinite(query_embedding)):
+                return None
+            embedding_contract = {
+                "dtype": query_embedding.dtype.str,
+                "shape": list(query_embedding.shape),
+                "sha256": hashlib.sha256(query_embedding.tobytes(order="C")).hexdigest(),
+            }
+        payload = {
+            "contract": "fullscan-config-v2", "instance": scope, "revision": revision, "owner": cache_identity(),
+            "query": query, "k": k, "config": parameters, "embedding": embedding_contract,
+        }
+        try:
+            encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError, OverflowError):
+            return None
+        # 新前缀保证不读取遗漏排序参数的旧MD5缓存；旧键自行按原TTL到期。
+        return "search-config-v2:" + hashlib.sha256(encoded).hexdigest()
 
     def _tokenize_text(self, text: str) -> List[str]:
         """简单分词：小写、去掉非字母数字下划线、按空白切分"""
@@ -1384,7 +1443,7 @@ class EnhancedRedisVectorStore:
         if not queries:
             return []
 
-        config = config or SearchConfig()
+        config = _snapshot_search_config(config)
         start_time = time.time()
 
         try:
@@ -1469,9 +1528,14 @@ class EnhancedRedisVectorStore:
     ) -> List[Tuple[Document, float]]:
         """批量查询使用与普通查询相同的generation与revision缓存合同"""
         try:
+            config = _snapshot_search_config(config)
+            if type(query_embedding) is np.ndarray:
+                query_embedding = query_embedding.copy()
             revision = await self.get_revision()
-            cache_key = self._get_search_cache_key(query, k, config, revision)
-            if config.use_cache:
+            cache_key = None
+            if config.use_cache and type(query_embedding) is np.ndarray:
+                cache_key = self._get_search_cache_key(query, k, config, revision, query_embedding=query_embedding)
+            if cache_key is not None:
                 cached = await asyncio.to_thread(self.query_cache.get, cache_key)
                 if cached:
                     if await self.get_revision() != revision:
@@ -1486,7 +1550,7 @@ class EnhancedRedisVectorStore:
                 raise VectorSearchError("知识检索超时，请重试") from error
             if await self.get_revision() != revision:
                 raise VectorSearchError("知识库在查询期间发生变化，请重试")
-            if config.use_cache and results:
+            if cache_key is not None and results:
                 await asyncio.to_thread(self.query_cache.set, cache_key, results, config.cache_ttl)
             return results
         except VectorSearchError:
@@ -1631,7 +1695,8 @@ class EnhancedRedisVectorStore:
         """拒绝无界累积；不自动删除任何可能仍被读取的旧版本"""
         deadline = time.monotonic() + SNAPSHOT_DEADLINE_SECONDS
         prefixes = set()
-        scanned = 0
+        # SCAN允许重复键；集合到上限+1立即拒绝，不随重复页无限增长。
+        seen = set()
         cursor = 0
         pattern = re.compile(re.escape(self.collection_name) + r"-refresh-[0-9a-f]{32}(?=:)")
         while True:
@@ -1639,8 +1704,10 @@ class EnhancedRedisVectorStore:
                 raise TimeoutError("知识库版本容量检查超时")
             cursor, keys = self.client.scan(cursor, match=f"{self.collection_name}-refresh-*", count=500)
             for key in keys:
-                scanned += 1
-                if scanned > MAX_RETAINED_KEYS:
+                if key in seen:
+                    continue
+                seen.add(key)
+                if len(seen) > MAX_RETAINED_KEYS:
                     raise RuntimeError("保留的知识库版本超过键数量上限，需要安全清理")
                 text_key = key.decode("utf-8") if isinstance(key, bytes) else str(key)
                 match = pattern.match(text_key)
