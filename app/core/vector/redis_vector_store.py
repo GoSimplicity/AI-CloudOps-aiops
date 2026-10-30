@@ -34,6 +34,7 @@ import redis
 from app.common.constants import ServiceConstants
 from app.common.identity import cache_identity
 from app.core.vector.generation_gc import GenerationConflict, GenerationGC, GenerationLeaseLost
+from app.core.vector.stage_admission import inspect_stage
 
 # MD文档处理器导入
 try:
@@ -712,10 +713,14 @@ class EnhancedRedisVectorStore:
             lease = self._current_lease()
             if getattr(self, "_is_refresh_stage", False) and lease is None:
                 raise GenerationLeaseLost("暂存版本写入缺少有效租约")
-            watch_keys = (self._active_key(),) + (lease.watch_keys if lease else ())
+            is_stage = getattr(self, "_is_refresh_stage", False)
+            state_key = lease.owner.active_key if is_stage else None
+            watch_keys = (self._active_key(),) + (lease.watch_keys if lease else ()) + ((state_key,) if state_key else ())
             await asyncio.to_thread(pipe.watch, *watch_keys)
             if lease:
                 await lease.check()
+            if state_key and lease.owner._text(await asyncio.to_thread(pipe.hget, state_key, "state:" + self._physical_collection())) != "building":
+                raise GenerationConflict("知识暂存版本已封存，拒绝继续写入")
             active = await asyncio.to_thread(pipe.hget, self._active_key(), "active")
             if self._decode_generation(active) != self._physical_collection():
                 pipe.reset()
@@ -1633,8 +1638,11 @@ class EnhancedRedisVectorStore:
             lease = self._current_lease()
             if getattr(self, "_is_refresh_stage", False) and lease is None:
                 raise GenerationLeaseLost("暂存版本写入缺少有效租约")
-            watch_keys = (self._active_key(), revision) + (lease.watch_keys if lease else ())
+            state_key = lease.owner.active_key if getattr(self, "_is_refresh_stage", False) else None
+            watch_keys = (self._active_key(), revision) + (lease.watch_keys if lease else ()) + ((state_key,) if state_key else ())
             pipe.watch(*watch_keys)
+            if state_key and lease.owner._text(pipe.hget(state_key, "state:" + generation)) != "building":
+                raise GenerationConflict("知识暂存版本已封存，拒绝继续删除")
             if lease:
                 now = self.client.time()
                 now_ms = now[0] * 1000 + now[1] // 1000
@@ -1801,7 +1809,10 @@ class EnhancedRedisVectorStore:
                 batch = keys[offset:offset + 100]
                 # 每批COPY也监视回收标记与租约，防止回收后后台线程重新生成stage键
                 with self.client.pipeline() as pipe:
-                    pipe.watch(*stage._stage_lease.watch_keys)
+                    owner = stage._stage_lease.owner
+                    pipe.watch(*stage._stage_lease.watch_keys, owner.active_key)
+                    if owner._text(pipe.hget(owner.active_key, "state:" + stage.collection_name)) != "building":
+                        raise GenerationConflict("知识暂存版本已封存，拒绝复制")
                     now = self.client.time()
                     now_ms = now[0] * 1000 + now[1] // 1000
                     for generation in stage._stage_lease.protected:
@@ -1817,6 +1828,8 @@ class EnhancedRedisVectorStore:
                         if suffix.startswith(b"idx:"):
                             continue
                         pipe.execute_command("COPY", key, destination + suffix)
+                    # COPY也是stage内容写入；必须推进revision供检查/freeze检测。
+                    pipe.incr(f"{stage.collection_name}:revision")
                     if not all(pipe.execute()):
                         raise RuntimeError("知识库快照读取不完整")
             if time.monotonic() >= deadline:
@@ -1850,14 +1863,26 @@ class EnhancedRedisVectorStore:
             await self.discard_refresh_stage(stage)
             raise
 
+    async def _inspect_refresh_stage(self, stage):
+        return await asyncio.to_thread(
+            inspect_stage, self.client, stage.collection_name, self.vector_dim,
+            max_physical_keys=MAX_RETAINED_KEYS, max_snapshot_keys=MAX_SNAPSHOT_KEYS,
+            max_vectors=VECTOR_SCAN_MAX_KEYS, timeout=SNAPSHOT_DEADLINE_SECONDS,
+            decode_revision=self._decode_revision,
+        )
+
     async def publish_refresh_stage(self, stage):
         """标记未知后由单个Lua命令校验租约、版本并切换指针"""
         if (getattr(stage, "_refresh_origin", None) != self.collection_name or
                 not re.fullmatch(re.escape(self.collection_name) + r"-refresh-[0-9a-f]{32}", stage.collection_name)):
             raise ValueError("临时知识库不属于当前集合")
         lease = stage._stage_lease
+        if lease.owner is not self._generation_gc or lease.generation != stage.collection_name:
+            raise ValueError("暂存租约与待发布版本不匹配")
         await lease.check()
-        await self._generation_gc.protect_unknown(lease)
+        target_revision = await self._inspect_refresh_stage(stage)
+        await lease.check()
+        await self._generation_gc.protect_unknown(lease, target_revision=target_revision)
         stage._commit_started = True
         operation = asyncio.create_task(self._generation_gc.publish_cas(lease))
         try:

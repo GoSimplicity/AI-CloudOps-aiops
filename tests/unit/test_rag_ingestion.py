@@ -409,6 +409,9 @@ async def test_repeated_publish_cancellation_waits_until_transaction_thread_exit
         if not await asyncio.to_thread(finish.wait, 5):
             raise RuntimeError("test timeout")
     store._generation_gc = SimpleNamespace(protect_unknown=AsyncMock(), publish_cas=publish)
+    store._inspect_refresh_stage = AsyncMock(return_value=None)
+    lease.owner = store._generation_gc
+    lease.generation = stage.collection_name
     operation = asyncio.create_task(store.publish_refresh_stage(stage))
     try:
         assert await asyncio.to_thread(started.wait, 2)

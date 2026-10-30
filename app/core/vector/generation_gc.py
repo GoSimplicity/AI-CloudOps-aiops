@@ -67,16 +67,24 @@ if ARGV[3] ~= '0' then
 end
 return 1
 """
+_CAPTURE_REVISION = object()
 _MARK_UNKNOWN = """
 local now = redis.call('TIME'); local ms = now[1] * 1000 + math.floor(now[2] / 1000)
-for i=1,#KEYS-1 do
+for i=1,#KEYS-2 do
   local score=redis.call('ZSCORE', KEYS[i], ARGV[1])
   if not score or tonumber(score) <= ms or redis.call('EXISTS', ARGV[2] .. ARGV[i+2]) ~= 0 then return 0 end
 end
-local gen=ARGV[#ARGV]
-if redis.call('HGET', KEYS[#KEYS], 'state:' .. gen) ~= 'building' then return 0 end
-redis.call('HSET', KEYS[#KEYS], 'state:' .. gen, 'unknown'); return 1
+local gen=ARGV[#KEYS]
+local state_key=KEYS[#KEYS-1]
+if redis.call('HGET', state_key, 'state:' .. gen) ~= 'building' then return 0 end
+local revision=redis.call('GET', KEYS[#KEYS])
+local mode=ARGV[#KEYS+1]
+if (mode == '0' and revision) or (mode == '1' and revision ~= ARGV[#KEYS+2]) then return -1 end
+redis.call('HSET', state_key, 'state:' .. gen, 'unknown',
+ 'sealed_present:' .. gen, revision and '1' or '0', 'sealed_revision:' .. gen, revision or '')
+return 1
 """
+
 _CONFIRM = """
 local state=redis.call('HGET', KEYS[1], 'state:' .. ARGV[1])
 if state == 'published' then return 1 end
@@ -93,6 +101,12 @@ local active=redis.call('HGET', KEYS[5], 'active') or ARGV[2]
 local rev=redis.call('GET', KEYS[6])
 if active ~= ARGV[3] or (ARGV[5] == '0' and rev) or (ARGV[5] == '1' and rev ~= ARGV[6]) then return -2 end
 if redis.call('HGET', KEYS[5], 'state:' .. ARGV[4]) ~= 'unknown' then return -3 end
+local sealed=redis.call('HGET', KEYS[5], 'sealed_present:' .. ARGV[4])
+local sealed_revision=redis.call('HGET', KEYS[5], 'sealed_revision:' .. ARGV[4])
+local target_revision=redis.call('GET', KEYS[8])
+if (sealed ~= '0' and sealed ~= '1') or not sealed_revision or
+ (sealed == '0' and (target_revision or sealed_revision ~= '')) or
+ (sealed == '1' and (not target_revision or target_revision ~= sealed_revision)) then return -2 end
 redis.call('HSET', KEYS[5], 'active', ARGV[4], 'committed:' .. ARGV[4], '1'); return 1
 """
 _ABORT = """
@@ -207,7 +221,7 @@ if (redis.call('HGET', KEYS[1], 'active') or ARGV[1]) == ARGV[2] or redis.call('
 local now=redis.call('TIME'); local ms=now[1]*1000+math.floor(now[2]/1000)
 redis.call('ZREMRANGEBYSCORE', KEYS[4], '-inf', ms)
 if redis.call('ZCARD', KEYS[4]) ~= 0 or redis.call('EXISTS', KEYS[5]) == 0 then return 0 end
-redis.call('SREM', KEYS[2], ARGV[2]); redis.call('HDEL', KEYS[1], 'state:' .. ARGV[2], 'committed:' .. ARGV[2]); redis.call('DEL', KEYS[4])
+redis.call('SREM', KEYS[2], ARGV[2]); redis.call('HDEL', KEYS[1], 'state:' .. ARGV[2], 'committed:' .. ARGV[2], 'sealed_present:' .. ARGV[2], 'sealed_revision:' .. ARGV[2]); redis.call('DEL', KEYS[4])
 redis.call('PEXPIRE', KEYS[5], ARGV[3]); redis.call('ZADD', KEYS[6], ms + tonumber(ARGV[3]), ARGV[2])
 return 1
 """
@@ -362,11 +376,17 @@ class GenerationGC:
         return bool(await asyncio.to_thread(self.client.eval, _RENEW_OR_CHECK, len(keys), *keys,
             lease.token, self._prefix + "deleting:", self.lease_ms if renew else 0, *lease.protected))
 
-    async def protect_unknown(self, lease):
-        keys = [self.lease_key(gen) for gen in lease.protected] + [self._state_key(lease.generation)]
+    async def protect_unknown(self, lease, *, target_revision=_CAPTURE_REVISION):
+        if lease.owner is not self or lease.source_generation is None or lease.protected != (lease.source_generation, lease.generation):
+            raise ValueError("需要当前知识库的双版本暂存租约")
+        keys = [self.lease_key(gen) for gen in lease.protected] + [self._state_key(lease.generation), f"{lease.generation}:revision"]
+        mode = "capture" if target_revision is _CAPTURE_REVISION else "0" if target_revision is None else "1"
+        expected = "" if target_revision is _CAPTURE_REVISION or target_revision is None else target_revision
         ok = await asyncio.to_thread(self.client.eval, _MARK_UNKNOWN, len(keys), *keys,
-            lease.token, self._prefix + "deleting:", *lease.protected)
-        if not ok:
+            lease.token, self._prefix + "deleting:", *lease.protected, mode, expected)
+        if ok == -1:
+            raise GenerationConflict("知识暂存版本在检查后发生变化")
+        if ok != 1:
             raise GenerationLeaseLost("无法保护待发布版本")
 
     async def confirm_published(self, lease):
@@ -375,13 +395,13 @@ class GenerationGC:
             raise RuntimeError("无法确认发布版本")
 
     async def publish_cas(self, lease):
-        if lease.owner is not self or lease.source_generation is None or len(lease.protected) != 2:
+        if lease.owner is not self or lease.source_generation is None or lease.protected != (lease.source_generation, lease.generation):
             raise ValueError("需要当前知识库的双版本暂存租约")
         source, target = lease.source_generation, lease.generation
         revision = lease.source_revision
-        result = await asyncio.to_thread(self.client.eval, _PUBLISH, 7,
+        result = await asyncio.to_thread(self.client.eval, _PUBLISH, 8,
             self.lease_key(source), self.lease_key(target), self.tombstone_key(source),
-            self.tombstone_key(target), self.active_key, f"{source}:revision", self._state_key(target),
+            self.tombstone_key(target), self.active_key, f"{source}:revision", self._state_key(target), f"{target}:revision",
             lease.token, self.collection, source, target, "0" if revision is None else "1", revision or "")
         if result == -1:
             raise GenerationLeaseLost("知识库版本租约已失效")
