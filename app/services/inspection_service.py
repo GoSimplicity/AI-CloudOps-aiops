@@ -15,6 +15,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
+from app.common.exceptions import FeatureDisabledError
 from app.config.settings import config
 from app.core.inspection.profiles import get_profile_rules
 from app.core.inspection.rules.base import RuleContext
@@ -48,15 +49,32 @@ class InspectionService(BaseService):
         # 简易调度器
         self._scheduler_task: Optional[asyncio.Task] = None
         self._scheduler_running: bool = False
+        self._scheduler_lock = asyncio.Lock()
+
+    def _ensure_enabled(self) -> None:
+        if not config.inspection.enabled:
+            raise FeatureDisabledError("巡检功能已关闭", "inspection.enabled", error_code="INSPECTION_FEATURE_DISABLED")
+
+    def _ensure_scheduler_enabled(self) -> None:
+        self._ensure_enabled()
+        if not config.inspection.scheduler_enabled:
+            raise FeatureDisabledError("巡检内部调度已关闭", "inspection.scheduler.enabled", error_code="INSPECTION_FEATURE_DISABLED")
+
+    async def initialize(self) -> None:
+        self._ensure_enabled()
+        await super().initialize()
+        self._ensure_enabled()
 
     async def _do_initialize(self) -> None:
         # 依赖初始化（尽量轻量）
+        self._ensure_enabled()
         try:
             self._k8s = await asyncio.to_thread(KubernetesService)
         except Exception as e:
             logger.warning(f"Kubernetes服务初始化失败: {e}")
             self._k8s = None
 
+        self._ensure_enabled()
         try:
             self._prom = PrometheusService()
             await self._prom.initialize()
@@ -66,15 +84,27 @@ class InspectionService(BaseService):
 
     async def _do_health_check(self) -> bool:
         # 按最小要求：任一数据源可用即认为可执行巡检
+        if not config.inspection.enabled:
+            return False
         k = bool(self._k8s and await self._k8s.health_check())
         p = bool(self._prom and self._prom.is_initialized())
         return k or p
 
     async def start_scheduler(self) -> Dict[str, Any]:
         """启动内部简单调度（基于sleep间隔近似cron）"""
-        if self._scheduler_running:
-            return {"running": True}
+        async with self._scheduler_lock:
+            try:
+                self._ensure_scheduler_enabled()
+            except FeatureDisabledError:
+                await self._stop_scheduler_locked()
+                raise
+            if self._scheduler_running and self._scheduler_task is not None and not self._scheduler_task.done():
+                return {"running": True}
+            await self.initialize()
+            self._ensure_scheduler_enabled()
+            return self._start_scheduler_locked()
 
+    def _start_scheduler_locked(self) -> Dict[str, Any]:
         interval_minutes = 30
         try:
             cron = config.inspection.scheduler_cron
@@ -90,42 +120,64 @@ class InspectionService(BaseService):
         self._scheduler_running = True
 
         async def _loop():
-            while self._scheduler_running:
-                try:
-                    req = InspectionRunRequest(
-                        scope="namespace",
-                        namespace=None,
-                        profiles=[config.inspection.default_profile],
-                        time_window_minutes=config.inspection.time_window_minutes,
-                        include_events=config.inspection.include_events,
-                        include_logs=False,
-                        severity_threshold=config.inspection.severity_threshold,
-                    )
-                    await self.run_inspection(req)
-                except Exception:
-                    pass
-                await asyncio.sleep(interval_minutes * 60)
+            current = asyncio.current_task()
+            try:
+                while self._scheduler_running and self._scheduler_task is current:
+                    if not config.inspection.enabled or not config.inspection.scheduler_enabled:
+                        break
+                    try:
+                        req = InspectionRunRequest(
+                            scope="namespace",
+                            namespace=None,
+                            profiles=[config.inspection.default_profile],
+                            time_window_minutes=config.inspection.time_window_minutes,
+                            include_events=config.inspection.include_events,
+                            include_logs=False,
+                            severity_threshold=config.inspection.severity_threshold,
+                        )
+                        await self.run_inspection(req)
+                    except FeatureDisabledError:
+                        break
+                    except Exception as error:
+                        logger.warning("巡检周期执行失败，异常类型: %s", type(error).__name__)
+                    if not config.inspection.enabled or not config.inspection.scheduler_enabled:
+                        break
+                    await asyncio.sleep(interval_minutes * 60)
+            finally:
+                if self._scheduler_task is current:
+                    self._scheduler_task = None
+                    self._scheduler_running = False
 
         self._scheduler_task = asyncio.create_task(_loop())
         return {"running": True, "interval_minutes": interval_minutes}
 
     async def stop_scheduler(self) -> Dict[str, Any]:
-        if not self._scheduler_running:
-            return {"running": False}
-        self._scheduler_running = False
-        try:
-            if self._scheduler_task:
-                self._scheduler_task.cancel()
-        except Exception:
-            pass
+        async with self._scheduler_lock:
+            await self._stop_scheduler_locked()
         return {"running": False}
 
+    async def _stop_scheduler_locked(self) -> None:
+        task = self._scheduler_task
+        self._scheduler_running = False
+        self._scheduler_task = None
+        if task is not None and task is not asyncio.current_task():
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def scheduler_status(self) -> Dict[str, Any]:
+        if not config.inspection.enabled or not config.inspection.scheduler_enabled:
+            await self.stop_scheduler()
         return {"running": self._scheduler_running}
+
+    async def cleanup(self) -> None:
+        await self.stop_scheduler()
+        await super().cleanup()
 
     # 对外接口
     async def run_inspection(self, req: InspectionRunRequest) -> Dict[str, Any]:
         """执行一次巡检（同步）"""
+        self._ensure_enabled()
         self._ensure_initialized()
 
         start_ts = time.time()
@@ -149,6 +201,7 @@ class InspectionService(BaseService):
         pods, events, prom_series, nodes, services, endpoints, rqs, pvcs = await asyncio.gather(
             pods_task, events_task, prom_task, nodes_task, services_task, endpoints_task, rq_task, pvcs_task
         )
+        self._ensure_enabled()
 
         # 规则检查（按 Profile 执行）
         findings = self._apply_profile_rules(
@@ -221,6 +274,7 @@ class InspectionService(BaseService):
 
     async def run_inspection_async(self, req: InspectionRunRequest) -> Dict[str, Any]:
         """创建一个异步巡检任务（简单内存任务）"""
+        self._ensure_enabled()
         self._ensure_initialized()
         task_id = f"task-{int(time.time()*1000)}"
         self._tasks[task_id] = InspectionTaskStatus(task_id=task_id, status="running")

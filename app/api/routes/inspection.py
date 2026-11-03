@@ -32,7 +32,7 @@ async def get_inspection_service() -> InspectionService:
     global inspection_service
     if inspection_service is None:
         inspection_service = await ServiceFactory.get_service(
-            "inspection", InspectionService
+            "inspection", InspectionService, initialize=False
         )
     return inspection_service
 
