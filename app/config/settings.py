@@ -78,6 +78,11 @@ def get_env_or_config(
     return value
 
 
+def _get_llm_provider() -> str:
+    """LLM 与嵌入模型共用 provider 的环境优先级、备注及空白处理。"""
+    return get_env_or_config("LLM_PROVIDER", "llm.provider", "openai").split("#", 1)[0].strip()
+
+
 @dataclass
 class PrometheusConfig:
     """Prometheus 监控系统配置"""
@@ -102,13 +107,7 @@ class PrometheusConfig:
 class LLMConfig:
     """大语言模型配置"""
 
-    provider: str = field(
-        default_factory=lambda: get_env_or_config(
-            "LLM_PROVIDER", "llm.provider", "openai"
-        )
-        .split("#")[0]
-        .strip()
-    )
+    provider: str = field(default_factory=_get_llm_provider)
     model: str = field(
         default_factory=lambda: get_env_or_config(
             "LLM_MODEL", "llm.model", "Qwen/Qwen3-14B"
@@ -595,16 +594,17 @@ class RAGConfig:
     def __post_init__(self):
         KnowledgeRefreshBudget(self.max_refresh_files, self.max_refresh_total_bytes)
 
-    @property
-    def effective_embedding_model(self) -> str:
-        llm_provider = get_env_or_config(
-            "LLM_PROVIDER", "llm.provider", "openai"
-        ).lower()
+    def embedding_model_for_provider(self, provider: str) -> str:
+        """按调用方选定的 provider 取模型，避免客户端与模型来自不同配置时点。"""
         return (
             self.ollama_embedding_model
-            if llm_provider == "ollama"
+            if provider.lower() == "ollama"
             else self.openai_embedding_model
         )
+
+    @property
+    def effective_embedding_model(self) -> str:
+        return self.embedding_model_for_provider(_get_llm_provider())
 
 
 @dataclass

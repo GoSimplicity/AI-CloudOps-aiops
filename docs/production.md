@@ -162,3 +162,9 @@ debug 模式下 5xx 响应会带出 `message` 与 `data.details`（可能包含�
 - 双保险：即使 debug 被意外打开，错误处理器在生产环境下也不回显 5xx 的 `message`/`details`（`_debug_details()` = debug 且非生产）。
 
 恢复启动：设置 `DEBUG=false`（或 `app.debug: false`）；若确实不是生产环境，把 `ENV` 设为 `development`/`dev` 或 `test`/`testing`。
+
+## LLM与嵌入模型选择一致性
+
+LLM provider与RAG有效模型属性共用环境变量>YAML>默认值的取值及备注/空白清理。创建嵌入客户端时，客户端类型和模型名使用同一个已捕获的provider，构造后改变环境变量不会把旧客户端与另一provider的模型混用；RAG有效模型属性原有动态读取合同保留。显式embedding模型及空字符串按原合同传递，不擅自覆盖或回退。
+
+2026-11-03：新增48项离线配置/工厂回归；与配置、RAG相关209项通过。和巡检模块共同冻结后的全仓2498项通过、33项既有条件跳过；所有模型客户端均为替身，没有真实模型调用。

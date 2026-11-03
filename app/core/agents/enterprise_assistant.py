@@ -1791,7 +1791,7 @@ async def _create_embedding_model():
         from app.config.settings import config
 
         provider = config.llm.provider.lower()
-        model_name = config.rag.effective_embedding_model
+        model_name = config.rag.embedding_model_for_provider(provider)
 
         if provider == "openai":
             from langchain_openai import OpenAIEmbeddings
