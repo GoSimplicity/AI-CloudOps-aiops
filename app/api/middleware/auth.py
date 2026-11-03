@@ -8,6 +8,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 
 from app.common.identity import INTERNAL_PRINCIPAL, PRINCIPAL_HEADER, principal_scope
+from app.config.envmode import is_production
 from app.config.settings import config
 
 
@@ -56,6 +57,6 @@ class ServiceAuthMiddleware:
 
 def setup_auth(app: FastAPI) -> None:
     api_key = config.security.api_key
-    if config.env.lower() == "production" and len(api_key) < 32:
+    if is_production(config.env) and len(api_key) < 32:
         raise ValueError("Production requires AIOPS_API_KEY with at least 32 characters")
     app.add_middleware(ServiceAuthMiddleware, api_key=api_key)

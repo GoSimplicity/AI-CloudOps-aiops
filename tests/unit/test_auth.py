@@ -43,16 +43,44 @@ def test_public_health_does_not_exempt_operations(monkeypatch):
     assert client.get("/docs").status_code == 401
 
 
-@pytest.mark.parametrize("key", ["", "short"])
-def test_production_requires_strong_key(monkeypatch, key):
-    with pytest.raises(ValueError, match="AIOPS_API_KEY"):
-        make_client(monkeypatch, key, "production")
+PRODUCTION_LIKE_ENVS = ["production", "prod", "PRD", " Production\n", "staging", "", "   ", None, 123, False]
 
 
-def test_websocket_requires_credentials(monkeypatch):
+@pytest.mark.parametrize("env", PRODUCTION_LIKE_ENVS)
+@pytest.mark.parametrize("key", ["", "private-short-key-canary", "x" * 31])
+def test_production_requires_strong_key(monkeypatch, key, env, caplog):
+    with pytest.raises(ValueError, match="AIOPS_API_KEY") as raised:
+        make_client(monkeypatch, key, env)
+    if key:
+        assert key not in str(raised.value)
+        assert key not in caplog.text
+
+
+@pytest.mark.parametrize("env", PRODUCTION_LIKE_ENVS)
+def test_production_aliases_require_credentials_for_private_requests(monkeypatch, env):
+    key = "s" * 32
+    client = make_client(monkeypatch, key, env)
+    assert client.get("/health").status_code == 200
+    assert client.post("/health").status_code == 401
+    assert client.get("/docs").status_code == 401
+    assert client.post("/tools/execute").status_code == 401
+    assert client.post("/tools/execute", headers={"X-API-Key": "wrong"}).status_code == 401
+    assert client.post("/tools/execute", headers={"X-API-Key": key}).json() == {"executed": True}
+    assert client.post("/tools/execute", headers={"Authorization": f"Bearer {key}"}).json() == {"executed": True}
+
+
+@pytest.mark.parametrize("env", ["development", "dev", " DEV ", "test", "testing", " TESTING "])
+def test_explicit_development_and_test_keep_empty_key_contract(monkeypatch, env):
+    client = make_client(monkeypatch, "", env)
+    assert client.post("/tools/execute").status_code == 200
+
+
+@pytest.mark.parametrize("env", ["test", *PRODUCTION_LIKE_ENVS])
+def test_websocket_requires_credentials(monkeypatch, env):
     from starlette.websockets import WebSocketDisconnect
 
-    client = make_client(monkeypatch)
+    key = "s" * 32
+    client = make_client(monkeypatch, key, env)
 
     @client.app.websocket("/ws")
     async def websocket(ws: WebSocket):
@@ -64,5 +92,5 @@ def test_websocket_requires_credentials(monkeypatch):
         with client.websocket_connect("/ws"):
             pass
     assert exc.value.code == 1008
-    with client.websocket_connect("/ws", headers={"X-API-Key": "test-key"}) as ws:
+    with client.websocket_connect("/ws", headers={"X-API-Key": key}) as ws:
         assert ws.receive_text() == "authenticated"
