@@ -18,6 +18,8 @@ from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import yaml
 
+from app.config.envmode import parse_env_mode
+
 # 预加载 .env 到进程环境，确保自定义读取函数也能获取
 load_dotenv()
 
@@ -28,8 +30,9 @@ def _get_root_dir() -> Path:
 
 
 def _get_env_name() -> str:
-    """当前环境名，默认 development"""
-    return os.getenv("ENV", "development")
+    """已知环境别名使用统一规范；保留自定义环境文件名和既有默认值。"""
+    raw = os.getenv("ENV", "development")
+    return parse_env_mode(raw) or raw
 
 
 def _get_yaml_path() -> Path:
@@ -50,7 +53,7 @@ class StrictBoolSafeLoader(yaml.SafeLoader):
     yes/no/on/off（及其大小写变体）保留为字符串，交由调用方按字面判定。
     SEC-26 第二层审查 P2-2：只用于经 settings._parse_autofix_bool 解析的布尔开关（见 settings.AUTOFIX_SWITCH_CONFIG）：
     autofix.auto_execute_enabled / repair_enabled / bootstrap_enabled，以及 SEC-33 的
-    mcp.write_tools_enabled / mcp.secret_read_enabled。全局 CONFIG 仍用 yaml.safe_load，其它配置的解析结果不变。
+    mcp.write_tools_enabled / mcp.secret_read_enabled。普通 CONFIG 保留 SafeLoader 的正常布尔解析合同。
 
     SEC-26 复审 P3-d：显式 !!bool 标签同样只接受不加引号的 true/True/TRUE、false/False/FALSE；
     !!bool yes / !!bool on / !!bool 'true' 等构造为 INVALID_EXPLICIT_BOOL 哨兵，由调用方按关闭处理并告警。
@@ -92,27 +95,99 @@ def _construct_strict_bool(loader: yaml.SafeLoader, node: yaml.Node) -> Any:
 StrictBoolSafeLoader.add_constructor(_YAML_BOOL_TAG, _construct_strict_bool)
 
 
-def _load_yaml(loader: Type[yaml.SafeLoader] = yaml.SafeLoader) -> Dict[str, Any]:
-    """加载 YAML 配置为字典，找不到文件返回空字典
+class ConfigLoadError(RuntimeError):
+    """配置存在但无法安全读取或解析；错误信息不包含文件内容。"""
 
-    默认 loader 为 yaml.SafeLoader（与 yaml.safe_load 等价）；loader 只能是 SafeLoader 及其子类。
+
+class ConfigSafeLoader(yaml.SafeLoader):
+    """普通配置保留 YAML 1.1 布尔值；非法显式布尔值先保留为哨兵。"""
+
+
+def _construct_config_bool(loader: yaml.SafeLoader, node: yaml.Node) -> Any:
+    try:
+        return yaml.SafeLoader.construct_yaml_bool(loader, node)
+    except (yaml.constructor.ConstructorError, KeyError):
+        return INVALID_EXPLICIT_BOOL
+
+
+ConfigSafeLoader.add_constructor(_YAML_BOOL_TAG, _construct_config_bool)
+_GATED_BOOL_PATHS = {
+    ("autofix", "auto_execute_enabled"),
+    ("autofix", "repair_enabled"),
+    ("autofix", "bootstrap_enabled"),
+    ("mcp", "write_tools_enabled"),
+    ("mcp", "secret_read_enabled"),
+}
+_GATED_BOOL_PREFIXES = {(), ("autofix",), ("mcp",)} | _GATED_BOOL_PATHS
+
+
+def _normalize_invalid_config_bools(data: Dict[str, Any]) -> None:
+    """仅保留五个写门禁的非法显式布尔值关闭合同，不吞掉整份配置。
+
+    先检查再修改，避免 YAML alias 把同一非法值复用到其它字段时漏检。
+    只记录已知字段的路径前缀，因此循环 alias 也会有界终止。
+    """
+    pending = [(data, ())]
+    visited = set()
+    while pending:
+        value, path = pending.pop()
+        if isinstance(value, InvalidExplicitBool):
+            if path not in _GATED_BOOL_PATHS:
+                raise ConfigLoadError("YAML 配置包含非法显式布尔值，请检查字段类型")
+            continue
+        if not isinstance(value, (dict, list, tuple, set)):
+            continue
+        identity = (id(value), path)
+        if identity in visited:
+            continue
+        visited.add(identity)
+        children = value.items() if isinstance(value, dict) else enumerate(value)
+        for key, child in children:
+            if isinstance(key, InvalidExplicitBool):
+                raise ConfigLoadError("YAML 配置包含非法显式布尔键，请检查字段类型")
+            child_path = (*path, key) if path is not None else None
+            if child_path not in _GATED_BOOL_PREFIXES:
+                child_path = None
+            pending.append((child, child_path))
+
+    for section, field in _GATED_BOOL_PATHS:
+        values = data.get(section)
+        if isinstance(values, dict) and isinstance(values.get(field), InvalidExplicitBool):
+            values[field] = False
+
+
+def _load_yaml(loader: Type[yaml.SafeLoader] = yaml.SafeLoader) -> Dict[str, Any]:
+    """加载 YAML 映射；仅缺失文件允许回退，损坏或不可读的配置拒绝加载。
+
+    默认保持 SafeLoader 的正常解析合同；仅五个写门禁的非法显式布尔值按单字段关闭。
+    loader 只能是 SafeLoader 及其子类。
     """
     if not (isinstance(loader, type) and issubclass(loader, yaml.SafeLoader)):
         raise TypeError("YAML 配置只能用 yaml.SafeLoader 或其子类加载")
     yaml_path = _get_yaml_path()
     default_path = _get_root_dir() / "config" / "config.yaml"
 
-    try:
-        if yaml_path.exists():
-            with open(yaml_path, "r", encoding="utf-8") as f:
-                return yaml.load(f, Loader=loader) or {}  # loader 限定为 SafeLoader 及其子类
-        if default_path.exists():
-            with open(default_path, "r", encoding="utf-8") as f:
-                return yaml.load(f, Loader=loader) or {}  # loader 限定为 SafeLoader 及其子类
-        return {}
-    except Exception:
-        # 返回空字典，避免启动失败
-        return {}
+    paths = [yaml_path] if yaml_path == default_path else [yaml_path, default_path]
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeError):
+            raise ConfigLoadError("无法读取 YAML 配置，请检查文件权限与 UTF-8 编码") from None
+
+        try:
+            data = yaml.load(text, Loader=ConfigSafeLoader if loader is yaml.SafeLoader else loader)
+        except (yaml.YAMLError, ValueError, TypeError, KeyError, OverflowError):
+            raise ConfigLoadError("无法解析 YAML 配置，请检查语法和字段类型") from None
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            raise ConfigLoadError("YAML 配置根节点必须是映射")
+        if loader is yaml.SafeLoader:
+            _normalize_invalid_config_bools(data)
+        return data
+    return {}
 
 
 class BaseAppSettings(BaseSettings):

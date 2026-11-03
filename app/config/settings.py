@@ -34,13 +34,7 @@ def load_config(strict_bool: bool = False) -> Dict[str, Any]:
 
     strict_bool=True 时使用 StrictBoolSafeLoader：YAML 1.1 布尔别名（yes/on 等）保留为字符串。
     """
-    try:
-        data = BaseAppSettings.load_yaml_config_strict_bool() if strict_bool else BaseAppSettings.load_yaml_config()
-        return data or {}
-    except Exception as e:
-        logger = logging.getLogger("aiops.config.settings")
-        logger.exception("加载配置文件出错: %s", e)
-        return {}
+    return BaseAppSettings.load_yaml_config_strict_bool() if strict_bool else BaseAppSettings.load_yaml_config()
 
 
 CONFIG = load_config()

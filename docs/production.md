@@ -153,11 +153,12 @@ Redis 持久状态完好时，重启后可按原 owner 查询会话和已完成�
 
 debug 模式下 5xx 响应会带出 `message` 与 `data.details`（可能包含内部信息），因此**生产环境开启 debug 拒绝启动**：API（`app/main.py`）与 MCP（`app/mcp/main.py`）在 lifespan 开始时调用 `app/config/envmode.py::ensure_debug_safe`，抛出 `DebugInProductionError`，进程不会开始服务。
 
-- **环境取值**：`config.env`，即 `ENV` 环境变量 > YAML `app.env` > 默认 `development`（`ENV` 同时决定加载 `config/config.{ENV}.yaml`，不存在时回退 `config/config.yaml`）。
+- **环境取值**：`config.env`，即 `ENV` 环境变量 > YAML `app.env` > 默认 `development`。配置选路使用同一套已知别名规范化：`production`/`prod`/`prd`（含大小写及首尾空白）加载 `config/config.production.yaml`，`development`/`dev` 加载 `config/config.yaml`，`test`/`testing` 加载 `config/config.test.yaml`；自定义环境名仍选择 `config/config.{ENV}.yaml`。仅文件不存在时回退 `config/config.yaml`，不因文件损坏回退开发配置。
 - **debug 取值**：`DEBUG` 环境变量 > YAML `app.debug`。
-- **什么算生产**（与 Go 后端 `pkg/envmode` 一致）：先 strip 再 lower；`production`/`prod`/`prd` 为生产；`development`/`dev` 为开发；`test`/`testing` 为测试（复用开发配置，允许 debug）；**空值或无法识别的取值（如 `staging`）按生产处理**（fail-closed）。
+- **什么算生产**（与 Go 后端 `pkg/envmode` 一致）：先 strip 再 lower；`production`/`prod`/`prd` 为生产；`development`/`dev` 为开发；`test`/`testing` 为测试（允许 debug）；**空值或无法识别的取值（如 `staging`）按生产处理**（fail-closed）。
 - 与 Go 的唯一差异：`ENV` 与 `app.env` 都未设置时，aiops 沿用既有默认 `development`（这是本地默认启动加载 `config/config.yaml` 的前提）；Go 侧未设置按生产。Docker 镜像与 Compose 均显式设置 `ENV=production`，不受此差异影响。
-- 注意：`ENV=prod`/`prd` 会被判为生产，但没有 `config/config.prod.yaml` 时会回退到 `config/config.yaml`（其中 `debug: true`），此时会拒绝启动；生产请使用 `ENV=production`（加载 `config.production.yaml`，`debug: false`），或同时设置 `DEBUG=false`。
+- 已存在的配置发生读取/权限、UTF-8、YAML语法或根节点类型错误时抛出 `ConfigLoadError` 并拒绝初始化，不再静默返回空配置。错误仅说明类别，不回显配置内容或底层解析异常。两处文件都不存在仍支持仅用环境变量及默认值初始化；空文件和空映射也保留既有空配置合同。
+- 五个写门禁（`autofix.auto_execute_enabled` / `repair_enabled` / `bootstrap_enabled`，`mcp.write_tools_enabled` / `secret_read_enabled`）保留非法显式 `!!bool` 值关闭并告警的合同：普通配置只把对应字段设为 false，其余配置不丢失；严格开关视图仍保留哨兵供告警。非法值出现在其它字段、容器内部或通过 YAML alias 复用到其它路径时拒绝初始化。正常的 YAML 1.1 布尔值和其它 alias 解析合同保持不变。
 - 双保险：即使 debug 被意外打开，错误处理器在生产环境下也不回显 5xx 的 `message`/`details`（`_debug_details()` = debug 且非生产）。
 
 恢复启动：设置 `DEBUG=false`（或 `app.debug: false`）；若确实不是生产环境，把 `ENV` 设为 `development`/`dev` 或 `test`/`testing`。
