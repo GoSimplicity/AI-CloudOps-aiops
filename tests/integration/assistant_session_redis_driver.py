@@ -16,7 +16,7 @@ from langchain_core.documents import Document
 from openai.types.chat import ChatCompletionMessage
 import redis.asyncio as redis
 
-from app.common.exceptions import SessionAccessError
+from app.common.exceptions import SessionAccessError, session_recovery_data
 from app.common.identity import principal_scope
 from app.core.agents.enterprise_assistant import RAGAssistant
 from app.mcp.mcp_client import MCPAssistant
@@ -154,6 +154,99 @@ async def main():
                 result = await service.get_answer("first-question", session_id=sid, turn_id=turn)
                 assert result["answer"] == "first-answer" and result["turn_id"] == turn
                 print(json.dumps({"session_id": sid, "turn_id": turn}))
+            elif operation == "begin_owner_order":
+                sid = await store.create(1)
+                service = rag_service(store, client)
+                owner_one = session_module._owner_key("user:1")
+                owner_two = session_module._owner_key("user:2")
+                keys = [session_module._session_key(sid), session_module.GLOBAL, owner_one, owner_two]
+
+                async def snapshot():
+                    output = []
+                    for key in keys:
+                        kind = await client.type(key)
+                        if kind == "hash":
+                            value = await client.hgetall(key)
+                        elif kind == "zset":
+                            value = await client.zrange(key, 0, -1, withscores=True)
+                        elif kind == "string":
+                            value = await client.get(key)
+                        else:
+                            value = None
+                        output.append((kind, value))
+                    return output
+
+                assert await client.exists(owner_two) == 0
+                for foreign in ("fresh", "existing"):
+                    if foreign == "existing":
+                        with principal_scope("user:2"):
+                            await store.create(1)
+                    before = await snapshot()
+                    with principal_scope("user:2"):
+                        try:
+                            await service.get_answer("must not invoke model", session_id=sid, turn_id=str(uuid.uuid4()))
+                        except SessionAccessError as error:
+                            assert error.status_code == 403 and error.session_recovery is None
+                        else:
+                            raise AssertionError("foreign begin was accepted")
+                    assert await snapshot() == before
+                for index in (session_module.GLOBAL, owner_one):
+                    original = await client.zrange(index, 0, -1, withscores=True)
+                    for kind in ("missing", "wrong"):
+                        await client.delete(index)
+                        if kind == "wrong":
+                            await client.set(index, "synthetic wrong type")
+                        before = await snapshot()
+                        try:
+                            await service.get_answer("must not invoke model", session_id=sid, turn_id=str(uuid.uuid4()))
+                        except SessionAccessError as error:
+                            assert error.status_code == 503 and error.session_recovery is None
+                        else:
+                            raise AssertionError("same-owner corrupt index was accepted")
+                        assert await snapshot() == before
+                        await client.delete(index)
+                        if original:
+                            await client.zadd(index, dict(original))
+                assert service._assistant.llm_service.calls == 0
+                print(json.dumps({"foreign_fresh_existing": True, "own_bad_indexes": True, "unchanged": True, "model_calls": 0}))
+            elif operation == "implicit_recovery":
+                service = rag_service(store, client)
+                turn = str(uuid.uuid4())
+
+                async def oversized_response(*_args, **_kwargs):
+                    await client.incr("fixture:model_calls")
+                    return "a" * (session_module.MAX_ITEM_BYTES + 1)
+
+                service._assistant.llm_service.generate_response = oversized_response
+                before = int(await client.get("fixture:model_calls") or 0)
+                try:
+                    await service.get_answer("implicit recovery question", turn_id=turn)
+                except SessionAccessError as error:
+                    assert error.status_code == 503
+                    recovery = session_recovery_data(error.session_recovery)
+                    assert recovery is not None and set(recovery) == {"session_id", "turn_id", "retry_safe"}
+                    assert recovery["turn_id"] == turn and recovery["retry_safe"] is False
+                else:
+                    raise AssertionError("oversized result was accepted")
+                info = await store.info(recovery["session_id"])
+                assert info["status"] == "unknown" and info["active_turn_id"] == turn
+                assert info["active_question"] == "implicit recovery question"
+                assert int(await client.get("fixture:model_calls")) == before + 1
+                try:
+                    await service.get_answer("implicit recovery question", session_id=recovery["session_id"], turn_id=turn)
+                except SessionAccessError as error:
+                    assert error.status_code == 409 and error.session_recovery is None
+                else:
+                    raise AssertionError("unknown request was reexecuted")
+                with principal_scope("user:2"):
+                    try:
+                        await service.get_answer("implicit recovery question", session_id=recovery["session_id"], turn_id=turn)
+                    except SessionAccessError as error:
+                        assert error.status_code == 403 and error.session_recovery is None
+                    else:
+                        raise AssertionError("foreign principal received recovery data")
+                assert int(await client.get("fixture:model_calls")) == before + 1
+                print(json.dumps({"safe_locator": True, "unknown_visible": True, "not_reexecuted": True, "foreign_denied": True}))
             elif operation == "continue":
                 service = rag_service(store, client, expected=True)
                 turn = str(uuid.uuid4())
@@ -316,8 +409,9 @@ async def main():
         await store.close()
 
 
-def asgi_test():
+def asgi_test(recovery=False):
     from app.api.middleware.auth import setup_auth
+    from app.api.middleware.error_handler import setup_error_handlers
     from app.api.routes import assistant as routes
     from app.config.settings import config
 
@@ -333,9 +427,48 @@ def asgi_test():
     routes.get_assistant_service = get_service
     app = FastAPI()
     setup_auth(app)
+    setup_error_handlers(app)
     app.include_router(routes.router, prefix="/assistant")
     headers = {"X-API-Key": api_key, "X-CloudOps-User-ID": "1"}
     with TestClient(app) as http:
+        if recovery:
+            config.debug = False
+
+            async def oversized_response(*_args, **_kwargs):
+                service._assistant.llm_service.calls += 1
+                await client.incr("fixture:model_calls")
+                return "a" * (session_module.MAX_ITEM_BYTES + 1)
+
+            service._assistant.llm_service.generate_response = oversized_response
+            for transport in ("http", "ws"):
+                turn = str(uuid.uuid4())
+                question = "implicit recovery " + transport
+                body = {"question": question, "turn_id": turn}
+                if transport == "http":
+                    response = http.post("/assistant/query", headers=headers, json=body)
+                    assert response.status_code == 503
+                    failed = response.json()
+                else:
+                    with http.websocket_connect("/assistant/stream", headers=headers) as ws:
+                        ws.send_json(body)
+                        failed = ws.receive_json()
+                        assert failed["success"] is False and failed["data"]["code"] == 503
+                        assert ws.receive()["code"] == 1008
+                locator = failed["data"]["recovery"]
+                assert set(locator) == {"session_id", "turn_id", "retry_safe"}
+                assert str(uuid.UUID(locator["session_id"])) == locator["session_id"]
+                assert locator["turn_id"] == turn and locator["retry_safe"] is False
+                info = http.get("/assistant/session/" + locator["session_id"], headers=headers)
+                assert info.status_code == 200 and info.json()["data"]["status"] == "unknown"
+                assert info.json()["data"]["active_turn_id"] == turn
+                assert info.json()["data"]["active_question"] == question
+                repeated = http.post("/assistant/query", headers=headers, json={**body, "session_id": locator["session_id"]})
+                assert repeated.status_code == 409 and "recovery" not in repeated.json()["data"]
+                foreign = http.post("/assistant/query", headers={**headers, "X-CloudOps-User-ID": "2"}, json={**body, "session_id": locator["session_id"]})
+                assert foreign.status_code == 403 and "recovery" not in foreign.json()["data"]
+            assert service._assistant.llm_service.calls == 2
+            print(json.dumps({"http_ws_locator": True, "unknown_visible": True, "not_reexecuted": True, "foreign_denied": True}))
+            return
         created = http.post("/assistant/session", headers=headers)
         assert created.status_code == 200
         sid = created.json()["data"]["session_id"]
@@ -358,7 +491,7 @@ def asgi_test():
     print(json.dumps({"asgi": True}))
 
 
-if sys.argv[1] == "asgi":
-    asgi_test()
+if sys.argv[1] in {"asgi", "recovery_asgi"}:
+    asgi_test(recovery=sys.argv[1] == "recovery_asgi")
 else:
     asyncio.run(main())

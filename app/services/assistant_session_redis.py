@@ -77,8 +77,8 @@ return {'ok',state,redis.call('HGET',KEYS[1],'mode') or '',redis.call('HGET',KEY
 """
 _BEGIN = r"""
 if redis.call('TYPE',KEYS[1]).ok~='hash' then return {'missing'} end
-if redis.call('TYPE',KEYS[2]).ok~='zset' or redis.call('TYPE',KEYS[3]).ok~='zset' then return {'corrupt'} end
 if redis.call('HGET',KEYS[1],'owner')~=ARGV[1] then return {'forbidden'} end
+if redis.call('TYPE',KEYS[2]).ok~='zset' or redis.call('TYPE',KEYS[3]).ok~='zset' then return {'corrupt'} end
 local t=redis.call('TIME');local now=t[1]*1000+math.floor(t[2]/1000)
 local state=redis.call('HGET',KEYS[1],'state')
 local prior=redis.call('HGET',KEYS[1],'turn:'..ARGV[5])

@@ -9,7 +9,9 @@ License: Apache 2.0
 Description: 异常类定义模块
 """
 
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
+import uuid
 
 # SEC-44 二次修正 Q6：确认接口错误响应里的审批状态（对前端只暴露这三个值，不含其它审批细节）
 APPROVAL_STATES = frozenset({"pending", "voided", "consumed"})
@@ -42,12 +44,53 @@ class AIOpsException(Exception):
         self._approval_state = value
 
 
+@dataclass(frozen=True, slots=True)
+class SessionRecoveryLocator:
+    """Safe correlation only; never a token, execution grant or state claim."""
+
+    session_id: str
+    turn_id: str
+
+    def __post_init__(self) -> None:
+        for value in (self.session_id, self.turn_id):
+            if type(value) is not str:
+                raise ValueError("会话恢复定位信息无效")
+            try:
+                if str(uuid.UUID(value)) != value:
+                    raise ValueError
+            except (ValueError, TypeError, AttributeError):
+                raise ValueError("会话恢复定位信息无效") from None
+
+
+def session_recovery_data(value: Any) -> Optional[Dict[str, Any]]:
+    """A separate allowlisted channel; generic 5xx details stay redacted."""
+    if not isinstance(value, SessionRecoveryLocator):
+        return None
+    try:
+        validated = SessionRecoveryLocator(value.session_id, value.turn_id)
+    except (ValueError, TypeError, AttributeError):
+        return None
+    return {"session_id": validated.session_id, "turn_id": validated.turn_id, "retry_safe": False}
+
+
 class SessionAccessError(AIOpsException):
     """会话身份、归属或存在性验证失败"""
 
     def __init__(self, status_code: int, message: str) -> None:
         super().__init__(message=message, error_code="SESSION_ACCESS_ERROR")
         self.status_code = status_code
+        self.session_recovery: Optional[SessionRecoveryLocator] = None
+
+    def with_recovery(self, session_id: str, turn_id: str) -> "SessionAccessError":
+        # Do not annotate an exception instance possibly reused by a dependency
+        # across concurrent principals. Ownership was checked by begin upstream.
+        result = SessionAccessError(self.status_code, self.message)
+        result.details = dict(self.details) if isinstance(self.details, dict) else self.details
+        try:
+            result.session_recovery = SessionRecoveryLocator(session_id, turn_id)
+        except ValueError:
+            pass  # Invalid/legacy identifiers never gain a recovery locator.
+        return result
 
 
 class WorkflowApprovalError(AIOpsException):

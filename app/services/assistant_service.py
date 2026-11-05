@@ -23,8 +23,10 @@ import uuid
 from pydantic import BaseModel
 from starlette.websockets import WebSocket
 
-from ..common.exceptions import AIOpsException, AssistantError, KnowledgeRefreshError, KnowledgeWriteError, ServiceUnavailableError, SessionAccessError, ValidationError
+from ..common.constants import ServiceConstants
+from ..common.exceptions import AIOpsException, AssistantError, KnowledgeRefreshError, KnowledgeWriteError, ServiceUnavailableError, SessionAccessError, ValidationError, session_recovery_data
 from ..common.identity import conversation_context, require_principal
+from ..config.envmode import debug_details_allowed
 from ..config.settings import config
 from ..core.agents.enterprise_assistant import get_enterprise_assistant
 from ..models import AssistantRequest
@@ -73,12 +75,17 @@ class OptimizedAssistantService(BaseService):
             )
 
         except SessionAccessError as error:
+            data = {"code": error.status_code}
+            recovery = session_recovery_data(error.session_recovery)
+            if recovery is not None:
+                data["recovery"] = recovery
+            message = error.message if error.status_code < 500 or debug_details_allowed(config.env, config.debug) else ServiceConstants.INTERNAL_SERVER_ERROR_MESSAGE
             await websocket.send_json(
                 StreamResponse(
                     success=False,
-                    data={"code": error.status_code},
+                    data=data,
                     timestamp=datetime.now().isoformat(),
-                    message=error.message,
+                    message=message,
                 ).model_dump()
             )
             await websocket.close(code=1008)
@@ -211,11 +218,11 @@ class OptimizedAssistantService(BaseService):
                 pass
             if isinstance(error, asyncio.CancelledError):
                 if lost.is_set():
-                    raise SessionAccessError(503, "会话租约失效，结果未知") from None
+                    raise SessionAccessError(503, "会话租约失效，结果未知").with_recovery(sid, turn_id) from None
                 raise
             if isinstance(error, SessionAccessError):
-                raise
-            raise SessionAccessError(502, f"会话 {sid} 的请求结果未知，请先查询会话状态") from error
+                raise error.with_recovery(sid, turn_id) from error
+            raise SessionAccessError(502, "会话请求结果未知，请先查询会话状态").with_recovery(sid, turn_id) from error
         finally:
             try:
                 if heartbeat is not None:

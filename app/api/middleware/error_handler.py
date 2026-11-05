@@ -21,7 +21,7 @@ from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.common.constants import HttpStatusCodes, ServiceConstants
-from app.common.exceptions import APPROVAL_STATES, AIOpsException
+from app.common.exceptions import APPROVAL_STATES, AIOpsException, session_recovery_data
 from app.config.envmode import debug_details_allowed
 from app.config.settings import config
 from app.models import BaseResponse
@@ -63,6 +63,9 @@ async def custom_http_exception_handler(
             if error_details and (exc.status_code < 500 or _debug_details()):
                 error_data["details"] = error_details
         _attach_approval_state(error_data, getattr(exc, "approval_state", None))
+        recovery = session_recovery_data(getattr(exc, "session_recovery", None))
+        if recovery is not None:
+            error_data["recovery"] = recovery
         error_response = BaseResponse(
             code=exc.status_code,
             message=str(exc.detail) if exc.status_code < 500 or _debug_details() else ServiceConstants.INTERNAL_SERVER_ERROR_MESSAGE,
@@ -182,6 +185,9 @@ async def aiops_exception_handler(
         if getattr(exc, "details", None) and (status_code < 500 or _debug_details()):
             error_data["details"] = exc.details
         _attach_approval_state(error_data, getattr(exc, "approval_state", None))
+        recovery = session_recovery_data(getattr(exc, "session_recovery", None))
+        if recovery is not None:
+            error_data["recovery"] = recovery
 
         error_response = BaseResponse(
             code=status_code,

@@ -19,7 +19,7 @@ from fastapi import HTTPException, Request
 from app.models import BaseResponse
 
 from ..common.constants import HttpStatusCodes
-from ..common.exceptions import AIOpsException
+from ..common.exceptions import AIOpsException, SessionAccessError, SessionRecoveryLocator
 
 try:
     from app.common.logger import get_logger
@@ -39,12 +39,14 @@ class AIOpsHTTPException(HTTPException):
         error_code: str,
         error_details: Optional[Dict[str, Any]] = None,
         approval_state: Optional[str] = None,
+        session_recovery: Optional[SessionRecoveryLocator] = None,
     ) -> None:
         super().__init__(status_code=status_code, detail=detail)
         self.error_code = error_code
         self.error_details = error_details or {}
         # SEC-44 二次修正 Q6：确认接口的审批状态（pending/voided/consumed），由错误处理器写入 data.approval_state
         self.approval_state = approval_state
+        self.session_recovery = session_recovery
 
 
 def api_response(operation_name: str = "操作") -> Callable:
@@ -75,6 +77,7 @@ def api_response(operation_name: str = "操作") -> Callable:
                     error_code=e.error_code,
                     error_details=e.details,
                     approval_state=e.approval_state,
+                    session_recovery=e.session_recovery if isinstance(e, SessionAccessError) else None,
                 ) from e
             except Exception as e:
                 logger.error("%s发生未处理异常，类型: %s", operation_name, type(e).__name__)
