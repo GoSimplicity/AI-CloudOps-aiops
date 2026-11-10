@@ -44,9 +44,10 @@ USER aiops
 EXPOSE 9000
 
 # 存活探针只访问免鉴权的 GET /health，使用标准库。间隔与发布栈 mcp 服务一致。
+# 监听端口来自 CMD 的 --port 9000。PORT 是 API 端口（默认 8080），探针不读它。
 # 运行用户已是非 root（aiops）。
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
-    CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PORT', '9000') + '/health', timeout=3)"]
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=3)"]
 
 # 启动MCP服务
 CMD ["python", "-m", "app.mcp.main", "--host", "0.0.0.0", "--port", "9000"]
