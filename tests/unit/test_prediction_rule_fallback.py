@@ -78,7 +78,15 @@ async def test_ai_exception_still_returns_rule_prediction_without_the_error_text
     assert result["prediction_type"].value == "cpu"
     assert _values(result)
     assert "downstream-failure-marker" not in str(result)
-    assert result["ai_fallback_reason"] == "AI增强组件不可用"
+
+
+@pytest.mark.xfail(strict=True, reason="已知问题：增强预测抛错时 ai_fallback_reason 仍写成组件不可用，见 PR 描述")
+async def test_ai_exception_reports_analysis_failure(offline_cache):
+    service = await _service()
+    service._intelligent_predictor = Mock()
+    service._intelligent_predictor.predict_with_ai_analysis = AsyncMock(side_effect=RuntimeError("downstream-failure-marker"))
+    result = await service.predict_with_ai_analysis("cpu", 35.0, prediction_hours=1, granularity="hour")
+    assert result["ai_fallback_reason"] == "AI分析失败"
 
 
 async def test_validation_and_historical_data_errors_are_not_converted_to_fallback(offline_cache):

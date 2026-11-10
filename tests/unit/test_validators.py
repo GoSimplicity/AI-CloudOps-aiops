@@ -52,10 +52,9 @@ def test_time_range_rejects_empty_inverted_future_and_overlong():
     assert validate_time_range(past - timedelta(minutes=1), past, max_range_minutes=0) is False
 
 
-def test_naive_datetimes_currently_raise_instead_of_returning_false():
-    """现状：与带时区的当前时间比较时抛 TypeError，而不是返回 False。"""
-    with pytest.raises(TypeError):
-        validate_time_range(datetime(2020, 1, 1, 0, 0, 0), datetime(2020, 1, 1, 1, 0, 0))
+@pytest.mark.xfail(strict=True, reason="已知问题：naive datetime 与带时区的当前时间比较会抛 TypeError，而不是返回 False，见 PR 描述")
+def test_naive_datetimes_return_false():
+    assert validate_time_range(datetime(2020, 1, 1, 0, 0, 0), datetime(2020, 1, 1, 1, 0, 0)) is False
 
 
 @pytest.mark.parametrize(
@@ -124,13 +123,14 @@ def test_qps_rejects_negative_and_non_numeric(value):
     assert validate_qps(value) is False
 
 
-def test_qps_and_confidence_currently_accept_booleans_and_positive_infinity():
-    """现状：bool 是 int 的子类，正无穷也满足 >= 0。"""
-    assert validate_qps(True) is True
-    assert validate_qps(False) is True
-    assert validate_qps(float("inf")) is True
-    assert validate_confidence(True) is True
-    assert validate_confidence(False) is True
+@pytest.mark.xfail(strict=True, reason="已知问题：bool 被当成数字，正无穷也能通过 QPS 检查，见 PR 描述")
+def test_qps_and_confidence_reject_booleans_and_positive_infinity():
+    assert validate_qps(True) is False
+    assert validate_qps(False) is False
+    assert validate_qps(float("inf")) is False
+    assert validate_confidence(True) is False
+    assert validate_confidence(False) is False
+    assert validate_confidence(float("inf")) is False
 
 
 @pytest.mark.parametrize("value", [0, 0.0, 0.5, 1, 1.0])

@@ -1,6 +1,7 @@
 """异常检测器：空输入、各检测法和模式汇总。不访问外部服务。"""
 
 from datetime import datetime, timedelta, timezone
+import warnings
 
 import pytest
 
@@ -54,11 +55,14 @@ async def test_named_methods_and_unknown_method_return_scored_anomalies(method):
     assert all(0.0 <= item.anomaly_score <= 1.0 for item in found)
 
 
-async def test_iqr_with_zero_quartile_width_currently_divides_by_zero():
+@pytest.mark.xfail(strict=True, reason="已知问题：四分位距为 0 时异常分数除以 0，见 PR 描述")
+async def test_iqr_with_zero_quartile_width_does_not_divide_by_zero():
     series = points([10.0] * 20 + [100.0] + [10.0] * 20)
-    with pytest.warns(RuntimeWarning, match="divide by zero"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
         found = await AnomalyDetector().detect_anomalies(series, sensitivity=0.9, method="iqr")
-    assert any(item.predicted_value == 100.0 and item.anomaly_score == 1.0 for item in found)
+    assert any(item.predicted_value == 100.0 for item in found)
+    assert all(0.0 <= item.anomaly_score <= 1.0 for item in found)
 
 
 async def test_flat_series_does_not_raise():

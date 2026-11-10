@@ -96,52 +96,72 @@ def _mount(monkeypatch, module, service):
     return TestClient(app)
 
 
-def _service_fields(path, body):
-    """/health 目前把已经包装过的 /ready 结果又包了一层。"""
-    data = body["data"]
-    if path.endswith("/health"):
-        assert data["code"] == 0
-        data = data["data"]
-    return data
-
-
-@pytest.mark.parametrize("path", ["/service/health", "/service/ready"])
-def test_rca_health_uses_the_same_readiness_result(monkeypatch, path):
+def test_rca_ready_reports_collector_status(monkeypatch):
     from app.api.routes import rca
 
     service = AsyncMock()
     service.get_health_status.return_value = {"status": "healthy"}
     client = _mount(monkeypatch, rca, service)
-    response = client.get(path)
+    response = client.get("/service/ready")
     assert response.status_code == 200
-    fields = _service_fields(path, response.json())
-    assert fields["ready"] is True
-    assert fields["service"] == "rca"
+    assert response.json()["data"]["ready"] is True
+    assert response.json()["data"]["service"] == "rca"
 
     service.get_health_status.return_value = {"status": "degraded"}
-    assert client.get(path).status_code == 503
+    assert client.get("/service/ready").status_code == 503
+    assert client.get("/service/health").status_code == 503
 
 
-@pytest.mark.parametrize("path", ["/service/health", "/service/ready"])
-def test_assistant_health_requires_a_healthy_mode(monkeypatch, path):
+@pytest.mark.xfail(strict=True, reason="已知问题：/health 把已包装的 /ready 响应又包了一层，见 PR 描述")
+def test_rca_health_returns_a_single_ready_payload(monkeypatch):
+    from app.api.routes import rca
+
+    service = AsyncMock()
+    service.get_health_status.return_value = {"status": "healthy"}
+    client = _mount(monkeypatch, rca, service)
+    response = client.get("/service/health")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["ready"] is True
+    assert data["service"] == "rca"
+
+
+def test_assistant_ready_requires_a_healthy_mode(monkeypatch):
     from app.api.routes import assistant
 
     service = AsyncMock()
     service.get_service_health_info_with_mode.return_value = {"modes": {"rag": {"status": "healthy"}, "mcp": {"status": "down"}}}
     client = _mount(monkeypatch, assistant, service)
-    response = client.get(path)
+    response = client.get("/service/ready")
     assert response.status_code == 200
-    fields = _service_fields(path, response.json())
-    assert fields["service"] == "assistant"
-    assert fields["ready"] is True
+    assert response.json()["data"]["service"] == "assistant"
+    assert response.json()["data"]["ready"] is True
 
     service.get_service_health_info_with_mode.return_value = {"modes": {"rag": {"status": "down"}, "mcp": {"status": "down"}}}
-    assert client.get(path).status_code == 503
+    assert client.get("/service/ready").status_code == 503
+    assert client.get("/service/health").status_code == 503
 
     service.get_service_health_info_with_mode.side_effect = RuntimeError("assistant-health-offline")
-    failure = client.get(path)
+    failure = client.get("/service/ready")
     assert failure.status_code == 503
     assert "assistant-health-offline" not in failure.text
+    failure = client.get("/service/health")
+    assert failure.status_code == 503
+    assert "assistant-health-offline" not in failure.text
+
+
+@pytest.mark.xfail(strict=True, reason="已知问题：/health 把已包装的 /ready 响应又包了一层，见 PR 描述")
+def test_assistant_health_returns_a_single_ready_payload(monkeypatch):
+    from app.api.routes import assistant
+
+    service = AsyncMock()
+    service.get_service_health_info_with_mode.return_value = {"modes": {"rag": {"status": "healthy"}, "mcp": {"status": "down"}}}
+    client = _mount(monkeypatch, assistant, service)
+    response = client.get("/service/health")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["service"] == "assistant"
+    assert data["ready"] is True
 
 
 @pytest.mark.parametrize("path", ["/service/health", "/service/ready"])
