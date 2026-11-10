@@ -2,7 +2,7 @@
 app:
   env: development # 环境类型（可选：development, production, testing）
   debug: true # 是否启用调试模式（开发环境建议为true，生产环境建议为false）
-  host: 0.0.0.0 # 应用监听的主机地址
+  host: 127.0.0.1 # 开发默认只监听回环；空 AIOPS_API_KEY 时不能改成对外地址
   port: 8080 # 应用监听的端口号
   log_level: INFO # 日志级别（可选：DEBUG/INFO/WARNING/ERROR）- 开发模式使用DEBUG级别
 

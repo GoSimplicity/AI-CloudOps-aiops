@@ -17,6 +17,7 @@ def test_lazy_boot_health_and_route_registration(monkeypatch):
     for _ in range(2):
         with TestClient(app) as client:
             assert client.get("/health").json() == {"status": "ok"}
+            assert client.head("/health").status_code == 200
             assert client.get("/openapi.json").status_code == 401
             response = client.get("/openapi.json", headers={"X-API-Key": "offline-key"})
             assert response.status_code == 200

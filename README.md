@@ -4,7 +4,7 @@
 
 基于 FastAPI 的内部运维服务，提供预测、根因分析、巡检、助手和 Kubernetes 修复能力。功能依赖部署环境中的 Prometheus、Kubernetes、Redis 与模型供应商；预测和诊断结果需要结合实际环境验证。
 
-生产部署与安全要求见 [部署说明](docs/production.md)。生产环境必须提供 `AIOPS_API_KEY`，Go 后端通过 `X-API-Key` 调用。历史版本中的集群凭据与 Redis 密码必须轮换后才能投入生产。
+生产部署与安全要求见 [部署说明](docs/production.md)。生产环境必须提供 `AIOPS_API_KEY`，Go 后端通过 `X-API-Key` 调用。开发环境不配置该密钥时只能绑定回环地址，不能在对外监听时关闭鉴权。历史版本中的集群凭据与 Redis 密码必须轮换后才能投入生产。
 
 ## 知识库文件范围
 

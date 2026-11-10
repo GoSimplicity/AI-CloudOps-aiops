@@ -25,7 +25,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
-from app.api.middleware.auth import setup_auth
+from app.api.middleware.auth import ensure_service_auth_configuration, setup_auth
 from app.api.middleware.cors import setup_cors
 
 try:
@@ -117,7 +117,7 @@ setup_auth(app)
 setup_cors(app)
 
 
-@app.get("/health", include_in_schema=False)
+@app.api_route("/health", methods=["GET", "HEAD"], include_in_schema=False)
 async def health():
     return {"status": "ok"}
 
@@ -367,6 +367,11 @@ def main():
         logger.info("正在启动MCP服务端...")
 
         server_host = args.host or config.host
+        try:
+            ensure_service_auth_configuration(config.env, config.security.api_key, server_host)
+        except ValueError as exc:
+            logger.error("%s", exc)
+            sys.exit(1)
         if args.port:
             server_port = args.port
         else:

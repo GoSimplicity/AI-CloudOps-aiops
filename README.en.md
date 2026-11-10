@@ -124,7 +124,7 @@ pip install -r requirements.txt
 cp env.example .env               # point REDIS_*, PROMETHEUS_HOST, LLM_* at your services
 
 python -m app.mcp.main --host 127.0.0.1 --port 9000   # MCP server (separate terminal)
-python -m app.main                                     # API on HOST:PORT (default 0.0.0.0:8080)
+HOST=127.0.0.1 python -m app.main                      # API on loopback when AIOPS_API_KEY is empty
 ```
 
 ## Configuration
@@ -133,9 +133,9 @@ Settings are read from environment variables / `.env` (see [`env.example`](env.e
 
 | Variable | Description |
 | --- | --- |
-| `ENV` | `development` or `production`. |
-| `AIOPS_API_KEY` | Shared service key for the API and MCP server. **Required in production, minimum 32 characters**. Startup fails if it is missing or too short. Must match the Go backend's `AIOPS_API_KEY`. |
-| `HOST`, `PORT` | Bind address, default `0.0.0.0:8080`. |
+| `ENV` | `development` or `production`. Unset still defaults to development for config loading, and that default does not disable authentication on a public bind. |
+| `AIOPS_API_KEY` | Shared service key for the API and MCP server. **Required in production, minimum 32 characters**. Startup fails if it is missing or too short. In development and test an empty key is accepted only when the process binds to loopback (`127.0.0.1`, `::1`, or `localhost`); other clients then receive 401. A configured key is required from every client via `X-API-Key` or `Bearer`, including the Go backend. There is no flag that disables authentication on a public address. |
+| `HOST`, `PORT` | Bind address. Development config defaults to `127.0.0.1:8080`. `env.example` keeps `0.0.0.0` for containers; that requires `AIOPS_API_KEY`. |
 | `LLM_PROVIDER` | `openai` (any OpenAI-compatible API) or `ollama`. |
 | `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_TASK_MODEL`, `LLM_EMBEDDING_MODEL` | LLM and embedding settings. |
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` | Local Ollama settings. |
