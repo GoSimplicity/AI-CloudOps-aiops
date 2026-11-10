@@ -47,6 +47,7 @@ def is_production(raw: Any) -> bool:
 
     aiops 的环境取值为 config.env（ENV 环境变量 > YAML app.env > 默认 development）。
     ENV 与 app.env 都未设置时按默认 development 处理，这是 aiops 既有的默认值（同时决定加载 config/config.yaml）。
+    该默认值不会关闭鉴权：AIOPS_API_KEY 为空时只能绑定回环地址，见 app.api.middleware.auth。
     """
     mode = parse_env_mode(raw)
     return mode is None or mode == PRODUCTION

@@ -304,11 +304,13 @@ def test_duplicate_identity_headers_are_rejected(session_client):
 
 def test_development_without_service_key_does_not_trust_claimed_identity(session_client, monkeypatch):
     client, _, _ = session_client
+    monkeypatch.setattr(config, "host", "127.0.0.1")
+    monkeypatch.setattr(config, "env", "development")
     monkeypatch.setattr(config.security, "api_key", "")
     app = FastAPI()
     setup_auth(app)
     app.include_router(assistant.router, prefix="/assistant")
-    response = TestClient(app).post("/assistant/session", headers={"X-CloudOps-User-ID": "1"})
+    response = TestClient(app, client=("127.0.0.1", 50000)).post("/assistant/session", headers={"X-CloudOps-User-ID": "1"})
     assert response.status_code == 401
 
 

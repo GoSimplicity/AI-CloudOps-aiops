@@ -536,6 +536,10 @@ if __name__ == "__main__":
     shutdown_handler.setup_signal_handlers()
 
     try:
+        from app.api.middleware.auth import ensure_service_auth_configuration
+
+        # 与中间件同一条规则：实际要绑定的地址在空密钥时必须是回环。
+        ensure_service_auth_configuration(config.env, config.security.api_key, config.host)
         # 使用应用配置的日志级别，确保一致性
         uvicorn_log_level = config.log_level.lower()
         

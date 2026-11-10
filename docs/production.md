@@ -1,6 +1,6 @@
 # AIops 1.0 部署边界
 
-API 与 MCP 是 Go 后端调用的内部服务，不直接向浏览器或公网开放。生产环境设置 `ENV=production`，通过密钥管理系统注入至少 32 字符的 `AIOPS_API_KEY`；Go 后端、API 与 MCP 必须一致。请求使用 `X-API-Key` 或 `Authorization: Bearer`。密钥缺失或过短会阻止启动，校验与统一环境判定一致：`production`/`prod`/`prd`（含大小写及首尾空白），以及空值、未知值均要求强密钥；只有明确的开发/测试环境沿用允许空密钥的本地合同。`GET /health` 只返回进程存活状态，不代表 Redis、Kubernetes 或模型可用；各业务 `/ready` 需要鉴权。
+API 与 MCP 是 Go 后端调用的内部服务，不直接向浏览器或公网开放。生产环境设置 `ENV=production`，通过密钥管理系统注入至少 32 字符的 `AIOPS_API_KEY`；Go 后端、API 与 MCP 必须一致。请求使用 `X-API-Key` 或 `Authorization: Bearer`。密钥缺失或过短会阻止启动，校验与统一环境判定一致：`production`/`prod`/`prd`（含大小写及首尾空白），以及空值、未知值均要求强密钥。明确的 `development`/`dev` 与 `test`/`testing` 在 `AIOPS_API_KEY` 为空时，只允许绑定回环地址（`127.0.0.1`、`::1`、`localhost`，以及 `127.0.0.0/8` 和 IPv4-mapped 回环）；绑定其它地址会拒绝启动，非回环来源返回 401，WebSocket 使用关闭码 1008。没有开关可以在对外监听时关掉鉴权。配了密钥之后，任意来源都必须带同一个 `X-API-Key` 或 `Bearer`，Go 后端从容器网络调用不受回环限制。`GET`/`HEAD /health` 只返回进程存活状态，不代表 Redis、Kubernetes 或模型可用，并且仍然不鉴权；各业务 `/ready` 需要鉴权。
 
 复制 `env.example` 为 `.env`，填写独立随机 `REDIS_PASSWORD`、服务密钥和模型/监控配置。`openssl rand -hex 32` 可以生成服务密钥。Compose 默认端口只绑定本机；远程访问通过带 TLS 和访问控制的 Go 网关。`CORS_ORIGINS` 是显式逗号分隔域名，不允许通配符。外部模型和 Kubernetes 的真实权限由部署者配置；不要使用集群管理员身份，按实际工具授予最小 RBAC。
 
@@ -158,7 +158,8 @@ debug 模式下 5xx 响应会带出 `message` 与 `data.details`（可能包含�
 - **环境取值**：`config.env`，即 `ENV` 环境变量 > YAML `app.env` > 默认 `development`。配置选路使用同一套已知别名规范化：`production`/`prod`/`prd`（含大小写及首尾空白）加载 `config/config.production.yaml`，`development`/`dev` 加载 `config/config.yaml`，`test`/`testing` 加载 `config/config.test.yaml`；自定义环境名仍选择 `config/config.{ENV}.yaml`。仅文件不存在时回退 `config/config.yaml`，不因文件损坏回退开发配置。
 - **debug 取值**：`DEBUG` 环境变量 > YAML `app.debug`。
 - **什么算生产**（与 Go 后端 `pkg/envmode` 一致）：先 strip 再 lower；`production`/`prod`/`prd` 为生产；`development`/`dev` 为开发；`test`/`testing` 为测试（允许 debug）；**空值或无法识别的取值（如 `staging`）按生产处理**（fail-closed）。
-- 与 Go 的唯一差异：`ENV` 与 `app.env` 都未设置时，aiops 沿用既有默认 `development`（这是本地默认启动加载 `config/config.yaml` 的前提）；Go 侧未设置按生产。Docker 镜像与 Compose 均显式设置 `ENV=production`，不受此差异影响。
+- 与 Go 的唯一差异：`ENV` 与 `app.env` 都未设置时，aiops 沿用既有默认 `development`（这是本地默认启动加载 `config/config.yaml` 的前提）；Go 侧未设置按生产。这个默认值不再表示可以空密钥对外监听。`config/config.yaml` 的 `app.host` 默认为 `127.0.0.1`；空密钥时若实际绑定地址不是回环，API（`python -m app.main`）和 MCP（含 `--host`）都会拒绝启动。Docker 镜像与 Compose 均显式设置 `ENV=production` 并要求 `AIOPS_API_KEY`，生产配置仍在容器内绑定 `0.0.0.0`，不受影响。
+- 本地直接运行：不填密钥时只在本机回环访问，例如 `curl http://127.0.0.1:8080/api/v1/predict/ready`。`env.example` 里的 `HOST=0.0.0.0` 是给 Compose 容器用的；复制成 `.env` 后如果不填 `AIOPS_API_KEY`，本机进程会拒绝启动。空密钥时环境变量或 YAML 里的 `HOST` 必须已经是回环；MCP 的 `--host` 不能把一份对外地址配置改成可启动，它只会在实际绑定地址不是回环时再次拒绝。要对局域网、其它容器或 Go 后端开放，设置密钥（生产至少 32 字符；开发/测试环境非空即可）并继续用 `X-API-Key`。开发环境的短密钥仍然有效，只是不能为空还对外监听。
 - 已存在的配置发生读取/权限、UTF-8、YAML语法或根节点类型错误时抛出 `ConfigLoadError` 并拒绝初始化，不再静默返回空配置。错误仅说明类别，不回显配置内容或底层解析异常。两处文件都不存在仍支持仅用环境变量及默认值初始化；空文件和空映射也保留既有空配置合同。
 - 五个写门禁（`autofix.auto_execute_enabled` / `repair_enabled` / `bootstrap_enabled`，`mcp.write_tools_enabled` / `secret_read_enabled`）保留非法显式 `!!bool` 值关闭并告警的合同：普通配置只把对应字段设为 false，其余配置不丢失；严格开关视图仍保留哨兵供告警。非法值出现在其它字段、容器内部或通过 YAML alias 复用到其它路径时拒绝初始化。正常的 YAML 1.1 布尔值和其它 alias 解析合同保持不变。
 - 双保险：即使 debug 被意外打开，错误处理器在生产环境下也不回显 5xx 的 `message`/`details`（`_debug_details()` = debug 且非生产）。

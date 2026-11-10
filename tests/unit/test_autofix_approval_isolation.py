@@ -430,6 +430,8 @@ async def test_incomplete_or_unexpected_execution_records_never_report_success(s
 
 @pytest.mark.parametrize("route", ["/workflow", "/workflow/confirm", "/bootstrap"])
 def test_development_without_configured_key_cannot_self_report_identity(service, monkeypatch, route):
+    monkeypatch.setattr(config, "host", "127.0.0.1")
+    monkeypatch.setattr(config, "env", "development")
     monkeypatch.setattr(config.security, "api_key", "")
     getter = AsyncMock(return_value=service)
     monkeypatch.setattr(autofix, "get_autofix_service", getter)
@@ -438,7 +440,7 @@ def test_development_without_configured_key_cannot_self_report_identity(service,
     setup_error_handlers(app)
     app.include_router(autofix.router, prefix="/autofix")
     payload = {"problem_description": "offline", "plan_id": "unknown", "approved_action_ids": [ACTION]}
-    response = TestClient(app).post("/autofix" + route, json=payload, headers={"X-CloudOps-User-ID": "1"})
+    response = TestClient(app, client=("127.0.0.1", 50000)).post("/autofix" + route, json=payload, headers={"X-CloudOps-User-ID": "1"})
     assert response.status_code == 401
     getter.assert_not_awaited()
 
