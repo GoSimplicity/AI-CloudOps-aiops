@@ -160,6 +160,29 @@ def _app() -> FastAPI:
     return app
 
 
+_INFO_MODEL_FIELDS = {
+    "prediction_type",
+    "loaded",
+    "fallback",
+    "status",
+    "file_status",
+    "model_path",
+    "fallback_reason",
+}
+_READY_MODEL_FIELDS = {"prediction_type", "status", "loaded", "fallback"}
+_PATH_KEYS = {"model_path", "model_base_path", "file_status", "fallback_reason"}
+
+
+def _keys(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield key
+            yield from _keys(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _keys(item)
+
+
 def test_info_reports_each_missing_model_without_training(tmp_path, monkeypatch):
     monkeypatch.setattr(config.prediction, "model_base_path", str(tmp_path))
     model_manager_module._status_cache.clear()
@@ -169,10 +192,13 @@ def test_info_reports_each_missing_model_without_training(tmp_path, monkeypatch)
     assert data["service"] == "智能预测服务"
     assert "supported_prediction_types" in data
     report = data["prediction_models"]
+    assert set(report) == {"model_base_path", "rule_fallback", "any_fallback", "models"}
     assert report["model_base_path"] == str(tmp_path)
     assert report["rule_fallback"] is True
     assert {item["prediction_type"] for item in report["models"]} == set(EXPECTED_TYPES)
+    assert all(set(item) == _INFO_MODEL_FIELDS for item in report["models"])
     assert all(item["loaded"] is False and item["fallback"] is True and item["status"] == "missing" for item in report["models"])
+    assert all(item["model_path"] == str(tmp_path / f"{item['prediction_type']}_prediction_model.pkl") for item in report["models"])
 
 
 def test_ready_keeps_dependency_failure_and_info_still_shows_models(tmp_path, monkeypatch):
@@ -196,6 +222,8 @@ def test_ready_keeps_dependency_failure_and_info_still_shows_models(tmp_path, mo
 async def test_ready_reports_loaded_models(tmp_path, monkeypatch):
     for prediction_type in PredictionType:
         _write_model(tmp_path, prediction_type)
+    monkeypatch.setattr(config.prediction, "model_base_path", str(tmp_path))
+    model_manager_module._status_cache.clear()
     manager = ModelManager(base_path=str(tmp_path))
     await manager.load_models()
     service = PredictionService()
@@ -210,9 +238,27 @@ async def test_ready_reports_loaded_models(tmp_path, monkeypatch):
     assert data["ready"] is True
     assert data["service"] == "prediction"
     assert data["status"] == "ready"
-    assert data["prediction_models"]["rule_fallback"] is False
-    assert data["prediction_models"]["any_fallback"] is False
-    assert all(item["status"] == "loaded" for item in data["prediction_models"]["models"])
+    _assert_ready_model_report(data["prediction_models"], rule_fallback=False, any_fallback=False, status="loaded")
+    health = TestClient(_app()).get("/api/v1/predict/health")
+    assert health.status_code == 200, health.text
+    health_data = health.json()["data"]
+    _assert_ready_model_report(health_data["prediction_models"], rule_fallback=False, any_fallback=False, status="loaded")
+    assert _PATH_KEYS.isdisjoint(_keys(health_data))
+    info = TestClient(_app()).get("/api/v1/predict/info")
+    assert info.status_code == 200
+    info_report = info.json()["data"]["prediction_models"]
+    assert info_report["model_base_path"] == str(tmp_path)
+    assert all("model_path" in item and str(tmp_path) in item["model_path"] for item in info_report["models"])
+
+
+def _assert_ready_model_report(report, *, rule_fallback, any_fallback, status):
+    assert set(report) == {"rule_fallback", "any_fallback", "models"}
+    assert report["rule_fallback"] is rule_fallback
+    assert report["any_fallback"] is any_fallback
+    assert report["models"]
+    assert all(set(item) == _READY_MODEL_FIELDS for item in report["models"])
+    assert all(item["status"] == status for item in report["models"])
+    assert _PATH_KEYS.isdisjoint(_keys(report))
 
 
 async def test_missing_dedicated_model_borrows_qps_and_keeps_fallback_reason(tmp_path, warning_log):

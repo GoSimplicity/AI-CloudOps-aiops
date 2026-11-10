@@ -40,6 +40,6 @@
 - `any_fallback`：是否至少有一个类型处于兜底（含借用其他指标模型）
 - `models[]`：`prediction_type`、`loaded`、`fallback`、`status`（`loaded` / `adapted` / `missing` / `load_failed`）、`file_status`（该类型自己的文件是 `loaded`、`missing` 还是 `load_failed`；借用时 `status` 为 `adapted`，`file_status` 仍说明专用文件）、`model_path`（该类型自己的文件路径）、`fallback_reason`
 
-`fallback_reason` 与预测接口一致：没有可用模型时为 `预测模型不可用`，借用其他指标模型时为 `使用其他指标的模型`，专用模型正常加载时为 `null`。预测响应里原有的 `method`、`fallback_mode`、`fallback_reason` 含义不变。
+`fallback_reason` 与预测接口一致：没有可用模型时为 `预测模型不可用`，借用其他指标模型时为 `使用其他指标的模型`，专用模型正常加载时为 `null`。预测响应里原有的 `method`、`fallback_mode`、`fallback_reason` 含义不变。`model_base_path` 和 `model_path` 只出现在 `/info`。
 
-`GET /api/v1/predict/ready` 成功时带同一份 `prediction_models`。模型一个都没加载，或 Prometheus 不可用时，就绪检查仍返回 503；这时看启动日志和 `/info`。`/predict/health` 复用就绪检查。放置或更换模型后需要重启进程，状态在进程内缓存。
+`GET /api/v1/predict/ready` 和复用它的 `/predict/health` 成功时也带 `prediction_models`，但只有 `rule_fallback`、`any_fallback`，以及每个模型的 `prediction_type`、`status`、`loaded`、`fallback`。这里没有目录、文件路径、`file_status` 或 `fallback_reason`。配置了服务密钥时，这两个接口和 `/info` 一样要带密钥；密钥为空的开发环境都不校验，所以就绪响应仍然不放路径。模型一个都没加载，或 Prometheus 不可用时，就绪检查仍返回 503；这时看启动日志和 `/info`。放置或更换模型后需要重启进程，状态在进程内缓存。

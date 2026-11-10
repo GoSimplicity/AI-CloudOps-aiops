@@ -493,7 +493,7 @@ async def predict_disk(
 @api_response("AI-CloudOps 预测服务健康检查")
 async def prediction_health() -> Dict[str, Any]:
     """兼容前端健康检查入口，复用就绪检查逻辑。"""
-    return await prediction_ready()
+    return await _prediction_ready_payload()
 
 
 @router.get(
@@ -504,6 +504,11 @@ async def prediction_health() -> Dict[str, Any]:
 @api_response("AI-CloudOps 预测服务就绪检查")
 async def prediction_ready() -> Dict[str, Any]:
     """检查服务就绪状态"""
+    return await _prediction_ready_payload()
+
+
+async def _prediction_ready_payload() -> Dict[str, Any]:
+    """就绪与健康检查共用的响应体，由各自的 api_response 包一层。"""
     try:
         service = await get_prediction_service()
         await service.initialize()
@@ -516,7 +521,7 @@ async def prediction_ready() -> Dict[str, Any]:
         metrics.timeout = min(metrics.timeout, 5)
         metrics_healthy = await asyncio.to_thread(metrics.is_healthy)
         is_ready = is_initialized and is_healthy and metrics_healthy
-        model_report = _prediction_model_report(service)
+        model_report = _readiness_model_report(service)
 
         if not is_ready:
             raise ServiceUnavailableError("prediction")
@@ -686,19 +691,31 @@ async def model_info() -> Dict[str, Any]:
         raise PredictionError("获取模型信息失败")
 
 
-def _prediction_model_report(service: PredictionService) -> Dict[str, Any]:
+_READY_MODEL_FIELDS = ("prediction_type", "status", "loaded", "fallback")
+
+
+def _readiness_model_view(report: Dict[str, Any]) -> Dict[str, Any]:
+    """就绪和健康检查不返回路径或文件细节。完整路径只出现在已鉴权的 /info。"""
+    models = []
+    for item in report.get("models") or []:
+        if not isinstance(item, dict):
+            continue
+        models.append({field: item.get(field) for field in _READY_MODEL_FIELDS})
+    return {
+        "rule_fallback": bool(report.get("rule_fallback")),
+        "any_fallback": bool(report.get("any_fallback")),
+        "models": models,
+    }
+
+
+def _readiness_model_report(service: PredictionService) -> Dict[str, Any]:
     """使用已经加载的模型管理器，避免就绪检查再读一遍磁盘。"""
     from app.core.prediction.model_manager import ModelManager
 
     manager = getattr(service, "_model_manager", None)
     if isinstance(manager, ModelManager):
-        return manager.availability()
-    return {
-        "model_base_path": "",
-        "rule_fallback": True,
-        "any_fallback": True,
-        "models": [],
-    }
+        return _readiness_model_view(manager.availability())
+    return {"rule_fallback": True, "any_fallback": True, "models": []}
 
 
 async def _prediction_model_report_from_disk() -> Dict[str, Any]:
