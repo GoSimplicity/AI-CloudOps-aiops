@@ -21,6 +21,8 @@
 
 任选一种，不要把二进制模型提交进仓库。
 
+`.pkl` 用 joblib 反序列化，加载时会执行文件里的代码。只放置可信来源的模型文件。模型目录和挂载卷不要给其他人写权限。
+
 1. **卷挂载（Compose 默认）**。把文件放到宿主机 `./data/models/`。`docker-compose.yml` 把 `./data` 挂到 `/app/data`，并把 `PREDICTION_MODEL_BASE_PATH` 设为 `/app/data/models`。这个挂载会盖住镜像里的同路径文件，所以 Compose 部署以宿主机目录为准。
 2. **其他运行时**。把同一目录挂到容器内的模型路径，或同时修改 `PREDICTION_MODEL_BASE_PATH` 和挂载点。运行用户需要对这些文件有读权限。
 3. **打进镜像**。构建上下文里已经有 `data/models` 时执行 `docker build --build-arg INCLUDE_PREDICTION_MODELS=true .`。默认 `false`：上下文里没有模型，或有模型但不想打进镜像，构建都会成功，运行层里的模型目录是空的。若上下文里有大文件但参数为 `false`，这些文件仍会进入构建缓存中的复制层；不想让它们参与构建时，先移走目录或在 `.dockerignore` 中忽略 `data/models`（忽略后就不能再用该参数打入）。
@@ -42,4 +44,8 @@
 
 `fallback_reason` 与预测接口一致：没有可用模型时为 `预测模型不可用`，借用其他指标模型时为 `使用其他指标的模型`，专用模型正常加载时为 `null`。预测响应里原有的 `method`、`fallback_mode`、`fallback_reason` 含义不变。`model_base_path` 和 `model_path` 只出现在 `/info`。
 
-`GET /api/v1/predict/ready` 和复用它的 `/predict/health` 成功时也带 `prediction_models`，但只有 `rule_fallback`、`any_fallback`，以及每个模型的 `prediction_type`、`status`、`loaded`、`fallback`。这里没有目录、文件路径、`file_status` 或 `fallback_reason`。配置了服务密钥时，这两个接口和 `/info` 一样要带密钥；密钥为空的开发环境都不校验，所以就绪响应仍然不放路径。模型一个都没加载，或 Prometheus 不可用时，就绪检查仍返回 503；这时看启动日志和 `/info`。放置或更换模型后需要重启进程，状态在进程内缓存。
+`GET /api/v1/predict/ready` 和复用它的 `/predict/health` 成功时也带 `prediction_models`，但只有 `rule_fallback`、`any_fallback`，以及每个模型的 `prediction_type`、`status`、`loaded`、`fallback`。这里没有目录、文件路径、`file_status` 或 `fallback_reason`。配置了服务密钥时，这两个接口和 `/info` 一样要带密钥；密钥为空的开发环境都不校验，所以就绪响应仍然不放路径。模型一个都没加载，或 Prometheus 不可用时，就绪检查仍返回 503；这时看启动日志和 `/info`。
+
+`GET /api/v1/predict/info` 的模型状态反映的是进程启动时读到的情况。之后调用 `reload_model` 或 `save_model` 不会刷新这份结果，要重启进程才会更新。
+
+容器存活探针访问免鉴权的 `GET /health`，不检查模型。没挂模型、走规则兜底时该接口仍返回 200。不要把 `/predict/ready` 当作存活探针。
