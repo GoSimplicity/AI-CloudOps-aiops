@@ -41,3 +41,22 @@ def test_process_health_stays_200_when_models_use_rule_fallback(tmp_path, monkey
     assert health.json() == {"status": "ok"}
     assert info.status_code == 200
     assert info.json()["data"]["prediction_models"]["rule_fallback"] is True
+
+
+def test_liveness_returns_503_while_the_process_is_shutting_down(monkeypatch):
+    from app.main import app_state
+
+    monkeypatch.setenv("AIOPS_PREWARM", "false")
+    monkeypatch.setattr(config.security, "api_key", "offline-service-key-with-32-characters")
+    app = create_app()
+    with TestClient(app) as client:
+        app_state.is_shutting_down = True
+        try:
+            response = client.get("/health")
+            head = client.head("/health")
+        finally:
+            app_state.is_shutting_down = False
+    assert response.status_code == 503
+    assert response.text == "Service is shutting down"
+    assert response.headers["retry-after"] == "60"
+    assert head.status_code == 503

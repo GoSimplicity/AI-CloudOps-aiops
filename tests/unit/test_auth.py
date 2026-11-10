@@ -2,7 +2,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
 import pytest
 
-from app.api.middleware.auth import ensure_service_auth_configuration, setup_auth
+from app.api.middleware.auth import ServiceAuthMiddleware, ensure_service_auth_configuration, setup_auth
 from app.config.settings import config
 
 
@@ -202,3 +202,59 @@ def test_websocket_requires_credentials(monkeypatch, env):
     assert exc.value.code == 1008
     with client.websocket_connect("/ws", headers={"X-API-Key": key}) as ws:
         assert ws.receive_text() == "authenticated"
+
+
+@pytest.mark.parametrize("user_id", ["0", "01", "abc", "1" * 20])
+def test_websocket_rejects_invalid_trusted_user_id(monkeypatch, user_id):
+    from starlette.websockets import WebSocketDisconnect
+
+    key = "s" * 32
+    client = make_client(monkeypatch, key, "test")
+
+    @client.app.websocket("/ws")
+    async def websocket(ws: WebSocket):
+        await ws.accept()
+        await ws.send_text("open")
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect("/ws", headers={"X-API-Key": key, "X-CloudOps-User-ID": user_id}):
+            pass
+    assert exc.value.code == 1008
+
+
+async def test_empty_key_denies_http_when_the_peer_is_missing():
+    sent = []
+
+    async def downstream(scope, receive, send):
+        sent.append(scope["path"])
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+    middleware = ServiceAuthMiddleware(downstream, api_key="")
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    for client in (None, []):
+        messages = []
+
+        async def send(message):
+            messages.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"spec_version": "2.3", "version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/tools/execute",
+            "raw_path": b"/tools/execute",
+            "query_string": b"",
+            "headers": [],
+            "client": client,
+            "server": ("127.0.0.1", 8000),
+            "root_path": "",
+        }
+        await middleware(scope, receive, send)
+        assert messages[0]["status"] == 401
+    assert sent == []

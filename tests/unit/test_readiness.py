@@ -82,3 +82,80 @@ async def test_llm_readiness_uses_metadata_not_generation(monkeypatch):
     service.client.chat.completions.create.assert_not_called()
     monkeypatch.setattr(config.llm, "api_key", "")
     assert await service._check_openai_health() is False
+
+
+def _mount(monkeypatch, module, service):
+    name = {
+        "assistant": "get_assistant_service",
+        "predict": "get_prediction_service",
+        "rca": "get_rca_service",
+    }[module.__name__.rsplit(".", 1)[-1]]
+    monkeypatch.setattr(module, name, AsyncMock(return_value=service))
+    app = FastAPI()
+    app.include_router(module.router, prefix="/service")
+    return TestClient(app)
+
+
+def _service_fields(path, body):
+    """/health 目前把已经包装过的 /ready 结果又包了一层。"""
+    data = body["data"]
+    if path.endswith("/health"):
+        assert data["code"] == 0
+        data = data["data"]
+    return data
+
+
+@pytest.mark.parametrize("path", ["/service/health", "/service/ready"])
+def test_rca_health_uses_the_same_readiness_result(monkeypatch, path):
+    from app.api.routes import rca
+
+    service = AsyncMock()
+    service.get_health_status.return_value = {"status": "healthy"}
+    client = _mount(monkeypatch, rca, service)
+    response = client.get(path)
+    assert response.status_code == 200
+    fields = _service_fields(path, response.json())
+    assert fields["ready"] is True
+    assert fields["service"] == "rca"
+
+    service.get_health_status.return_value = {"status": "degraded"}
+    assert client.get(path).status_code == 503
+
+
+@pytest.mark.parametrize("path", ["/service/health", "/service/ready"])
+def test_assistant_health_requires_a_healthy_mode(monkeypatch, path):
+    from app.api.routes import assistant
+
+    service = AsyncMock()
+    service.get_service_health_info_with_mode.return_value = {"modes": {"rag": {"status": "healthy"}, "mcp": {"status": "down"}}}
+    client = _mount(monkeypatch, assistant, service)
+    response = client.get(path)
+    assert response.status_code == 200
+    fields = _service_fields(path, response.json())
+    assert fields["service"] == "assistant"
+    assert fields["ready"] is True
+
+    service.get_service_health_info_with_mode.return_value = {"modes": {"rag": {"status": "down"}, "mcp": {"status": "down"}}}
+    assert client.get(path).status_code == 503
+
+    service.get_service_health_info_with_mode.side_effect = RuntimeError("assistant-health-offline")
+    failure = client.get(path)
+    assert failure.status_code == 503
+    assert "assistant-health-offline" not in failure.text
+
+
+@pytest.mark.parametrize("path", ["/service/health", "/service/ready"])
+def test_prediction_health_stays_unavailable_without_metrics(monkeypatch, path):
+    from unittest.mock import Mock
+
+    from app.api.routes import predict
+    from app.services.prometheus import PrometheusService
+
+    service = AsyncMock()
+    service.is_initialized = Mock(return_value=True)
+    service.health_check.return_value = True
+    monkeypatch.setattr(PrometheusService, "is_healthy", lambda self: False)
+    client = _mount(monkeypatch, predict, service)
+    response = client.get(path)
+    assert response.status_code == 503
+    assert response.json()["detail"] == "服务 prediction 当前不可用"
