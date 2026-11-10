@@ -1,6 +1,6 @@
 # AIops 1.0 部署边界
 
-API 与 MCP 是 Go 后端调用的内部服务，不直接向浏览器或公网开放。生产环境设置 `ENV=production`，通过密钥管理系统注入至少 32 字符的 `AIOPS_API_KEY`；Go 后端、API 与 MCP 必须一致。请求使用 `X-API-Key` 或 `Authorization: Bearer`。密钥缺失或过短会阻止启动，校验与统一环境判定一致：`production`/`prod`/`prd`（含大小写及首尾空白），以及空值、未知值均要求强密钥。明确的 `development`/`dev` 与 `test`/`testing` 在 `AIOPS_API_KEY` 为空时，只允许绑定回环地址（`127.0.0.1`、`::1`、`localhost`，以及 `127.0.0.0/8` 和 IPv4-mapped 回环）；绑定其它地址会拒绝启动，非回环来源返回 401，WebSocket 使用关闭码 1008。没有开关可以在对外监听时关掉鉴权。配了密钥之后，任意来源都必须带同一个 `X-API-Key` 或 `Bearer`，Go 后端从容器网络调用不受回环限制。`GET`/`HEAD /health` 只返回进程存活状态，不代表 Redis、Kubernetes 或模型可用，并且仍然不鉴权；各业务 `/ready` 需要鉴权。
+API 与 MCP 是 Go 后端调用的内部服务，不直接向浏览器或公网开放。生产环境设置 `ENV=production`，通过密钥管理系统注入至少 32 字符的 `AIOPS_API_KEY`；Go 后端、API 与 MCP 必须一致。请求使用 `X-API-Key` 或 `Authorization: Bearer`。密钥缺失或过短会阻止启动，校验与统一环境判定一致：`production`/`prod`/`prd`（含大小写及首尾空白），以及空值、未知值均要求强密钥。明确的 `development`/`dev` 与 `test`/`testing` 在 `AIOPS_API_KEY` 为空时，只允许绑定回环地址（`127.0.0.1`、`::1`、`localhost`，以及 `127.0.0.0/8` 和 IPv4-mapped 回环）；绑定其它地址会拒绝启动，非回环来源返回 401，WebSocket 使用关闭码 1008。没有开关可以在对外监听时关掉鉴权。只要流量会出本机（包括经本机反向代理转到 127.0.0.1），就必须设置 `AIOPS_API_KEY`。配了密钥之后，任意来源都必须带同一个 `X-API-Key` 或 `Bearer`，Go 后端从容器网络调用不受回环限制。`GET`/`HEAD /health` 只返回进程存活状态，不代表 Redis、Kubernetes 或模型可用，并且仍然不鉴权；各业务 `/ready` 需要鉴权。
 
 复制 `env.example` 为 `.env`，填写独立随机 `REDIS_PASSWORD`、服务密钥和模型/监控配置。`openssl rand -hex 32` 可以生成服务密钥。Compose 默认端口只绑定本机；远程访问通过带 TLS 和访问控制的 Go 网关。`CORS_ORIGINS` 是显式逗号分隔域名，不允许通配符。外部模型和 Kubernetes 的真实权限由部署者配置；不要使用集群管理员身份，按实际工具授予最小 RBAC。
 

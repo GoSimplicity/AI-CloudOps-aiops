@@ -12,7 +12,7 @@ def make_client(monkeypatch, key="test-key", env="test", peer=("testclient", 500
     app = FastAPI()
     setup_auth(app)
 
-    @app.get("/health")
+    @app.api_route("/health", methods=["GET", "HEAD"])
     def health():
         return {"status": "ok"}
 
@@ -108,7 +108,7 @@ def test_empty_key_allows_loopback_clients_only(monkeypatch, env, host, peer):
     monkeypatch.setattr(config, "host", host)
     client = make_client(monkeypatch, "", env, peer=(peer, 50000))
     assert client.get("/health").status_code == 200
-    assert client.head("/health").status_code != 401
+    assert client.head("/health").status_code == 200
     assert client.post("/tools/execute").status_code == 200
     assert client.post("/tools/execute", headers={"X-CloudOps-User-ID": "1"}).status_code == 200
 
@@ -119,7 +119,7 @@ def test_empty_key_rejects_non_loopback_clients(monkeypatch, env, peer):
     monkeypatch.setattr(config, "host", "127.0.0.1")
     client = make_client(monkeypatch, "", env, peer=(peer, 50000))
     assert client.get("/health").status_code == 200
-    assert client.head("/health").status_code != 401
+    assert client.head("/health").status_code == 200
     denied = client.post("/tools/execute", headers={"X-API-Key": "", "X-CloudOps-User-ID": "1"})
     assert denied.status_code == 401
     assert denied.json()["message"] == "Invalid or missing service API key"
