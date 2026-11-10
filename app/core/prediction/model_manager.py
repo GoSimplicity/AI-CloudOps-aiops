@@ -27,131 +27,236 @@ from app.models import ModelInfo, PredictionType
 
 logger = logging.getLogger("aiops.core.model_manager")
 
+_warned_model_status: set[str] = set()
+_status_cache: Dict[str, Dict[str, Any]] = {}
+
+RULE_FALLBACK_REASON = "预测模型不可用"
+ADAPTED_FALLBACK_REASON = "使用其他指标的模型"
+_PROVIDE_MODELS = (
+    "请把 qps、cpu、memory、disk 的模型文件放到该目录，或设置 PREDICTION_MODEL_BASE_PATH 后把目录挂载进容器；"
+    "构建镜像时也可传入 --build-arg INCLUDE_PREDICTION_MODELS=true，把构建上下文里的 data/models 打进镜像。"
+    "启动不会自动训练，也不读取 Prometheus。"
+)
+
+
+def _artifact_filename(spec: Any, kind: str, default: str) -> str:
+    """配置里可以写绝对路径，实际只取文件名，统一放到模型目录下。"""
+    if isinstance(spec, dict):
+        raw = spec.get(kind)
+        if isinstance(raw, str) and raw.strip():
+            name = os.path.basename(raw.strip())
+            if name not in {"", ".", ".."}:
+                return name
+    return default
+
+
+def build_model_paths(
+    base_path: str, configured: Optional[Dict[str, Any]] = None
+) -> Dict[PredictionType, Dict[str, str]]:
+    """模型目录决定查找位置；配置中的路径只提供文件名。"""
+    directory = base_path.strip() if isinstance(base_path, str) and base_path.strip() else "data/models"
+    configured = configured or {}
+    result = {}
+    for pred_type in PredictionType:
+        key = pred_type.value.lower()
+        spec = configured.get(key)
+        result[pred_type] = {
+            "model": os.path.join(directory, _artifact_filename(spec, "model", f"{key}_prediction_model.pkl")),
+            "scaler": os.path.join(directory, _artifact_filename(spec, "scaler", f"{key}_prediction_scaler.pkl")),
+            "metadata": os.path.join(directory, _artifact_filename(spec, "metadata", f"{key}_prediction_model_metadata.json")),
+        }
+    return result
+
+
+def _empty_record(pred_type: PredictionType, model_path: str, status: str) -> Dict[str, Any]:
+    return {
+        "prediction_type": pred_type.value,
+        "loaded": False,
+        "fallback": True,
+        "status": status,
+        "file_status": status,
+        "model_path": model_path,
+        "fallback_reason": RULE_FALLBACK_REASON,
+    }
+
 
 class ModelManager:
     """模型管理器"""
 
-    def __init__(self):
+    def __init__(
+        self,
+        base_path: Optional[str] = None,
+        configured_paths: Optional[Dict[str, Any]] = None,
+    ):
         self.models = {}
         self.scalers = {}
         self.metadata = {}
         self.models_loaded = False
-        self.model_paths = self._init_model_paths()
-
-    def _init_model_paths(self) -> Dict[PredictionType, Dict[str, str]]:
-        """初始化模型路径配置"""
-
-        # 从配置文件获取模型路径
-        model_paths_config = config.prediction.model_paths
-        result = {}
-
-        for pred_type in PredictionType:
-            pred_type_key = pred_type.value.lower()
-            if pred_type_key in model_paths_config:
-                result[pred_type] = model_paths_config[pred_type_key]
-            else:
-                # 如果配置中没有，使用默认路径
-                base_path = config.prediction.model_base_path
-                result[pred_type] = {
-                    "model": os.path.join(
-                        base_path, f"{pred_type_key}_prediction_model.pkl"
-                    ),
-                    "scaler": os.path.join(
-                        base_path, f"{pred_type_key}_prediction_scaler.pkl"
-                    ),
-                    "metadata": os.path.join(
-                        base_path, f"{pred_type_key}_prediction_model_metadata.json"
-                    ),
-                }
-
-        return result
+        self.load_records: Dict[PredictionType, Dict[str, Any]] = {}
+        selected = base_path if base_path is not None else config.prediction.model_base_path
+        self.base_path = selected.strip() if isinstance(selected, str) and selected.strip() else "data/models"
+        self._configured_paths = (
+            config.prediction.model_paths if configured_paths is None else configured_paths
+        )
+        self.model_paths = build_model_paths(self.base_path, self._configured_paths)
 
     async def initialize(self):
         """初始化模型管理器"""
         await self.load_models()
 
     async def load_models(self) -> bool:
-        """加载所有模型"""
+        """加载所有模型。只读本地文件，不训练，也不访问 Prometheus。"""
 
         success_count = 0
+        self.load_records = {}
 
         for pred_type, paths in self.model_paths.items():
             try:
-                # 首先尝试加载专用模型
-                if self._load_model_for_type(pred_type, paths):
-                    success_count += 1
-                    logger.info(f"成功加载{pred_type.value}预测模型")
-                else:
-                    # 如果专用模型不存在，使用默认QPS模型
-                    if pred_type != PredictionType.QPS:
-                        logger.warning(f"{pred_type.value}专用模型不存在，使用默认模型")
-                        if self._use_default_model(pred_type):
-                            success_count += 1
-
-            except Exception as e:
-                logger.error(f"加载{pred_type.value}模型失败: {str(e)}")
-                # 尝试使用默认模型
-                if self._use_default_model(pred_type):
-                    success_count += 1
+                record = self._load_record(pred_type, paths)
+            except Exception as error:
+                logger.debug(
+                    "加载%s模型出现未预期错误，异常类型: %s",
+                    pred_type.value,
+                    type(error).__name__,
+                )
+                self._drop_loaded(pred_type)
+                record = _empty_record(pred_type, paths["model"], "load_failed")
+            self.load_records[pred_type] = record
+            if record["loaded"]:
+                success_count += 1
+                logger.info("成功加载%s预测模型", pred_type.value)
 
         self.models_loaded = success_count > 0
-
-        if self.models_loaded:
-            logger.info(f"模型管理器初始化完成，成功加载{success_count}个模型")
-        else:
-            logger.error("模型管理器初始化失败，无可用模型")
-
+        self._log_availability()
         return self.models_loaded
+
+    def _load_record(self, pred_type: PredictionType, paths: Dict[str, str]) -> Dict[str, Any]:
+        """加载专用模型；失败时再尝试借用已加载的 QPS 模型。"""
+        model_path = paths["model"]
+        outcome = self._load_model_for_type(pred_type, paths)
+        if outcome == "loaded":
+            return {
+                "prediction_type": pred_type.value,
+                "loaded": True,
+                "fallback": False,
+                "status": "loaded",
+                "file_status": "loaded",
+                "model_path": model_path,
+                "fallback_reason": None,
+            }
+        file_status = "missing" if outcome == "missing" else "load_failed"
+        if pred_type != PredictionType.QPS and self._use_default_model(pred_type):
+            return {
+                "prediction_type": pred_type.value,
+                "loaded": True,
+                "fallback": True,
+                "status": "adapted",
+                "file_status": file_status,
+                "model_path": model_path,
+                "fallback_reason": ADAPTED_FALLBACK_REASON,
+            }
+        return _empty_record(pred_type, model_path, file_status)
+
+    def _log_availability(self) -> None:
+        """模型不完整时只打一条运维能直接照做的 WARNING。"""
+        report = self.availability()
+        if not report["any_fallback"]:
+            logger.info("预测模型已从 %s 加载", self.base_path)
+            return
+        missing = [
+            f"{item['prediction_type']}={item['model_path']}"
+            for item in report["models"]
+            if item["status"] == "missing"
+        ]
+        failed = [
+            f"{item['prediction_type']}={item['model_path']}"
+            for item in report["models"]
+            if item.get("file_status", item["status"]) == "load_failed"
+        ]
+        adapted = [
+            f"{item['prediction_type']}={item['model_path']}"
+            for item in report["models"]
+            if item["status"] == "adapted"
+        ]
+        if report["rule_fallback"]:
+            mode = "没有加载成功的类型当前走规则兜底"
+        else:
+            mode = "借用其他指标模型的类型当前标记为兜底"
+        message = (
+            f"预测模型不完整，{mode}。模型目录={self.base_path}。"
+            f"缺失: {'、'.join(missing) or '无'}。"
+            f"加载失败: {'、'.join(failed) or '无'}。"
+            f"借用其他指标模型: {'、'.join(adapted) or '无'}。"
+            f"{_PROVIDE_MODELS}"
+        )
+        if message in _warned_model_status:
+            return
+        _warned_model_status.add(message)
+        logger.warning(message)
+
+    def availability(self) -> Dict[str, Any]:
+        """每个预测类型是否已加载，以及预测接口会使用的兜底原因。"""
+        models = []
+        for pred_type in PredictionType:
+            record = self.load_records.get(pred_type)
+            if record is None:
+                model_path = self.model_paths.get(pred_type, {}).get("model", "")
+                record = _empty_record(pred_type, model_path, "missing")
+            models.append(dict(record))
+        return {
+            "model_base_path": self.base_path,
+            "rule_fallback": any(item["status"] in {"missing", "load_failed"} for item in models),
+            "any_fallback": any(item["fallback"] for item in models),
+            "models": models,
+        }
+
+    def _drop_loaded(self, pred_type: PredictionType) -> None:
+        self.models.pop(pred_type, None)
+        self.scalers.pop(pred_type, None)
+        self.metadata.pop(pred_type, None)
 
     def _load_model_for_type(
         self, pred_type: PredictionType, paths: Dict[str, str]
-    ) -> bool:
-        """加载特定类型的模型"""
+    ) -> str:
+        """加载特定类型的模型，返回 loaded、missing 或 load_failed。"""
 
         model_path = paths["model"]
         scaler_path = paths["scaler"]
         metadata_path = paths["metadata"]
 
-        # 检查文件是否存在
         if not os.path.exists(model_path):
-            return False
+            return "missing"
 
         try:
-            # 加载模型
             model = joblib.load(model_path)
             self.models[pred_type] = model
 
-            # 加载标准化器
             if os.path.exists(scaler_path):
                 scaler = joblib.load(scaler_path)
                 self.scalers[pred_type] = scaler
             else:
-                logger.warning(f"{pred_type.value}标准化器不存在，将使用默认标准化")
+                logger.info("%s标准化器不存在，预测时不额外标准化", pred_type.value)
                 self.scalers[pred_type] = None
 
-            # 加载元数据
             if os.path.exists(metadata_path):
-                with open(metadata_path, "r") as f:
-                    metadata = json.load(f)
+                with open(metadata_path, "r") as handle:
+                    metadata = json.load(handle)
                     self.metadata[pred_type] = metadata
             else:
-                # 创建默认元数据
                 self.metadata[pred_type] = self._create_default_metadata(pred_type)
 
-            # 验证模型
             if self._validate_model(model, self.scalers[pred_type], pred_type):
-                return True
-            else:
-                logger.error(f"{pred_type.value}模型验证失败")
-                # 清理加载的内容
-                self.models.pop(pred_type, None)
-                self.scalers.pop(pred_type, None)
-                self.metadata.pop(pred_type, None)
-                return False
+                return "loaded"
+            logger.info("%s模型未通过加载校验", pred_type.value)
+            self._drop_loaded(pred_type)
+            return "load_failed"
 
-        except Exception as e:
-            logger.error(f"加载{pred_type.value}模型时出错: {str(e)}")
-            return False
+        except Exception as error:
+            logger.info(
+                "加载%s模型失败，异常类型: %s", pred_type.value, type(error).__name__
+            )
+            self._drop_loaded(pred_type)
+            return "load_failed"
 
     def _use_default_model(self, pred_type: PredictionType) -> bool:
         """使用默认模型（QPS模型）"""
@@ -173,7 +278,7 @@ class ModelManager:
 
         # 尝试加载默认模型
         default_paths = self.model_paths[PredictionType.QPS]
-        if self._load_model_for_type(pred_type, default_paths):
+        if self._load_model_for_type(pred_type, default_paths) == "loaded":
             self.metadata[pred_type]["adapted_from"] = "QPS model"
             return True
 
@@ -452,17 +557,13 @@ class ModelManager:
                 logger.error(f"未找到{pred_type.value}的模型路径配置")
                 return False
 
-            # 清理旧模型
-            self.models.pop(pred_type, None)
-            self.scalers.pop(pred_type, None)
-            self.metadata.pop(pred_type, None)
+            self._drop_loaded(pred_type)
 
-            # 重新加载
-            success = self._load_model_for_type(pred_type, paths)
-
-            if not success:
-                # 尝试使用默认模型
-                success = self._use_default_model(pred_type)
+            record = self._load_record(pred_type, paths)
+            self.load_records[pred_type] = record
+            self.models_loaded = any(item.get("loaded") for item in self.load_records.values())
+            success = bool(record["loaded"])
+            self._log_availability()
 
             if success:
                 logger.info(f"成功重新加载{pred_type.value}模型")
@@ -508,9 +609,31 @@ class ModelManager:
             self.models[pred_type] = model
             self.scalers[pred_type] = scaler
             self.metadata[pred_type] = metadata
+            self.load_records[pred_type] = {
+                "prediction_type": pred_type.value,
+                "loaded": True,
+                "fallback": False,
+                "status": "loaded",
+                "file_status": "loaded",
+                "model_path": paths["model"],
+                "fallback_reason": None,
+            }
+            self.models_loaded = True
 
             return True
 
         except Exception as e:
             logger.error(f"保存模型失败: {str(e)}")
             return False
+
+
+async def collect_prediction_model_status() -> Dict[str, Any]:
+    """读取当前配置的模型目录。同一目录在本进程内只加载一次。"""
+    manager = ModelManager()
+    cached = _status_cache.get(manager.base_path)
+    if cached is not None:
+        return cached
+    await manager.load_models()
+    report = manager.availability()
+    _status_cache[manager.base_path] = report
+    return report

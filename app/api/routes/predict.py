@@ -505,16 +505,18 @@ async def prediction_health() -> Dict[str, Any]:
 async def prediction_ready() -> Dict[str, Any]:
     """检查服务就绪状态"""
     try:
-        await (await get_prediction_service()).initialize()
+        service = await get_prediction_service()
+        await service.initialize()
 
-        is_initialized = (await get_prediction_service()).is_initialized()
-        is_healthy = await (await get_prediction_service()).health_check()
+        is_initialized = service.is_initialized()
+        is_healthy = await service.health_check()
         from app.services.prometheus import PrometheusService
 
         metrics = PrometheusService()
         metrics.timeout = min(metrics.timeout, 5)
         metrics_healthy = await asyncio.to_thread(metrics.is_healthy)
         is_ready = is_initialized and is_healthy and metrics_healthy
+        model_report = _prediction_model_report(service)
 
         if not is_ready:
             raise ServiceUnavailableError("prediction")
@@ -528,7 +530,9 @@ async def prediction_ready() -> Dict[str, Any]:
             healthy=is_healthy,
             status="ready",
         )
-        return response.dict()
+        data = response.dict()
+        data["prediction_models"] = model_report
+        return data
     except (AIOpsException, DomainValidationError):
         raise
     except HTTPException:
@@ -648,6 +652,7 @@ async def prediction_info() -> Dict[str, Any]:
     data = response.dict()
     # 将 required 字段放在顶层数据对象内，api_response将包裹
     data["supported_prediction_types"] = info["supported_prediction_types"]
+    data["prediction_models"] = await _prediction_model_report_from_disk()
     return data
 
 
@@ -679,6 +684,39 @@ async def model_info() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"获取模型信息失败: {str(e)}")
         raise PredictionError("获取模型信息失败")
+
+
+def _prediction_model_report(service: PredictionService) -> Dict[str, Any]:
+    """使用已经加载的模型管理器，避免就绪检查再读一遍磁盘。"""
+    from app.core.prediction.model_manager import ModelManager
+
+    manager = getattr(service, "_model_manager", None)
+    if isinstance(manager, ModelManager):
+        return manager.availability()
+    return {
+        "model_base_path": "",
+        "rule_fallback": True,
+        "any_fallback": True,
+        "models": [],
+    }
+
+
+async def _prediction_model_report_from_disk() -> Dict[str, Any]:
+    """/info 只检查本地模型文件，不初始化 Redis、Prometheus 或训练。"""
+    from app.core.prediction.model_manager import collect_prediction_model_status
+
+    try:
+        return await collect_prediction_model_status()
+    except Exception as error:
+        logger.warning("读取预测模型状态失败，异常类型: %s", type(error).__name__)
+        from app.config.settings import config
+
+        return {
+            "model_base_path": str(getattr(config.prediction, "model_base_path", "")),
+            "rule_fallback": True,
+            "any_fallback": True,
+            "models": [],
+        }
 
 
 __all__ = ["router"]

@@ -96,7 +96,7 @@ rca:
 
 # 预测配置
 prediction:
-  model_base_path: data/models # 预测模型基础路径
+  model_base_path: data/models # 预测模型目录。PREDICTION_MODEL_BASE_PATH 优先；下面的 model_paths 只提供文件名
   model_paths: # 各类预测模型及其相关文件路径
     qps:
       model: data/models/qps_prediction_model.pkl # QPS预测模型文件
