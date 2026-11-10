@@ -6,6 +6,8 @@ API 与 MCP 是 Go 后端调用的内部服务，不直接向浏览器或公网�
 
 Kubeconfig 放在本地 `deploy/kubernetes/config`，该目录通过只读挂载传入服务；镜像不包含集群凭据。运行容器的非 root 用户需要读取配置、写入 `data` 和 `logs` 的权限。不要把 kubeconfig、`.env` 或模型供应商密钥提交到 Git。
 
+本仓库根目录的 `docker-compose.yml` 只用于本地开发，启动 API、MCP、Prometheus 和 Redis。生产部署以后端仓库 [GoSimplicity/AI-CloudOps](https://github.com/GoSimplicity/AI-CloudOps) 的 `deploy/release/compose.yaml` 为准，那里包含网关、后端和 MySQL。本地 Prometheus 镜像与发布栈对齐为 `prom/prometheus:v3.2.1`，Redis 为 `redis:7.4.11-alpine`；本地保留期仍是 30 天，发布栈是 15 天。API 与 MCP 镜像用 Python 标准库探测免鉴权的 `GET /health`。发布 compose 若为服务声明了 `healthcheck`，会覆盖镜像里的 `HEALTHCHECK`。两个镜像都已以非 root 用户 `aiops` 运行，API 镜像的 uid 是 10001。基础镜像固定为 `python:3.11.18-slim`。
+
 ```sh
 # 校验不会启动依赖或调用模型
 docker compose config --quiet

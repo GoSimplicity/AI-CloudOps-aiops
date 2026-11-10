@@ -397,6 +397,8 @@ POST /api/v1/rca/analyze
 - **Redis**: 7.0+
 - **Kubernetes**: 1.20+ (可选)
 
+本仓库 `docker-compose.yml` 仅用于本地开发。生产部署以后端仓库 `deploy/release/compose.yaml` 为准，见[部署说明](docs/production.md)。
+
 ---
 
 ## 🔧 高级配置

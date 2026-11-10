@@ -1,3 +1,7 @@
+# 本文件仅用于本仓库本地开发（API、MCP、Prometheus、Redis）。
+# 生产部署以后端仓库 GoSimplicity/AI-CloudOps 的 deploy/release/compose.yaml 为准。
+# Prometheus v3.2.1 与 Redis 7.4.11-alpine 和发布栈一致；本地 Prometheus 保留期仍为 30 天（发布栈为 15 天）。
+
 services:
   cloudops-platform:
     build:
@@ -19,9 +23,12 @@ services:
       - ./config:/app/config
       - ./deploy/kubernetes:/app/deploy/kubernetes:ro
     depends_on:
-      - prometheus
-      - redis
-      - cloudops-mcp
+      prometheus:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      cloudops-mcp:
+        condition: service_started
     restart: unless-stopped
     networks:
       - aiops-network
@@ -53,7 +60,8 @@ services:
       - ./deploy/kubernetes:/app/deploy/kubernetes:ro
       # 如果需要访问宿主机的kubeconfig
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - aiops-network
@@ -61,10 +69,15 @@ services:
       ["python", "-m", "app.mcp.main", "--host", "0.0.0.0", "--port", "9000"]
 
   prometheus:
-    image: prom/prometheus:v2.45.0
+    image: prom/prometheus:v3.2.1
     container_name: prometheus
     ports:
       - "127.0.0.1:9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     volumes:
       - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./deploy/prometheus/rules:/etc/prometheus/rules:ro
@@ -112,9 +125,16 @@ services:
     container_name: redis
     ports:
       - "127.0.0.1:6379:6379"
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD}"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
     restart: unless-stopped
     networks:
       - aiops-network

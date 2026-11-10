@@ -87,7 +87,11 @@ All business endpoints are under `/api/v1` and require the service key, sent as 
 - Redis, Prometheus and an LLM API (OpenAI-compatible or Ollama)
 - Optional: a Kubernetes cluster and a least-privilege kubeconfig
 
-### Run with Docker Compose (this repo only)
+### Run with Docker Compose (local development only)
+
+`docker-compose.yml` in this repository starts the API, the MCP server, Prometheus and Redis for local development. Production uses the backend release stack, [`deploy/release/compose.yaml`](https://github.com/GoSimplicity/AI-CloudOps/blob/main/deploy/release/compose.yaml) in GoSimplicity/AI-CloudOps. Prometheus `v3.2.1` and Redis `7.4.11-alpine` match that stack. Local Prometheus retention stays 30 days; the release stack uses 15 days.
+
+The API and MCP images define a `HEALTHCHECK` that requests unauthenticated `GET /health` with the Python standard library. A `healthcheck` on the release Compose service overrides the image instruction. Both images already run as non-root `aiops` (the API image uses uid 10001) and pin `python:3.11.18-slim`.
 
 ```bash
 git clone https://github.com/GoSimplicity/AI-CloudOps-aiops.git
