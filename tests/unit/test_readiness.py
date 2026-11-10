@@ -82,3 +82,100 @@ async def test_llm_readiness_uses_metadata_not_generation(monkeypatch):
     service.client.chat.completions.create.assert_not_called()
     monkeypatch.setattr(config.llm, "api_key", "")
     assert await service._check_openai_health() is False
+
+
+def _mount(monkeypatch, module, service):
+    name = {
+        "assistant": "get_assistant_service",
+        "predict": "get_prediction_service",
+        "rca": "get_rca_service",
+    }[module.__name__.rsplit(".", 1)[-1]]
+    monkeypatch.setattr(module, name, AsyncMock(return_value=service))
+    app = FastAPI()
+    app.include_router(module.router, prefix="/service")
+    return TestClient(app)
+
+
+def test_rca_ready_reports_collector_status(monkeypatch):
+    from app.api.routes import rca
+
+    service = AsyncMock()
+    service.get_health_status.return_value = {"status": "healthy"}
+    client = _mount(monkeypatch, rca, service)
+    response = client.get("/service/ready")
+    assert response.status_code == 200
+    assert response.json()["data"]["ready"] is True
+    assert response.json()["data"]["service"] == "rca"
+
+    service.get_health_status.return_value = {"status": "degraded"}
+    assert client.get("/service/ready").status_code == 503
+    assert client.get("/service/health").status_code == 503
+
+
+@pytest.mark.xfail(strict=True, reason="已知问题：/health 把已包装的 /ready 响应又包了一层，见 PR 描述")
+def test_rca_health_returns_a_single_ready_payload(monkeypatch):
+    from app.api.routes import rca
+
+    service = AsyncMock()
+    service.get_health_status.return_value = {"status": "healthy"}
+    client = _mount(monkeypatch, rca, service)
+    response = client.get("/service/health")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["ready"] is True
+    assert data["service"] == "rca"
+
+
+def test_assistant_ready_requires_a_healthy_mode(monkeypatch):
+    from app.api.routes import assistant
+
+    service = AsyncMock()
+    service.get_service_health_info_with_mode.return_value = {"modes": {"rag": {"status": "healthy"}, "mcp": {"status": "down"}}}
+    client = _mount(monkeypatch, assistant, service)
+    response = client.get("/service/ready")
+    assert response.status_code == 200
+    assert response.json()["data"]["service"] == "assistant"
+    assert response.json()["data"]["ready"] is True
+
+    service.get_service_health_info_with_mode.return_value = {"modes": {"rag": {"status": "down"}, "mcp": {"status": "down"}}}
+    assert client.get("/service/ready").status_code == 503
+    assert client.get("/service/health").status_code == 503
+
+    service.get_service_health_info_with_mode.side_effect = RuntimeError("assistant-health-offline")
+    failure = client.get("/service/ready")
+    assert failure.status_code == 503
+    assert "assistant-health-offline" not in failure.text
+    failure = client.get("/service/health")
+    assert failure.status_code == 503
+    assert "assistant-health-offline" not in failure.text
+
+
+@pytest.mark.xfail(strict=True, reason="已知问题：/health 把已包装的 /ready 响应又包了一层，见 PR 描述")
+def test_assistant_health_returns_a_single_ready_payload(monkeypatch):
+    from app.api.routes import assistant
+
+    service = AsyncMock()
+    service.get_service_health_info_with_mode.return_value = {"modes": {"rag": {"status": "healthy"}, "mcp": {"status": "down"}}}
+    client = _mount(monkeypatch, assistant, service)
+    response = client.get("/service/health")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["service"] == "assistant"
+    assert data["ready"] is True
+
+
+@pytest.mark.parametrize("path", ["/service/health", "/service/ready"])
+def test_prediction_health_stays_unavailable_without_metrics(monkeypatch, path):
+    from unittest.mock import Mock
+
+    from app.api.routes import predict
+    from app.services.prometheus import PrometheusService
+
+    service = AsyncMock()
+    service.is_initialized = Mock(return_value=True)
+    service.health_check.return_value = True
+    monkeypatch.setattr(PrometheusService, "is_healthy", lambda self: False)
+    client = _mount(monkeypatch, predict, service)
+    response = client.get(path)
+    assert response.status_code == 503
+    assert response.json()["detail"] == "服务 prediction 当前不可用"
