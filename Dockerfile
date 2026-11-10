@@ -31,7 +31,13 @@ RUN mkdir -p data/models data/sample logs config
 # 复制应用代码
 COPY . .
 
-RUN useradd --create-home --uid 10001 aiops && chown -R aiops:aiops /app
+# 默认不把模型打进最终镜像层，因此构建上下文里没有 data/models 也能构建。
+# 只有 INCLUDE_PREDICTION_MODELS=true 时才保留 COPY 进来的模型文件。
+ARG INCLUDE_PREDICTION_MODELS=false
+RUN if [ "$INCLUDE_PREDICTION_MODELS" != "true" ]; then \
+      rm -rf data/models && mkdir -p data/models; \
+    fi \
+ && useradd --create-home --uid 10001 aiops && chown -R aiops:aiops /app
 USER aiops
 
 # 暴露端口

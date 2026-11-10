@@ -70,6 +70,14 @@ async def lifespan(app: FastAPI):
         # 初始化启动服务
         await startup_service.initialize()
 
+        # 只检查本地预测模型文件。缺失时打一条 WARNING 并继续启动，不训练、不访问 Prometheus。
+        try:
+            from app.core.prediction.model_manager import collect_prediction_model_status
+
+            await collect_prediction_model_status()
+        except Exception as error:
+            logger.warning("启动时检查预测模型失败，异常类型: %s", type(error).__name__)
+
         # Business dependencies initialize on first use. Optional prewarming must not
         # turn liveness into a request to an unavailable model provider or cluster.
         app_state.is_shutting_down = False

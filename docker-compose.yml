@@ -7,6 +7,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INCLUDE_PREDICTION_MODELS: ${INCLUDE_PREDICTION_MODELS:-false}
     container_name: cloudops-platform
     ports:
       - "127.0.0.1:8080:8080"
@@ -17,6 +19,8 @@ services:
       - ENV=production
       - AIOPS_API_KEY=${AIOPS_API_KEY:?Set AIOPS_API_KEY}
       - MCP_SERVER_URL=http://cloudops-mcp:9000
+      # 预测模型目录。./data/models 通过下面的卷提供；没有 pkl 时走规则兜底。
+      - PREDICTION_MODEL_BASE_PATH=/app/data/models
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
