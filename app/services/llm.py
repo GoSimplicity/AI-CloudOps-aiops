@@ -33,6 +33,16 @@ from app.utils.error_handlers import (
 logger = logging.getLogger("aiops.llm")
 
 
+def _exception_text(error: BaseException) -> str:
+    """读取异常自带文案，只给故障转移哨兵判断，不写入日志或对外错误。"""
+    message = getattr(error, "message", None)
+    if isinstance(message, str):
+        return message
+    if error.args and isinstance(error.args[0], str):
+        return error.args[0]
+    return ""
+
+
 class LLMService:
     """模型服务"""
 
@@ -111,7 +121,7 @@ class LLMService:
                 f"备用LLM服务(Ollama)初始化完成: {config.llm.ollama_model}, OLLAMA_HOST={os.environ.get('OLLAMA_HOST')}"
             )
         except Exception as e:
-            logger.warning(f"备用Ollama初始化失败: {str(e)}")
+            logger.warning("备用Ollama初始化失败，异常类型: %s", type(e).__name__)
 
     def _init_backup_openai(self) -> None:
         """初始化备用OpenAI客户端"""
@@ -121,7 +131,7 @@ class LLMService:
             )
             logger.info(f"备用LLM服务(OpenAI)初始化完成: {config.llm.model}")
         except Exception as e:
-            logger.warning(f"备用OpenAI初始化失败: {str(e)}")
+            logger.warning("备用OpenAI初始化失败，异常类型: %s", type(e).__name__)
 
     def _validate_temperature(self, temperature: float) -> float:
         """验证温度参数有效性"""
@@ -259,19 +269,20 @@ class LLMService:
         except Exception as e:
             # 主要提供商失败，尝试备用提供商
             logger.warning(
-                f"主要提供方({self.provider})失败: {str(e)}，切换到备用({self.backup_provider})"
+                "主要提供方(%s)失败，异常类型: %s，切换到备用(%s)",
+                self.provider,
+                type(e).__name__,
+                self.backup_provider,
             )
 
-            # 如果所有提供商都已尝试过，使用最终备用方案
-            if "backup_attempt" in str(e) or "all_failed" in str(e):
+            # 如果所有提供商都已尝试过，使用最终备用方案。哨兵仍看异常自带文案，但不把原文写出去。
+            failure_text = _exception_text(e)
+            if "backup_attempt" in failure_text or "all_failed" in failure_text:
                 logger.warning("所有标准LLM提供商都失败，使用最终备用聊天模型")
                 try:
                     return await self._use_fallback_chat_model(messages)
-                except Exception as fallback_e:
-                    raise ExternalServiceError(
-                        f"所有LLM服务都彻底失败: {str(e)} | 降级({str(fallback_e)})",
-                        self.provider,
-                    )
+                except Exception:
+                    raise ExternalServiceError("所有LLM服务都彻底失败", self.provider) from None
 
             # 切换到备用提供商
             backup_response = None
@@ -296,16 +307,15 @@ class LLMService:
             except Exception as backup_e:
                 # 备用提供商也失败，尝试使用最终的备用聊天模型
                 logger.warning(
-                    f"备用提供商({self.backup_provider})也失败: {str(backup_e)}，使用最终备用聊天模型"
+                    "备用提供商(%s)也失败，异常类型: %s，使用最终备用聊天模型",
+                    self.backup_provider,
+                    type(backup_e).__name__,
                 )
                 try:
                     return await self._use_fallback_chat_model(messages)
-                except Exception as fallback_e:
-                    # 所有方案都失败
-                    raise ExternalServiceError(
-                        f"所有LLM服务都失败: 主要({str(e)}) | 备用({str(backup_e)}) | 降级({str(fallback_e)})",
-                        f"{self.provider}_all_failed",
-                    )
+                except Exception:
+                    # 所有方案都失败。服务名保留 _all_failed，供既有哨兵识别，原文不进入消息。
+                    raise ExternalServiceError("所有LLM服务都失败", f"{self.provider}_all_failed") from None
 
             return backup_response
 
@@ -339,7 +349,7 @@ class LLMService:
                 return "抱歉，当前服务不可用，请稍后重试。"
 
         except Exception as e:
-            logger.error(f"备用聊天模型也失败: {e}")
+            logger.error("备用聊天模型也失败，异常类型: %s", type(e).__name__)
             # 返回基础错误消息
             return "很抱歉，AI服务暂时不可用。请稍后重试或联系技术支持。"
 
@@ -398,7 +408,7 @@ class LLMService:
                 logger.debug(f"LLM响应长度: {len(result) if result else 0}")
                 return result
         except Exception as e:
-            logger.error(f"OpenAI API调用失败: {str(e)}")
+            logger.error("OpenAI API调用失败，异常类型: %s", type(e).__name__)
             raise e
 
     async def _call_ollama_api(
@@ -454,7 +464,7 @@ class LLMService:
                     logger.error("Ollama响应格式无效")
                     return None
         except Exception as e:
-            logger.error(f"Ollama API调用失败: {str(e)}")
+            logger.error("Ollama API调用失败，异常类型: %s", type(e).__name__)
             raise e
 
     async def analyze_k8s_problem(
@@ -519,7 +529,7 @@ class LLMService:
                         response, messages
                     )
                 except Exception as json_error:
-                    logger.error(f"解析K8s分析JSON失败: {str(json_error)}")
+                    logger.error("解析K8s分析JSON失败，异常类型: %s", type(json_error).__name__)
                     # 尝试再次调用，但不指定JSON格式
                     alternative_response = await self.generate_response(
                         messages=messages,
@@ -540,7 +550,7 @@ class LLMService:
                 return self._create_default_analysis()
 
         except Exception as e:
-            logger.error(f"K8s问题分析失败: {str(e)}")
+            logger.error("K8s问题分析失败，异常类型: %s", type(e).__name__)
             return self._create_default_analysis()
 
     def _create_default_analysis(self) -> Dict[str, Any]:
@@ -605,7 +615,7 @@ class LLMService:
                 return self._create_default_analysis()
 
         except Exception as e:
-            logger.error(f"修复JSON格式失败: {str(e)}")
+            logger.error("修复JSON格式失败，异常类型: %s", type(e).__name__)
 
             # 创建最基本的返回数据
             analysis = self._create_default_analysis()
@@ -666,7 +676,7 @@ class LLMService:
             return response
 
         except Exception as e:
-            logger.error(f"生成RCA总结失败: {str(e)}")
+            logger.error("生成RCA总结失败，异常类型: %s", type(e).__name__)
             return None
 
     async def generate_fix_explanation(
@@ -703,7 +713,7 @@ class LLMService:
             return response
 
         except Exception as e:
-            logger.error(f"生成修复说明失败: {str(e)}")
+            logger.error("生成修复说明失败，异常类型: %s", type(e).__name__)
             return None
 
     async def is_healthy(self) -> bool:
@@ -733,7 +743,7 @@ class LLMService:
             return False
 
         except Exception as e:
-            logger.error(f"检查LLM服务健康状态时出错: {str(e)}")
+            logger.error("检查LLM服务健康状态时出错，异常类型: %s", type(e).__name__)
             return False
 
     async def _check_provider_health(self, provider: str) -> bool:
@@ -749,7 +759,7 @@ class LLMService:
                 logger.warning(f"不支持的LLM提供商: {provider}")
                 return False
         except Exception as e:
-            logger.error(f"检查{provider}健康状态失败: {str(e)}")
+            logger.error("检查%s健康状态失败，异常类型: %s", provider, type(e).__name__)
             return False
 
     async def _check_openai_health(self) -> bool:
@@ -827,7 +837,7 @@ class LLMService:
                     logger.warning("Ollama服务响应无效")
                     return False
             except Exception as e:
-                logger.warning(f"获取Ollama模型列表失败: {str(e)}")
+                logger.warning("获取Ollama模型列表失败，异常类型: %s", type(e).__name__)
 
                 # 如果模型列表检查失败，尝试直接发送聊天请求作为备选验证方法
                 def _sync_chat_check():
@@ -847,5 +857,5 @@ class LLMService:
                     return False
 
         except Exception as e:
-            logger.warning(f"Ollama健康检查失败: {str(e)}")
+            logger.warning("Ollama健康检查失败，异常类型: %s", type(e).__name__)
             return False

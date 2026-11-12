@@ -113,7 +113,7 @@ class ServiceFactory:
             await service.initialize()
             return True
         except Exception as e:
-            logger.error("确保服务 %s 初始化失败: %s", name, e)
+            logger.error("确保服务 %s 初始化失败，异常类型: %s", name, type(e).__name__)
             return False
 
     @classmethod

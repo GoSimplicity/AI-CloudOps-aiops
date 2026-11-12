@@ -28,18 +28,25 @@ import uvicorn
 from app.api.middleware.auth import ensure_service_auth_configuration, setup_auth
 from app.api.middleware.cors import setup_cors
 
-try:
-    from ..config.settings import config
-    from .server.mcp_server import MCPServer
-    from .server.tools import create_tools as mcp_tools
-except ImportError:
+
+def _load_mcp_dependencies():
+    """加载 MCP 运行依赖。包内相对导入失败时回退到绝对导入。"""
     try:
-        from app.config.settings import config
-        from app.mcp.server.mcp_server import MCPServer
-        from app.mcp.server.tools import create_tools as mcp_tools
-    except ImportError as e:
-        logging.error(f"导入模块失败: {e}")
-        sys.exit(1)
+        from ..config.settings import config as loaded_config
+        from .server.mcp_server import MCPServer as loaded_server
+        from .server.tools import create_tools as loaded_tools
+    except ImportError:
+        try:
+            from app.config.settings import config as loaded_config
+            from app.mcp.server.mcp_server import MCPServer as loaded_server
+            from app.mcp.server.tools import create_tools as loaded_tools
+        except ImportError as error:
+            logging.error("导入模块失败，异常类型: %s", type(error).__name__)
+            sys.exit(1)
+    return loaded_config, loaded_server, loaded_tools
+
+
+config, MCPServer, mcp_tools = _load_mcp_dependencies()
 
 from app.common.exceptions import FeatureDisabledError
 from app.config.envmode import ensure_debug_safe

@@ -66,7 +66,7 @@ class MCPSessionClient:
 
         except aiohttp.ClientError as e:
             logger.error("MCP客户端网络错误，异常类型: %s", type(e).__name__)
-            raise RuntimeError(f"MCP服务连接失败: {str(e)}")
+            raise RuntimeError("MCP服务连接失败") from None
         except Exception as e:
             logger.error("MCP客户端执行异常，异常类型: %s", type(e).__name__)
             raise
@@ -95,7 +95,7 @@ class MCPSessionClient:
                         raise RuntimeError(f"{operation_name}失败，状态码: {response.status}")
         except aiohttp.ClientError as e:
             logger.error("MCP客户端网络错误，异常类型: %s", type(e).__name__)
-            raise RuntimeError(f"MCP服务连接失败: {str(e)}")
+            raise RuntimeError("MCP服务连接失败") from None
         except Exception as e:
             logger.error("MCP客户端%s异常，异常类型: %s", operation_name, type(e).__name__)
             raise

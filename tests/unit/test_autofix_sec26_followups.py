@@ -219,7 +219,7 @@ async def test_s7_permission_check_failure_logs_status_reason_not_body(caplog) -
     assert SECRET not in caplog.text
 
 
-# ---------------------------------------------------------------- P3-3：日志只记异常类型，完整内容放 debug
+# ---------------------------------------------------------------- P3-3：日志只记异常类型。服务层不再把原文放进 debug。
 
 
 def _messages(caplog, level: int) -> List[str]:
@@ -236,7 +236,8 @@ async def test_p3_3_health_check_logs_type_only_details_in_debug(monkeypatch, ca
     warnings = _messages(caplog, logging.WARNING)
     assert any("LeakyError" in m for m in warnings)
     assert all(SECRET not in m for m in warnings)
-    assert any(SECRET in m for m in _messages(caplog, logging.DEBUG))
+    assert SECRET not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records if record.name == service.logger.name)
 
 
 async def test_p3_3_cleanup_logs_type_only_details_in_debug(caplog) -> None:
@@ -250,7 +251,8 @@ async def test_p3_3_cleanup_logs_type_only_details_in_debug(caplog) -> None:
     warnings = _messages(caplog, logging.WARNING) + _messages(caplog, logging.ERROR)
     assert sum("LeakyError" in m for m in warnings) >= 2
     assert all(SECRET not in m for m in warnings)
-    assert any(SECRET in m for m in _messages(caplog, logging.DEBUG))
+    assert SECRET not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records if record.name == service.logger.name)
 
 
 async def test_p3_3_cleanup_outer_failure_logs_type_only(monkeypatch, caplog) -> None:
@@ -261,7 +263,8 @@ async def test_p3_3_cleanup_outer_failure_logs_type_only(monkeypatch, caplog) ->
     errors = _messages(caplog, logging.ERROR)
     assert any("LeakyError" in m for m in errors)
     assert all(SECRET not in m for m in errors)
-    assert any(SECRET in m for m in _messages(caplog, logging.DEBUG))
+    assert SECRET not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records if record.name == service.logger.name)
 
 
 def test_p3_3_route_notification_failure_logs_type_only(monkeypatch, caplog) -> None:

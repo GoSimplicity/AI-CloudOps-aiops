@@ -38,5 +38,7 @@ def setup_cors(app: FastAPI):
         logger.info("CORS中间件设置完成")
 
     except Exception as e:
-        logger.error(f"CORS中间件设置失败: {str(e)}")
-        raise
+        logger.error("CORS中间件设置失败，异常类型: %s", type(e).__name__)
+        if type(e) is ValueError and e.args == ("CORS_ORIGINS must list explicit origins",):
+            raise
+        raise RuntimeError("CORS中间件设置失败") from None

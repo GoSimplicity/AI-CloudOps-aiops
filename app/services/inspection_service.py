@@ -71,7 +71,7 @@ class InspectionService(BaseService):
         try:
             self._k8s = await asyncio.to_thread(KubernetesService)
         except Exception as e:
-            logger.warning(f"Kubernetes服务初始化失败: {e}")
+            logger.warning("Kubernetes服务初始化失败，异常类型: %s", type(e).__name__)
             self._k8s = None
 
         self._ensure_enabled()
@@ -79,7 +79,7 @@ class InspectionService(BaseService):
             self._prom = PrometheusService()
             await self._prom.initialize()
         except Exception as e:
-            logger.warning(f"Prometheus服务初始化失败: {e}")
+            logger.warning("Prometheus服务初始化失败，异常类型: %s", type(e).__name__)
             self._prom = None
 
     async def _do_health_check(self) -> bool:
@@ -286,9 +286,13 @@ class InspectionService(BaseService):
                 self._tasks[task_id] = InspectionTaskStatus(
                     task_id=task_id, status="completed", progress=1.0, report_id=report_id
                 )
-            except Exception as e:
+            except FeatureDisabledError as disabled:
                 self._tasks[task_id] = InspectionTaskStatus(
-                    task_id=task_id, status="failed", progress=1.0, error=str(e)
+                    task_id=task_id, status="failed", progress=1.0, error=disabled.message
+                )
+            except Exception:
+                self._tasks[task_id] = InspectionTaskStatus(
+                    task_id=task_id, status="failed", progress=1.0, error="巡检任务失败"
                 )
 
         asyncio.create_task(_job())

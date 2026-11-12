@@ -518,11 +518,11 @@ class GracefulShutdown:
                 if loop.is_running():
                     loop.create_task(self._log_services_status())
             except Exception as e:
-                self.logger.info(f"  无法获取详细服务状态: {e}")
+                self.logger.info("  无法获取详细服务状态，异常类型: %s", type(e).__name__)
 
             self.logger.info("=" * 50)
         except Exception as e:
-            self.logger.error(f"状态报告失败: {e}")
+            self.logger.error("状态报告失败，异常类型: %s", type(e).__name__)
 
     async def _log_services_status(self):
         """记录服务状态"""
@@ -532,7 +532,7 @@ class GracefulShutdown:
             for service_name, status in services_status.items():
                 self.logger.info(f"    - {service_name}: {status}")
         except Exception as e:
-            self.logger.error(f"获取服务状态失败: {e}")
+            self.logger.error("获取服务状态失败，异常类型: %s", type(e).__name__)
 
 
 def run_application() -> None:

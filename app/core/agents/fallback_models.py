@@ -279,7 +279,7 @@ class FallbackEmbeddings(Embeddings):
             embeddings = [self._generate_pseudo_embedding(text) for text in texts]
             return embeddings
         except Exception as e:
-            logger.error(f"生成文档嵌入时出错: {e}")
+            logger.error("生成文档嵌入时出错，异常类型: %s", type(e).__name__)
             # 返回零向量作为降级方案
             return [[0.0] * self.dimension for _ in texts]
 
@@ -290,7 +290,7 @@ class FallbackEmbeddings(Embeddings):
         try:
             return self._generate_pseudo_embedding(text)
         except Exception as e:
-            logger.error(f"生成查询嵌入时出错: {e}")
+            logger.error("生成查询嵌入时出错，异常类型: %s", type(e).__name__)
             return [0.0] * self.dimension
 
     def _generate_pseudo_embedding_impl(self, text: str) -> List[float]:
@@ -371,12 +371,12 @@ class FallbackChatModel(BaseChatModel):
             return ChatResult(generations=[generation])
 
         except Exception as e:
-            logger.error(f"备用聊天模型生成响应时出错: {e}")
+            logger.error("备用聊天模型生成响应时出错，异常类型: %s", type(e).__name__)
             # 返回通用错误响应
             error_response = "抱歉，当前服务不可用，请稍后重试。"
             generation = ChatGeneration(
                 message=type(messages[-1])(content=error_response),
-                generation_info={"model": self.model_name, "error": str(e)},
+                generation_info={"model": self.model_name, "error": "生成响应失败"},
             )
             return ChatResult(generations=[generation])
 
