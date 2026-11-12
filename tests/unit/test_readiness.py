@@ -108,11 +108,13 @@ def test_rca_ready_reports_collector_status(monkeypatch):
     assert response.json()["data"]["service"] == "rca"
 
     service.get_health_status.return_value = {"status": "degraded"}
-    assert client.get("/service/ready").status_code == 503
-    assert client.get("/service/health").status_code == 503
+    ready = client.get("/service/ready")
+    health = client.get("/service/health")
+    assert ready.status_code == 503
+    assert health.status_code == ready.status_code
+    assert health.json() == ready.json()
 
 
-@pytest.mark.xfail(strict=True, reason="已知问题：/health 把已包装的 /ready 响应又包了一层，见 PR 描述")
 def test_rca_health_returns_a_single_ready_payload(monkeypatch):
     from app.api.routes import rca
 
@@ -124,6 +126,7 @@ def test_rca_health_returns_a_single_ready_payload(monkeypatch):
     data = response.json()["data"]
     assert data["ready"] is True
     assert data["service"] == "rca"
+    assert "data" not in data
 
 
 def test_assistant_ready_requires_a_healthy_mode(monkeypatch):
@@ -138,19 +141,22 @@ def test_assistant_ready_requires_a_healthy_mode(monkeypatch):
     assert response.json()["data"]["ready"] is True
 
     service.get_service_health_info_with_mode.return_value = {"modes": {"rag": {"status": "down"}, "mcp": {"status": "down"}}}
-    assert client.get("/service/ready").status_code == 503
-    assert client.get("/service/health").status_code == 503
+    ready = client.get("/service/ready")
+    health = client.get("/service/health")
+    assert ready.status_code == 503
+    assert health.status_code == ready.status_code
+    assert health.json() == ready.json()
 
     service.get_service_health_info_with_mode.side_effect = RuntimeError("assistant-health-offline")
-    failure = client.get("/service/ready")
-    assert failure.status_code == 503
-    assert "assistant-health-offline" not in failure.text
-    failure = client.get("/service/health")
-    assert failure.status_code == 503
-    assert "assistant-health-offline" not in failure.text
+    ready = client.get("/service/ready")
+    health = client.get("/service/health")
+    assert ready.status_code == 503
+    assert health.status_code == ready.status_code
+    assert health.json() == ready.json()
+    assert "assistant-health-offline" not in ready.text
+    assert "assistant-health-offline" not in health.text
 
 
-@pytest.mark.xfail(strict=True, reason="已知问题：/health 把已包装的 /ready 响应又包了一层，见 PR 描述")
 def test_assistant_health_returns_a_single_ready_payload(monkeypatch):
     from app.api.routes import assistant
 
@@ -162,6 +168,7 @@ def test_assistant_health_returns_a_single_ready_payload(monkeypatch):
     data = response.json()["data"]
     assert data["service"] == "assistant"
     assert data["ready"] is True
+    assert "data" not in data
 
 
 @pytest.mark.parametrize("path", ["/service/health", "/service/ready"])

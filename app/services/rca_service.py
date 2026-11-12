@@ -340,7 +340,11 @@ class RCAService(BaseService, HealthCheckMixin):
       return {"items": items, "total": len(items)}
 
     except Exception as e:
-      self.logger.error(f"获取指标失败: {str(e)}", exc_info=True)
+      self.logger.error(
+        "获取指标失败，异常类型: %s，命名空间: %s",
+        type(e).__name__,
+        namespace,
+      )
       return {"items": [], "total": 0}
 
   async def get_events(
@@ -389,8 +393,12 @@ class RCAService(BaseService, HealthCheckMixin):
       return {"items": items, "total": len(items)}
 
     except Exception as e:
-      self.logger.error(f"获取事件失败: {str(e)}")
-      raise RCAError(f"获取事件失败: {str(e)}")
+      self.logger.error(
+        "获取事件失败，异常类型: %s，命名空间: %s",
+        type(e).__name__,
+        namespace,
+      )
+      raise RCAError("获取事件失败") from e
 
   async def get_logs(
     self,
@@ -442,8 +450,12 @@ class RCAService(BaseService, HealthCheckMixin):
       return {"items": items, "total": len(items)}
 
     except Exception as e:
-      self.logger.error(f"获取日志失败: {str(e)}")
-      raise RCAError(f"获取日志失败: {str(e)}")
+      self.logger.error(
+        "获取日志失败，异常类型: %s，命名空间: %s",
+        type(e).__name__,
+        namespace,
+      )
+      raise RCAError("获取日志失败") from e
 
   async def get_health_status(self) -> Dict[str, Any]:
     """获取健康状态"""

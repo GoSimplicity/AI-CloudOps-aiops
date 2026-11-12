@@ -86,7 +86,11 @@ class TimeUtils:
     def validate_time_range(
         start_time: datetime, end_time: datetime, max_range_minutes: int = 1440
     ) -> bool:
-        """验证时间范围"""
+        """验证时间范围。没有时区的时间无法判断是否在未来，按无效范围返回 False。"""
+        if start_time.tzinfo is None or start_time.tzinfo.utcoffset(start_time) is None:
+            return False
+        if end_time.tzinfo is None or end_time.tzinfo.utcoffset(end_time) is None:
+            return False
         if start_time >= end_time:
             return False
         time_diff = (end_time - start_time).total_seconds() / 60

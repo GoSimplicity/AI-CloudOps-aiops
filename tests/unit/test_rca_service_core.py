@@ -1,6 +1,7 @@
 """RCA 服务健康状态、缓存命中和失败降级。收集器全部用替身。"""
 
 from datetime import datetime, timezone
+import logging
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -146,3 +147,36 @@ async def test_metric_collection_failure_returns_empty_and_event_failure_raises(
     with pytest.raises(RCAError) as raised:
         await service.get_events("payments")
     assert raised.value.error_code == "RCA_ERROR"
+
+
+async def test_collector_failures_return_generic_errors_and_log_only_the_type(caplog):
+    marker = "collector-secret-token"
+    service = _service()
+    caplog.set_level(logging.DEBUG, logger="aiops.services.rca")
+
+    service._metrics_collector.collect.side_effect = RuntimeError(marker)
+    assert await service.get_metrics("payments") == {"items": [], "total": 0}
+
+    service._events_collector.collect.side_effect = RuntimeError(marker)
+    with pytest.raises(RCAError) as events:
+        await service.get_events("payments")
+    assert events.value.error_code == "RCA_ERROR"
+    assert events.value.message == "根因分析错误: 获取事件失败"
+    assert events.value.details == {}
+
+    service._logs_collector.collect.side_effect = RuntimeError(marker)
+    with pytest.raises(RCAError) as logs:
+        await service.get_logs("payments", pod_name="api-0")
+    assert logs.value.error_code == "RCA_ERROR"
+    assert logs.value.message == "根因分析错误: 获取日志失败"
+    assert logs.value.details == {}
+
+    rendered = []
+    for record in caplog.records:
+        rendered.append(record.getMessage())
+        if record.exc_info:
+            rendered.append(logging.Formatter().formatException(record.exc_info))
+    text = "\n".join(rendered)
+    assert marker not in text
+    assert "RuntimeError" in text
+    assert "payments" in text

@@ -232,7 +232,7 @@ async def refresh_knowledge_base() -> Dict[str, Any]:
 @api_response("智能助手健康检查")
 async def assistant_health() -> Dict[str, Any]:
     """兼容前端健康检查入口，复用就绪检查逻辑。"""
-    return await assistant_ready()
+    return await _assistant_ready_payload()
 
 
 @router.get(
@@ -242,6 +242,11 @@ async def assistant_health() -> Dict[str, Any]:
 )
 @api_response("智能助手就绪检查")
 async def assistant_ready() -> Dict[str, Any]:
+    return await _assistant_ready_payload()
+
+
+async def _assistant_ready_payload() -> Dict[str, Any]:
+    """就绪与健康检查共用的响应体，由各自的 api_response 包一层。"""
     try:
         await (await get_assistant_service()).initialize()
         health_status = await (
