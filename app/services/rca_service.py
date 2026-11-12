@@ -706,8 +706,12 @@ class RCAService(BaseService, HealthCheckMixin):
       )
 
     except Exception as e:
-      self.logger.error(f"获取事件模式失败: {str(e)}")
-      raise RCAError(f"获取事件模式失败: {str(e)}")
+      self.logger.error(
+        "获取事件模式失败，异常类型: %s，命名空间: %s",
+        type(e).__name__,
+        namespace,
+      )
+      raise RCAError("获取事件模式失败") from e
 
   async def _perform_event_patterns_analysis(
     self, namespace: str, hours: float
@@ -746,8 +750,12 @@ class RCAService(BaseService, HealthCheckMixin):
       )
 
     except Exception as e:
-      self.logger.error(f"获取错误摘要失败: {str(e)}")
-      raise RCAError(f"获取错误摘要失败: {str(e)}")
+      self.logger.error(
+        "获取错误摘要失败，异常类型: %s，命名空间: %s",
+        type(e).__name__,
+        namespace,
+      )
+      raise RCAError("获取错误摘要失败") from e
 
   async def _perform_error_summary_analysis(
     self, namespace: str, hours: float
@@ -764,7 +772,7 @@ class RCAService(BaseService, HealthCheckMixin):
       # 记录分析结果已缓存（背景任务无需实际处理结果）
       self.logger.info(f"分析结果已记录: {type(result).__name__}")
     except Exception as e:
-      self.logger.error(f"缓存分析结果失败: {str(e)}")
+      self.logger.error("缓存分析结果失败，异常类型: %s", type(e).__name__)
 
   async def _gather_health_checks(self) -> Dict[str, bool]:
     """收集所有组件的健康状态"""
@@ -795,11 +803,11 @@ class RCAService(BaseService, HealthCheckMixin):
         ],
       }
     except Exception as e:
-      self.logger.error(f"获取服务健康信息失败: {str(e)}")
+      self.logger.error("获取服务健康信息失败，异常类型: %s", type(e).__name__)
       return {
         "service": "rca",
         "status": "unhealthy",
-        "error": str(e),
+        "error": "获取服务健康信息失败",
         "timestamp": datetime.now(timezone.utc),
       }
 
@@ -813,7 +821,7 @@ class RCAService(BaseService, HealthCheckMixin):
         prometheus_service = PrometheusService()
         return await prometheus_service.get_available_metrics()
     except Exception as e:
-      self.logger.error(f"获取可用指标失败: {str(e)}")
+      self.logger.error("获取可用指标失败，异常类型: %s", type(e).__name__)
       # 返回默认的常见指标列表作为回退
       return [
         "up",
@@ -866,7 +874,7 @@ class RCAService(BaseService, HealthCheckMixin):
       return ":".join(key_parts)
 
     except Exception as e:
-      self.logger.warning(f"生成优化缓存键失败，使用简单键: {str(e)}")
+      self.logger.warning("生成优化缓存键失败，使用简单键，异常类型: %s", type(e).__name__)
       # 降级到更简单的键
       return f"rca:{operation}:{namespace}:{int(time_window_hours or 1)}"
 
@@ -979,8 +987,8 @@ class RCAService(BaseService, HealthCheckMixin):
       return config_info
 
     except Exception as e:
-      self.logger.error(f"获取RCA配置信息失败: {str(e)}")
-      raise RCAError(f"获取配置信息失败: {str(e)}")
+      self.logger.error("获取RCA配置信息失败，异常类型: %s", type(e).__name__)
+      raise RCAError("获取配置信息失败") from e
 
   async def clear_all_cache(self) -> Dict[str, Any]:
     """清理所有RCA缓存"""
@@ -1004,10 +1012,10 @@ class RCAService(BaseService, HealthCheckMixin):
       }
 
     except Exception as e:
-      self.logger.error(f"清理所有缓存失败: {str(e)}")
+      self.logger.error("清理所有缓存失败，异常类型: %s", type(e).__name__)
       return {
         "success": False,
-        "message": f"清理缓存失败: {str(e)}",
+        "message": "清理缓存失败",
         "cleared_count": 0,
       }
 
@@ -1037,10 +1045,14 @@ class RCAService(BaseService, HealthCheckMixin):
       }
 
     except Exception as e:
-      self.logger.error(f"清理命名空间 {namespace} 缓存失败: {str(e)}")
+      self.logger.error(
+        "清理命名空间缓存失败，异常类型: %s，命名空间: %s",
+        type(e).__name__,
+        namespace,
+      )
       return {
         "success": False,
-        "message": f"清理缓存失败: {str(e)}",
+        "message": "清理缓存失败",
         "namespace": namespace,
         "cleared_count": 0,
       }
@@ -1071,10 +1083,14 @@ class RCAService(BaseService, HealthCheckMixin):
       }
 
     except Exception as e:
-      self.logger.error(f"清理操作 {operation} 缓存失败: {str(e)}")
+      self.logger.error(
+        "清理操作缓存失败，异常类型: %s，操作: %s",
+        type(e).__name__,
+        operation,
+      )
       return {
         "success": False,
-        "message": f"清理缓存失败: {str(e)}",
+        "message": "清理缓存失败",
         "operation": operation,
         "cleared_count": 0,
       }
@@ -1122,7 +1138,7 @@ class RCAService(BaseService, HealthCheckMixin):
         try:
           cleared_count = self._cache_manager.clear_by_pattern(pattern)
         except Exception as e:
-          self.logger.warning(f"使用模式清理缓存失败: {str(e)}")
+          self.logger.warning("使用模式清理缓存失败，异常类型: %s", type(e).__name__)
 
       # 备用方案：如果有批量删除功能
       elif hasattr(self._cache_manager, "delete_batch"):
@@ -1134,7 +1150,7 @@ class RCAService(BaseService, HealthCheckMixin):
               self._cache_manager.delete_batch(keys)
               cleared_count = len(keys)
         except Exception as e:
-          self.logger.warning(f"使用批量删除清理缓存失败: {str(e)}")
+          self.logger.warning("使用批量删除清理缓存失败，异常类型: %s", type(e).__name__)
 
       # 最基础的方案：清理所有缓存（谨慎使用）
       elif pattern == "rca_cache:*":
@@ -1143,12 +1159,12 @@ class RCAService(BaseService, HealthCheckMixin):
             self._cache_manager.clear_all()
             cleared_count = 1  # 表示执行了清理操作
         except Exception as e:
-          self.logger.warning(f"清理所有缓存失败: {str(e)}")
+          self.logger.warning("清理所有缓存失败，异常类型: %s", type(e).__name__)
 
       return cleared_count
 
     except Exception as e:
-      self.logger.error(f"按模式清理缓存失败: {str(e)}")
+      self.logger.error("按模式清理缓存失败，异常类型: %s", type(e).__name__)
       return 0
 
   async def cleanup(self) -> None:
@@ -1165,7 +1181,7 @@ class RCAService(BaseService, HealthCheckMixin):
         try:
           self._cache_manager.shutdown()
         except Exception as e:
-          self.logger.warning(f"关闭RCA缓存管理器失败: {str(e)}")
+          self.logger.warning("关闭RCA缓存管理器失败，异常类型: %s", type(e).__name__)
         self._cache_manager = None
 
       # 清理收集器
@@ -1174,7 +1190,7 @@ class RCAService(BaseService, HealthCheckMixin):
           if hasattr(self._metrics_collector, "cleanup"):
             await self._metrics_collector.cleanup()
         except Exception as e:
-          self.logger.warning(f"清理metrics_collector失败: {e}")
+          self.logger.warning("清理metrics_collector失败，异常类型: %s", type(e).__name__)
         self._metrics_collector = None
 
       if self._events_collector:
@@ -1182,7 +1198,7 @@ class RCAService(BaseService, HealthCheckMixin):
           if hasattr(self._events_collector, "cleanup"):
             await self._events_collector.cleanup()
         except Exception as e:
-          self.logger.warning(f"清理events_collector失败: {e}")
+          self.logger.warning("清理events_collector失败，异常类型: %s", type(e).__name__)
         self._events_collector = None
 
       if self._logs_collector:
@@ -1190,7 +1206,7 @@ class RCAService(BaseService, HealthCheckMixin):
           if hasattr(self._logs_collector, "cleanup"):
             await self._logs_collector.cleanup()
         except Exception as e:
-          self.logger.warning(f"清理logs_collector失败: {e}")
+          self.logger.warning("清理logs_collector失败，异常类型: %s", type(e).__name__)
         self._logs_collector = None
 
       # 清理分析引擎
@@ -1199,7 +1215,7 @@ class RCAService(BaseService, HealthCheckMixin):
           if hasattr(self._engine, "cleanup"):
             await self._engine.cleanup()
         except Exception as e:
-          self.logger.warning(f"清理RCA引擎失败: {e}")
+          self.logger.warning("清理RCA引擎失败，异常类型: %s", type(e).__name__)
         self._engine = None
 
       # 调用父类清理方法
@@ -1208,7 +1224,7 @@ class RCAService(BaseService, HealthCheckMixin):
       self.logger.info("RCA服务资源清理完成")
 
     except Exception as e:
-      self.logger.error(f"RCA服务资源清理失败: {str(e)}")
+      self.logger.error("RCA服务资源清理失败，异常类型: %s", type(e).__name__)
       raise
 
   # 业务逻辑工具方法（从API层迁移）
@@ -1249,30 +1265,31 @@ class RCAService(BaseService, HealthCheckMixin):
     Raises:
         AIOpsException: 处理后的领域异常
     """
-    error_message = f"{operation}失败: {str(error)}"
-    self.logger.error(error_message, exc_info=True)
+    self.logger.error("%s失败，异常类型: %s", operation, type(error).__name__)
 
-    # 将不同类型异常映射为领域异常，交由上层中间件统一处理
+    # 将不同类型异常映射为领域异常，交由上层中间件统一处理。
+    # 对外文案只保留操作名，不附带依赖异常原文，也不记录堆栈。
     if isinstance(error, (ValidationError,)):
       raise error
     if isinstance(error, ValueError):
-      raise ValidationError("parameters", str(error))
+      raise ValidationError("parameters", "参数无效") from error
+    generic = f"{operation}失败"
     if isinstance(error, ConnectionError):
       raise AIOpsException(
-        message=error_message,
+        message=generic,
         error_code="SERVICE_UNAVAILABLE",
         details={"operation": operation},
-      )
+      ) from error
     if isinstance(error, TimeoutError):
       raise AIOpsException(
-        message=error_message,
+        message=generic,
         error_code="REQUEST_TIMEOUT",
         details={"operation": operation},
-      )
+      ) from error
 
     # 未知异常统一上抛
     raise AIOpsException(
-      message=error_message,
+      message=generic,
       error_code="INTERNAL_ERROR",
       details={"operation": operation},
-    )
+    ) from error
