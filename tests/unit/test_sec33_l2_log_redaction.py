@@ -1,4 +1,4 @@
-"""SEC-33 第二层 P3-1 / P3-5：diagnose 链路 ERROR 日志只记操作名、异常类型与状态；原始异常文本只进 DEBUG。
+"""SEC-33 第二层 P3-1 / P3-5：diagnose 链路日志只记操作名、异常类型与状态，原文和堆栈都不再进入日志。
 Protocol / NullK8sClient 的 get_deployment 带 raise_unavailable。全部离线，只替换最底层 SDK 调用。"""
 
 from contextlib import ExitStack
@@ -32,13 +32,13 @@ def _error_records(caplog):
     return [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
-def assert_marker_only_in_debug(caplog):
+def assert_marker_absent(caplog):
     errors = _error_records(caplog)
     assert errors, "应有 ERROR 级日志"
-    for record in errors:
+    for record in caplog.records:
         assert MARKER not in _rendered(record), _rendered(record)
-        assert record.exc_info is None or MARKER not in _rendered(record)
-    assert any(MARKER in _rendered(r) for r in caplog.records if r.levelno == logging.DEBUG), "原始异常信息应只进入 DEBUG"
+    for record in errors:
+        assert record.exc_info is None
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ async def test_diagnose_api_500_error_logs_have_operation_type_status_but_no_raw
     service = service_with_fixer(real_k8s(raising(ApiException(status=500, reason=MARKER))))
     with pytest.raises(ServiceUnavailableError):
         await service.diagnose_kubernetes_issues("api", "default", include_pods=False, include_events=False)
-    assert_marker_only_in_debug(capture)
+    assert_marker_absent(capture)
     base = [r.getMessage() for r in _error_records(capture) if "get_deployment_for_diagnosis" in r.getMessage()]
     assert base and "ApiException" in base[0] and "500" in base[0]
 
@@ -95,7 +95,7 @@ async def test_diagnose_pod_log_failure_error_log_is_redacted(capture):
     service = service_with_fixer(k8s)
     result = await service.diagnose_kubernetes_issues("api", "default", include_pods=True, include_logs=True, include_events=False)
     assert result["diagnosis"]["logs"] == {"api-0": "获取日志失败"}
-    assert_marker_only_in_debug(capture)
+    assert_marker_absent(capture)
     # pod 日志失败的 ERROR 行记录的是底层异常类型，而不是包装后的异常
     pod_log = [r.getMessage() for r in capture.records if r.levelno == logging.ERROR and "获取Pod日志失败" in r.getMessage()]
     assert pod_log and all("错误类型=LeakyError" in message for message in pod_log)
@@ -111,7 +111,7 @@ async def test_diagnose_unknown_error_log_is_redacted(capture, monkeypatch):
     service = service_with_fixer(real_k8s(lambda **kwargs: SimpleNamespace(to_dict=lambda: {})))
     with pytest.raises(AutoFixInternalError):
         await service.diagnose_kubernetes_issues("api", "default")
-    assert_marker_only_in_debug(capture)
+    assert_marker_absent(capture)
 
 
 async def test_diagnose_upstream_error_outside_wrapper_log_is_redacted(capture, monkeypatch):
@@ -123,7 +123,7 @@ async def test_diagnose_upstream_error_outside_wrapper_log_is_redacted(capture, 
     monkeypatch.setattr(service, "execute_with_timeout", upstream)
     with pytest.raises(ServiceUnavailableError):
         await service.diagnose_kubernetes_issues("api", "default")
-    assert_marker_only_in_debug(capture)
+    assert_marker_absent(capture)
 
 
 def test_protocol_and_null_client_accept_raise_unavailable():

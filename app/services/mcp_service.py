@@ -143,7 +143,7 @@ class MCPService(BaseService):
                     }
                 except Exception as e:
                     logger.warning("获取工具信息失败，异常类型: %s", type(e).__name__)
-                    tools_info = {"error": str(e)}
+                    tools_info = {"error": "获取工具信息失败"}
 
             return {
                 "service": "mcp",
@@ -157,11 +157,11 @@ class MCPService(BaseService):
                 "timestamp": datetime.now().isoformat(),
             }
 
-        except Exception as e:
+        except Exception:
             return {
                 "service": "mcp",
                 "status": "unhealthy",
-                "error": str(e),
+                "error": "健康检查失败",
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -216,7 +216,7 @@ class MCPService(BaseService):
                 logger.info("MCP助手在运行时成功初始化")
             except Exception as e:
                 logger.error("无法初始化MCP助手，异常类型: %s", type(e).__name__)
-                raise AssistantError(f"MCP服务暂未就绪: {str(e)}")
+                raise AssistantError("MCP服务暂未就绪") from None
 
     async def cleanup(self) -> None:
         """清理MCP服务资源"""

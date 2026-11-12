@@ -25,8 +25,8 @@ try:
     api_v1.include_router(predict_router, prefix="/predict")
     logger.info("已注册预测路由")
 except Exception as e:
-    logger.warning(f"注册预测路由失败: {str(e)}")
-    raise
+    logger.warning("注册预测路由失败，异常类型: %s", type(e).__name__)
+    raise RuntimeError("注册预测路由失败") from None
 
 try:
     from .rca import router as rca_router
@@ -34,8 +34,8 @@ try:
     api_v1.include_router(rca_router, prefix="/rca")
     logger.info("已注册根因分析路由")
 except Exception as e:
-    logger.warning(f"注册根因分析路由失败: {str(e)}")
-    raise
+    logger.warning("注册根因分析路由失败，异常类型: %s", type(e).__name__)
+    raise RuntimeError("注册根因分析路由失败") from None
 
 try:
     from .autofix import router as autofix_router
@@ -43,8 +43,8 @@ try:
     api_v1.include_router(autofix_router, prefix="/autofix")
     logger.info("已注册自动修复路由")
 except Exception as e:
-    logger.warning(f"注册自动修复路由失败: {str(e)}")
-    raise
+    logger.warning("注册自动修复路由失败，异常类型: %s", type(e).__name__)
+    raise RuntimeError("注册自动修复路由失败") from None
 
 try:
     from .assistant import router as assistant_router
@@ -52,8 +52,8 @@ try:
     api_v1.include_router(assistant_router, prefix="/assistant")
     logger.info("已注册智能助手路由")
 except Exception as e:
-    logger.warning(f"注册智能助手路由失败: {str(e)}")
-    raise
+    logger.warning("注册智能助手路由失败，异常类型: %s", type(e).__name__)
+    raise RuntimeError("注册智能助手路由失败") from None
 
 try:
     from .cache import router as cache_router
@@ -61,8 +61,8 @@ try:
     api_v1.include_router(cache_router, prefix="/cache")
     logger.info("已注册缓存管理路由")
 except Exception as e:
-    logger.warning(f"注册缓存管理路由失败: {str(e)}")
-    raise
+    logger.warning("注册缓存管理路由失败，异常类型: %s", type(e).__name__)
+    raise RuntimeError("注册缓存管理路由失败") from None
 
 try:
     from .inspection import router as inspection_router
@@ -70,8 +70,8 @@ try:
     api_v1.include_router(inspection_router, prefix="/inspection")
     logger.info("已注册巡检路由")
 except Exception as e:
-    logger.warning(f"注册巡检路由失败: {str(e)}")
-    raise
+    logger.warning("注册巡检路由失败，异常类型: %s", type(e).__name__)
+    raise RuntimeError("注册巡检路由失败") from None
 
 
 def register_routes(app):

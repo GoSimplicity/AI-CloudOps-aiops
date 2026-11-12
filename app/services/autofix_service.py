@@ -202,9 +202,8 @@ class AutoFixService(BaseService):
             return bool(k8s_healthy)
 
         except Exception as e:
-            # 承接 SEC-26 P3-3：warning 只记异常类型，完整内容放 debug
+            # 只记异常类型，不记录原文和堆栈
             self.logger.warning("自动修复服务健康检查失败，异常类型: %s", type(e).__name__)
-            self.logger.debug("自动修复服务健康检查失败详情: %s", e, exc_info=True)
             return False
 
     async def execute_multi_agent_workflow(self, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -752,7 +751,6 @@ class AutoFixService(BaseService):
                             logs[pod_info["name"]] = pod_logs
                         except Exception as e:
                             self.logger.error(f"获取Pod日志失败 - Pod: {pod_info['name']}, {error_brief(e.__cause__ or e.__context__ or e)}")
-                            self.logger.debug("获取Pod日志失败详情", exc_info=True)
                             logs[pod_info["name"]] = "获取日志失败"
 
                     diagnosis_result["diagnosis"]["logs"] = logs
@@ -774,20 +772,17 @@ class AutoFixService(BaseService):
             # SEC-26 P3-e：已脱敏的领域异常原样上抛，由 api_response 按类型映射状态码
             raise
         except ServiceUnavailableError as e:
-            # execute_with_timeout 已把上游超时 / 不可用统一包装为 ServiceUnavailableError（details 可能含 str(e)），
+            # execute_with_timeout 已把上游超时 / 不可用统一包装为 ServiceUnavailableError，
             # 这里只保留类型与状态（503 SERVICE_UNAVAILABLE），重新构造不带 details 的异常
             cause = e.__cause__ or e.__context__
-            # SEC-33 L2 P3-1：ERROR 只记类型与状态（不带堆栈，堆栈的异常链含原始文本）；原始信息只进 DEBUG
+            # 只记类型与状态，不记录原文和堆栈
             self.logger.error(f"诊断Kubernetes问题失败: 上游不可用, {error_brief(cause or e)}")
-            self.logger.debug("诊断Kubernetes问题失败详情", exc_info=True)
             raise ServiceUnavailableError(self.service_name) from e
         except _DIAGNOSE_UPSTREAM_ERRORS as e:
             self.logger.error(f"诊断Kubernetes问题失败: 上游不可用, {error_brief(e)}")
-            self.logger.debug("诊断Kubernetes问题失败详情", exc_info=True)
             raise ServiceUnavailableError(self.service_name) from e
         except Exception as e:
             self.logger.error(f"诊断Kubernetes问题失败, {error_brief(e)}")
-            self.logger.debug("诊断Kubernetes问题失败详情", exc_info=True)
             raise AutoFixInternalError("诊断失败") from e
 
     async def get_autofix_config(self) -> Dict[str, Any]:
@@ -971,7 +966,6 @@ class AutoFixService(BaseService):
                             self._k8s_fixer.cleanup()
                 except Exception as e:
                     self.logger.warning("清理K8s修复代理失败，异常类型: %s", type(e).__name__)
-                    self.logger.debug("清理K8s修复代理失败详情: %s", e, exc_info=True)
                 self._k8s_fixer = None
 
             # 清理监督代理
@@ -984,7 +978,6 @@ class AutoFixService(BaseService):
                             self._supervisor.cleanup()
                 except Exception as e:
                     self.logger.warning("清理监督代理失败，异常类型: %s", type(e).__name__)
-                    self.logger.debug("清理监督代理失败详情: %s", e, exc_info=True)
                 self._supervisor = None
 
             self._ops_workflow = None
@@ -997,5 +990,4 @@ class AutoFixService(BaseService):
 
         except Exception as e:
             self.logger.error("自动修复服务资源清理失败，异常类型: %s", type(e).__name__)
-            self.logger.debug("自动修复服务资源清理失败详情: %s", e, exc_info=True)
             raise

@@ -173,7 +173,7 @@ class PrometheusService(BaseService):
             return data["data"]["result"]
 
         except Exception as e:
-            self.logger.error(f"Prometheus即时查询失败: {str(e)}")
+            self.logger.error("Prometheus即时查询失败，异常类型: %s", type(e).__name__)
             return None
 
     def _is_successful_response(self, data: Dict[str, Any]) -> bool:
@@ -208,7 +208,7 @@ class PrometheusService(BaseService):
             return []
 
         except Exception as e:
-            self.logger.error(f"获取可用指标失败: {str(e)}")
+            self.logger.error("获取可用指标失败，异常类型: %s", type(e).__name__)
             return []
 
     def is_healthy(self) -> bool:
@@ -243,7 +243,7 @@ class PrometheusService(BaseService):
             return None
 
         except Exception as e:
-            self.logger.error(f"获取指标元数据失败: {str(e)}")
+            self.logger.error("获取指标元数据失败，异常类型: %s", type(e).__name__)
             return None
 
     async def get_service_info(self) -> Dict[str, Any]:
