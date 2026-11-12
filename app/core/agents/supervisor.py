@@ -178,8 +178,8 @@ class SupervisorAgent:
             }
 
         except Exception as e:
-            logger.error(f"Supervisor路由决策失败: {str(e)}")
-            return {"next": "FINISH", "reasoning": f"决策失败: {str(e)}"}
+            logger.error("Supervisor路由决策失败，异常类型: %s", type(e).__name__)
+            return {"next": "FINISH", "reasoning": "决策失败"}
 
     async def analyze_problem_context(self, problem_description: str) -> Dict[str, Any]:
         """
@@ -255,7 +255,7 @@ class SupervisorAgent:
                 }
 
         except Exception as e:
-            logger.error(f"问题上下文分析失败: {str(e)}")
+            logger.error("问题上下文分析失败，异常类型: %s", type(e).__name__)
             return {
                 "problem_type": "unknown",
                 "severity": "medium",
@@ -431,8 +431,8 @@ class SupervisorAgent:
             return replace(state, context=context)
 
         except Exception as e:
-            logger.error(f"生成工作流总结失败: {str(e)}")
+            logger.error("生成工作流总结失败，异常类型: %s", type(e).__name__)
             # 获取当前上下文
             context = dict(state.context)
-            context["error"] = f"生成工作流总结失败: {str(e)}"
+            context["error"] = "生成工作流总结失败"
             return replace(state, context=context)

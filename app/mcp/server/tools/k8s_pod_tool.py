@@ -180,11 +180,11 @@ class K8sPodTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
+        except Exception:
             return {
                 "success": False,
                 "error": "获取Pod列表失败",
-                "message": str(e),
+                "message": "操作失败",
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
@@ -301,9 +301,9 @@ class K8sPodTool(K8sBaseTool):
                     "message": f"在命名空间 {namespace} 中找不到Pod {pod_name}",
                 }
             else:
-                return {"success": False, "error": "获取Pod详情失败", "message": str(e)}
-        except Exception as e:
-            return {"success": False, "error": "获取Pod详情失败", "message": str(e)}
+                return {"success": False, "error": "获取Pod详情失败", "message": "操作失败"}
+        except Exception:
+            return {"success": False, "error": "获取Pod详情失败", "message": "操作失败"}
 
     async def _delete_pod(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -349,9 +349,9 @@ class K8sPodTool(K8sBaseTool):
                     "message": f"在命名空间 {namespace} 中找不到Pod {pod_name}",
                 }
             else:
-                return {"success": False, "error": "删除Pod失败", "message": str(e)}
-        except Exception as e:
-            return {"success": False, "error": "删除Pod失败", "message": str(e)}
+                return {"success": False, "error": "删除Pod失败", "message": "操作失败"}
+        except Exception:
+            return {"success": False, "error": "删除Pod失败", "message": "操作失败"}
 
     async def _restart_pod(
         self,
@@ -422,8 +422,8 @@ class K8sPodTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "重启Pod失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "重启Pod失败", "message": "操作失败"}
 
     async def _get_pod_events(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -504,8 +504,8 @@ class K8sPodTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "获取Pod事件失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取Pod事件失败", "message": "操作失败"}
 
     def _get_pod_ready_status(self, pod) -> str:
         """获取Pod就绪状态"""

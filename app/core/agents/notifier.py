@@ -77,8 +77,8 @@ class NotifierAgent:
                 return "❌ 发送人工帮助请求失败，请检查通知配置"
 
         except Exception as e:
-            logger.error(f"发送人工帮助请求异常: {str(e)}")
-            return f"❌ 发送人工帮助请求异常: {str(e)}"
+            logger.error("发送人工帮助请求异常，异常类型: %s", type(e).__name__)
+            return "❌ 发送人工帮助请求异常"
 
     async def send_incident_alert(
         self,
@@ -132,8 +132,8 @@ class NotifierAgent:
                 return "❌ 发送事件告警失败，请检查通知配置"
 
         except Exception as e:
-            logger.error(f"发送事件告警异常: {str(e)}")
-            return f"❌ 发送事件告警异常: {str(e)}"
+            logger.error("发送事件告警异常，异常类型: %s", type(e).__name__)
+            return "❌ 发送事件告警异常"
 
     @tool
     async def send_resolution_notification(
@@ -175,8 +175,8 @@ class NotifierAgent:
                 return "❌ 发送问题解决通知失败"
 
         except Exception as e:
-            logger.error(f"发送问题解决通知异常: {str(e)}")
-            return f"❌ 发送问题解决通知异常: {str(e)}"
+            logger.error("发送问题解决通知异常，异常类型: %s", type(e).__name__)
+            return "❌ 发送问题解决通知异常"
 
     @tool
     async def send_system_health_report(self, health_data: Dict[str, Any]) -> str:
@@ -229,8 +229,8 @@ class NotifierAgent:
                 return "❌ 发送系统健康报告失败"
 
         except Exception as e:
-            logger.error(f"发送系统健康报告异常: {str(e)}")
-            return f"❌ 发送系统健康报告异常: {str(e)}"
+            logger.error("发送系统健康报告异常，异常类型: %s", type(e).__name__)
+            return "❌ 发送系统健康报告异常"
 
     @tool
     async def send_maintenance_notification(
@@ -274,8 +274,8 @@ class NotifierAgent:
                 return "❌ 发送维护通知失败"
 
         except Exception as e:
-            logger.error(f"发送维护通知异常: {str(e)}")
-            return f"❌ 发送维护通知异常: {str(e)}"
+            logger.error("发送维护通知异常，异常类型: %s", type(e).__name__)
+            return "❌ 发送维护通知异常"
 
     async def check_notification_health(self) -> Dict[str, Any]:
         """Check notification service health status"""
@@ -303,8 +303,8 @@ class NotifierAgent:
             return ensure_serializable(health_info)
 
         except Exception as e:
-            logger.error(f"检查通知服务健康状态失败: {str(e)}")
-            return {"healthy": False, "error": str(e)}
+            logger.error("检查通知服务健康状态失败，异常类型: %s", type(e).__name__)
+            return {"healthy": False, "error": "通知服务健康检查失败"}
 
     def get_available_tools(self) -> List[str]:
         """Get available tools list"""
@@ -368,9 +368,9 @@ class NotifierAgent:
             return replace(state, context=context)
 
         except Exception as e:
-            logger.error(f"Notifier处理状态失败: {str(e)}")
+            logger.error("Notifier处理状态失败，异常类型: %s", type(e).__name__)
             context = dict(state.context)
-            context["error"] = f"Notifier处理失败: {str(e)}"
+            context["error"] = "Notifier处理失败"
             from dataclasses import replace
 
             return replace(state, context=context)

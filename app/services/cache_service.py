@@ -106,7 +106,7 @@ class CacheService(BaseService):
                 else "unhealthy",
             }
         except Exception as e:
-            logger.error(f"获取缓存统计失败: {e}")
+            logger.error("获取缓存统计失败，异常类型: %s", type(e).__name__)
             raise
 
     async def cache_health_check(self) -> Dict[str, Any]:
@@ -143,11 +143,11 @@ class CacheService(BaseService):
                         "error": "cache_manager_not_initialized",
                     }
                 total_services += 1
-            except Exception as e:
+            except Exception:
                 health_info["services"]["prediction"] = {
                     "status": "error",
                     "redis_connected": False,
-                    "error": str(e),
+                    "error": "缓存健康检查失败",
                 }
                 total_services += 1
 
@@ -173,11 +173,11 @@ class CacheService(BaseService):
                         "error": "cache_manager_not_initialized",
                     }
                 total_services += 1
-            except Exception as e:
+            except Exception:
                 health_info["services"]["rca"] = {
                     "status": "error",
                     "redis_connected": False,
-                    "error": str(e),
+                    "error": "缓存健康检查失败",
                 }
                 total_services += 1
 
@@ -199,7 +199,7 @@ class CacheService(BaseService):
 
             return health_info
         except Exception as e:
-            logger.error(f"缓存健康检查失败: {e}")
+            logger.error("缓存健康检查失败，异常类型: %s", type(e).__name__)
             raise
 
     async def clear_cache(self, service: str, pattern: Optional[str]) -> Dict[str, Any]:

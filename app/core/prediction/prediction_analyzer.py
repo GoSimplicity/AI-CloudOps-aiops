@@ -68,7 +68,7 @@ class PredictionAnalyzer:
                 return self._get_fallback_context_analysis(prediction_type)
 
         except Exception as e:
-            logger.error(f"历史数据上下文分析失败: {str(e)}")
+            logger.error("历史数据上下文分析失败，异常类型: %s", type(e).__name__)
             return self._get_fallback_context_analysis(prediction_type)
 
     async def interpret_prediction_results(
@@ -116,7 +116,7 @@ class PredictionAnalyzer:
                 return self._get_fallback_interpretation(prediction_type)
 
         except Exception as e:
-            logger.error(f"预测结果解读失败: {str(e)}")
+            logger.error("预测结果解读失败，异常类型: %s", type(e).__name__)
             return self._get_fallback_interpretation(prediction_type)
 
     async def generate_insights(
@@ -167,7 +167,7 @@ class PredictionAnalyzer:
                 return self._get_fallback_insights(prediction_type, prediction_results)
 
         except Exception as e:
-            logger.error(f"生成智能洞察失败: {str(e)}")
+            logger.error("生成智能洞察失败，异常类型: %s", type(e).__name__)
             return self._get_fallback_insights(prediction_type, prediction_results)
 
     async def analyze_multi_dimension_correlation(
@@ -228,8 +228,8 @@ class PredictionAnalyzer:
                 }
 
         except Exception as e:
-            logger.error(f"多维度关联分析失败: {str(e)}")
-            return {"status": "error", "correlation_analysis": f"分析失败: {str(e)}"}
+            logger.error("多维度关联分析失败，异常类型: %s", type(e).__name__)
+            return {"status": "error", "correlation_analysis": "分析失败"}
 
     def _parse_context_analysis(self, analysis_text: str) -> Dict[str, Any]:
         """解析上下文分析结果"""
@@ -255,7 +255,7 @@ class PredictionAnalyzer:
             }
 
         except Exception as e:
-            logger.warning(f"解析上下文分析失败: {str(e)}")
+            logger.warning("解析上下文分析失败，异常类型: %s", type(e).__name__)
             return {
                 "structured_analysis": {},
                 "full_text": analysis_text,
@@ -293,7 +293,7 @@ class PredictionAnalyzer:
             }
 
         except Exception as e:
-            logger.warning(f"解析预测解读失败: {str(e)}")
+            logger.warning("解析预测解读失败，异常类型: %s", type(e).__name__)
             return {
                 "structured_interpretation": {},
                 "full_text": interpretation_text,
@@ -343,7 +343,7 @@ class PredictionAnalyzer:
             return insights[:7]
 
         except Exception as e:
-            logger.warning(f"解析洞察响应失败: {str(e)}")
+            logger.warning("解析洞察响应失败，异常类型: %s", type(e).__name__)
             return ["洞察解析失败，请查看原始响应"]
 
     def _calculate_quantitative_metrics(
@@ -412,7 +412,7 @@ class PredictionAnalyzer:
             return metrics
 
         except Exception as e:
-            logger.error(f"计算量化指标失败: {str(e)}")
+            logger.error("计算量化指标失败，异常类型: %s", type(e).__name__)
             return {}
 
     def _analyze_confidence_trend(self, confidences: List[float]) -> str:

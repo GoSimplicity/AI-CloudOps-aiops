@@ -271,7 +271,7 @@ async def _register_managed_services():
         )
 
     except Exception as e:
-        logger.error(f"服务注册过程出错: {e}")
+        logger.error("服务注册过程出错，异常类型: %s", type(e).__name__)
 
 
 async def _register_service(service_config: Dict[str, Any], logger) -> bool:
@@ -297,10 +297,10 @@ async def _register_service(service_config: Dict[str, Any], logger) -> bool:
 
     except Exception as e:
         if service_config.get("required", False):
-            logger.error(f"{service_config['name']}服务注册失败（必需服务）: {e}")
+            logger.error("%s服务注册失败（必需服务），异常类型: %s", service_config["name"], type(e).__name__)
             raise
         else:
-            logger.warning(f"{service_config['name']}服务注册失败（可选服务）: {e}")
+            logger.warning("%s服务注册失败（可选服务），异常类型: %s", service_config["name"], type(e).__name__)
             return False
 
 
@@ -317,14 +317,14 @@ async def _register_additional_instances(logger) -> None:
             )
             logger.debug("企业助手实例注册成功")
     except Exception as e:
-        logger.warning(f"企业助手实例注册失败: {e}")
+        logger.warning("企业助手实例注册失败，异常类型: %s", type(e).__name__)
 
     # 注册Redis缓存管理器实例（如果有全局实例）
     try:
         # 这里可以添加全局缓存管理器的注册逻辑
         logger.debug("缓存管理器实例检查完成")
     except Exception as e:
-        logger.debug(f"缓存管理器实例注册失败: {e}")
+        logger.debug("缓存管理器实例注册失败，异常类型: %s", type(e).__name__)
 
 
 def create_app() -> FastAPI:
@@ -362,8 +362,8 @@ def create_app() -> FastAPI:
         logger.info("路由注册完成")
     except Exception as e:
         logger = logging.getLogger("aiops")
-        logger.error(f"路由注册失败: {str(e)}")
-        raise
+        logger.error("路由注册失败，异常类型: %s", type(e).__name__)
+        raise RuntimeError("路由注册失败") from None
 
     # 自定义OpenAPI元数据（分类标签）
     app.openapi_tags = [
@@ -412,8 +412,8 @@ def register_middleware_with_counter(app: FastAPI):
         logger.info("中间件注册完成")
     except Exception as e:
         logger = logging.getLogger("aiops")
-        logger.error(f"中间件注册失败: {str(e)}")
-        raise
+        logger.error("中间件注册失败，异常类型: %s", type(e).__name__)
+        raise RuntimeError("中间件注册失败") from None
 
 
 # 创建应用实例
@@ -535,7 +535,7 @@ class GracefulShutdown:
             self.logger.error(f"获取服务状态失败: {e}")
 
 
-if __name__ == "__main__":
+def run_application() -> None:
     """直接运行时的主入口"""
     from uvicorn import Config, Server
 
@@ -595,7 +595,11 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("收到中断信号，正在优雅关闭服务...")
     except Exception as e:
-        logger.error(f"服务启动失败: {str(e)}")
-        raise
+        logger.error("服务启动失败，异常类型: %s", type(e).__name__)
+        raise RuntimeError("服务启动失败") from None
     finally:
         logger.info("服务已完全停止")
+
+
+if __name__ == "__main__":
+    run_application()

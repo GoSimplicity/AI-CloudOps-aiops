@@ -130,11 +130,11 @@ class K8sNamespaceTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
+        except Exception:
             return {
                 "success": False,
                 "error": "获取命名空间列表失败",
-                "message": str(e),
+                "message": "操作失败",
             }
 
     async def _get_namespace(
@@ -208,13 +208,13 @@ class K8sNamespaceTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "获取命名空间详情失败",
-                    "message": str(e),
+                    "message": "操作失败",
                 }
-        except Exception as e:
+        except Exception:
             return {
                 "success": False,
                 "error": "获取命名空间详情失败",
-                "message": str(e),
+                "message": "操作失败",
             }
 
     async def _create_namespace(
@@ -269,10 +269,10 @@ class K8sNamespaceTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "创建命名空间失败",
-                    "message": str(e),
+                    "message": "操作失败",
                 }
-        except Exception as e:
-            return {"success": False, "error": "创建命名空间失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "创建命名空间失败", "message": "操作失败"}
 
     async def _delete_namespace(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -329,10 +329,10 @@ class K8sNamespaceTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "删除命名空间失败",
-                    "message": str(e),
+                    "message": "操作失败",
                 }
-        except Exception as e:
-            return {"success": False, "error": "删除命名空间失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "删除命名空间失败", "message": "操作失败"}
 
     async def _get_namespace_resources(
         self,
@@ -461,11 +461,11 @@ class K8sNamespaceTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "获取命名空间资源失败",
-                    "message": str(e),
+                    "message": "操作失败",
                 }
-        except Exception as e:
+        except Exception:
             return {
                 "success": False,
                 "error": "获取命名空间资源失败",
-                "message": str(e),
+                "message": "操作失败",
             }

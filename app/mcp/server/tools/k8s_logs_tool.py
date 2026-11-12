@@ -196,10 +196,10 @@ class K8sLogsTool(K8sBaseTool):
                         "logs": log_content,
                         "lines": len(log_content.split("\n")) if log_content else 0,
                     }
-                except Exception as e:
+                except Exception:
                     container_logs[container_name] = {
                         "type": "container",
-                        "error": str(e),
+                        "error": "获取日志失败",
                         "lines": 0,
                     }
 
@@ -223,10 +223,10 @@ class K8sLogsTool(K8sBaseTool):
                         "logs": log_content,
                         "lines": len(log_content.split("\n")) if log_content else 0,
                     }
-                except Exception as e:
+                except Exception:
                     container_logs[f"{container_name} (init)"] = {
                         "type": "init-container",
-                        "error": str(e),
+                        "error": "获取日志失败",
                         "lines": 0,
                     }
 
@@ -247,8 +247,8 @@ class K8sLogsTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "获取Pod日志失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取Pod日志失败", "message": "操作失败"}
 
     async def _get_container_logs(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -319,10 +319,10 @@ class K8sLogsTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "获取容器日志失败",
-                    "message": str(e),
+                    "message": "操作失败",
                 }
-        except Exception as e:
-            return {"success": False, "error": "获取容器日志失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取容器日志失败", "message": "操作失败"}
 
     async def _get_previous_logs(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -392,10 +392,10 @@ class K8sLogsTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "获取重启前日志失败",
-                    "message": str(e),
+                    "message": "操作失败",
                 }
-        except Exception as e:
-            return {"success": False, "error": "获取重启前日志失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取重启前日志失败", "message": "操作失败"}
 
     async def _tail_logs(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -441,8 +441,8 @@ class K8sLogsTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "获取tail日志失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取tail日志失败", "message": "操作失败"}
 
     async def _search_logs(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -533,8 +533,8 @@ class K8sLogsTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "搜索日志失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "搜索日志失败", "message": "操作失败"}
 
     async def _fetch_container_logs(
         self,

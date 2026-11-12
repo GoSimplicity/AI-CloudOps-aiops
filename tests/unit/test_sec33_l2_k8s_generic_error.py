@@ -43,9 +43,9 @@ async def test_unknown_exception_returns_generic_message(capture):
     assert result["error"] == "执行失败"
     assert result["message"] == "K8s工具执行失败"
     assert MARKER not in repr(result)
-    assert MARKER not in _rendered(capture, logging.INFO)
+    assert MARKER not in _rendered(capture, logging.DEBUG)
+    assert all(record.exc_info is None for record in capture.records)
     assert any("RuntimeError" in r.getMessage() and r.levelno == logging.ERROR for r in capture.records)
-    assert any(MARKER in logging.Formatter().formatException(r.exc_info) for r in capture.records if r.levelno == logging.DEBUG and r.exc_info)
 
 
 async def test_safe_input_error_message_passes_through(capture):

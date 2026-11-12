@@ -137,11 +137,11 @@ class ServiceFactory:
                 }
                 if is_healthy:
                     healthy_count += 1
-            except Exception as e:
+            except Exception:
                 status["services"][name] = {
                     "initialized": service.is_initialized(),
                     "healthy": False,
-                    "error": str(e),
+                    "error": "健康检查失败",
                 }
 
         if total == 0:
