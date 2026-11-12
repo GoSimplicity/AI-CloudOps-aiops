@@ -18,7 +18,7 @@ import time
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from app.common.exceptions import PredictionError
+from app.common.exceptions import HistoricalDataError, PredictionError, ValidationError
 from app.common.identity import INTERNAL_PRINCIPAL, principal_context
 from app.core.interfaces.llm_client import LLMClient, NullLLMClient
 from app.core.prediction.intelligent_report_generator import (
@@ -58,10 +58,13 @@ class IntelligentPredictor:
             self._initialized = True
             logger.info("预测引擎初始化完成")
 
-        except Exception as e:
-            logger.error(f"预测引擎初始化失败: {str(e)}")
+        except (ValidationError, HistoricalDataError):
             self._initialized = False
-            raise PredictionError(f"预测引擎初始化失败: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error("预测引擎初始化失败，异常类型: %s", type(e).__name__)
+            self._initialized = False
+            raise PredictionError("预测引擎初始化失败") from None
 
     async def predict_with_ai_analysis(
         self,
@@ -381,9 +384,11 @@ class IntelligentPredictor:
                 "timestamp": end_time,
             }
 
+        except (ValidationError, HistoricalDataError):
+            raise
         except Exception as e:
-            logger.error(f"多维度预测分析失败 - ID: {analysis_id}: {str(e)}")
-            raise PredictionError(f"多维度预测分析失败: {str(e)}")
+            logger.error("多维度预测分析失败，异常类型: %s，分析ID: %s", type(e).__name__, analysis_id)
+            raise PredictionError("多维度预测分析失败") from None
 
     async def _build_base_prediction_results(
         self,
@@ -475,9 +480,11 @@ class IntelligentPredictor:
 
             return base_result
 
+        except (ValidationError, HistoricalDataError):
+            raise
         except Exception as e:
             logger.error("基础预测也失败，异常类型: %s", type(e).__name__)
-            raise PredictionError("预测完全失败") from e
+            raise PredictionError("预测完全失败") from None
 
     async def _generate_multi_dimension_insights(
         self,
@@ -538,7 +545,7 @@ class IntelligentPredictor:
                 return self._get_fallback_multi_dimension_insights(results_by_type)
 
         except Exception as e:
-            logger.error(f"生成多维度洞察失败: {str(e)}")
+            logger.error("生成多维度洞察失败，异常类型: %s", type(e).__name__)
             return self._get_fallback_multi_dimension_insights(results_by_type)
 
     def _detect_basic_trend(self, values: List[float]) -> str:
@@ -644,7 +651,7 @@ class IntelligentPredictor:
                 del self._analysis_cache[oldest_key]
 
         except Exception as e:
-            logger.warning(f"缓存分析结果失败: {str(e)}")
+            logger.warning("缓存分析结果失败，异常类型: %s", type(e).__name__)
 
     def _calculate_multi_dimension_stats(
         self, results_by_type: Dict[PredictionType, Dict[str, Any]]
@@ -721,5 +728,5 @@ class IntelligentPredictor:
             return self._initialized
 
         except Exception as e:
-            logger.error(f"智能预测引擎健康检查失败: {str(e)}")
+            logger.error("智能预测引擎健康检查失败，异常类型: %s", type(e).__name__)
             return False

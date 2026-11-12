@@ -36,8 +36,8 @@ class PromptTemplate:
         """格式化模板"""
         try:
             return self.template.format(**kwargs)
-        except KeyError as e:
-            raise ValueError(f"模板 {self.name} 缺少必要变量: {e}")
+        except KeyError:
+            raise ValueError(f"模板 {self.name} 缺少必要变量")
 
 
 class PromptTemplateManager:
@@ -317,7 +317,7 @@ class PromptTemplateManager:
             logger.info(f"从文件加载了 {len(data.get('templates', []))} 个模板")
 
         except Exception as e:
-            logger.error(f"加载模板文件失败: {str(e)}")
+            logger.error("加载模板文件失败，异常类型: %s", type(e).__name__)
 
     def save_templates_to_file(self, file_path: str) -> None:
         """保存模板到文件"""
@@ -346,7 +346,7 @@ class PromptTemplateManager:
             logger.info(f"已保存 {len(self.templates)} 个模板到: {file_path}")
 
         except Exception as e:
-            logger.error(f"保存模板文件失败: {str(e)}")
+            logger.error("保存模板文件失败，异常类型: %s", type(e).__name__)
 
 
 class PredictionPromptBuilder:

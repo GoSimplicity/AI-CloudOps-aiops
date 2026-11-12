@@ -322,7 +322,7 @@ class ModelManager:
             return True
 
         except Exception as e:
-            logger.error(f"模型验证失败: {str(e)}")
+            logger.error("模型验证失败，异常类型: %s", type(e).__name__)
             return False
 
     def _create_test_features(self, pred_type: PredictionType) -> np.ndarray:
@@ -573,7 +573,7 @@ class ModelManager:
             return success
 
         except Exception as e:
-            logger.error(f"重新加载模型失败: {str(e)}")
+            logger.error("重新加载模型失败，异常类型: %s", type(e).__name__)
             return False
 
     async def is_healthy(self) -> bool:
@@ -623,7 +623,7 @@ class ModelManager:
             return True
 
         except Exception as e:
-            logger.error(f"保存模型失败: {str(e)}")
+            logger.error("保存模型失败，异常类型: %s", type(e).__name__)
             return False
 
 

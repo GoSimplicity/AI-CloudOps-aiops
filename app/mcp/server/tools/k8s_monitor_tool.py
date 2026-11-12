@@ -175,8 +175,8 @@ class K8sMonitorTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "获取节点指标失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取节点指标失败", "message": "操作失败"}
 
     async def _get_pod_metrics(
         self, metrics_api, parameters: Dict[str, Any]
@@ -285,8 +285,8 @@ class K8sMonitorTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "获取Pod指标失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取Pod指标失败", "message": "操作失败"}
 
     async def _get_resource_quotas(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -333,8 +333,8 @@ class K8sMonitorTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "获取资源配额失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取资源配额失败", "message": "操作失败"}
 
     async def _get_limit_ranges(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -392,11 +392,11 @@ class K8sMonitorTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
+        except Exception:
             return {
                 "success": False,
                 "error": "获取资源限制范围失败",
-                "message": str(e),
+                "message": "操作失败",
             }
 
     async def _get_top_pods(
@@ -473,8 +473,8 @@ class K8sMonitorTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "获取Top Pod失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取Top Pod失败", "message": "操作失败"}
 
     async def _get_top_nodes(
         self, metrics_api, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -532,8 +532,8 @@ class K8sMonitorTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "获取Top Node失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取Top Node失败", "message": "操作失败"}
 
     def _parse_cpu_resource(self, cpu_str: str) -> float:
         """解析CPU资源字符串为核心数"""

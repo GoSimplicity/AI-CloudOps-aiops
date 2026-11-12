@@ -11,7 +11,6 @@ Description: 错误处理中间件
 
 from datetime import datetime
 import logging
-import traceback
 from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException, Request
@@ -49,9 +48,12 @@ async def custom_http_exception_handler(
 
         log_method = logger.warning if is_client_error else logger.error
         log_method(
-            f"HTTP异常处理器被触发 - 状态码: {exc.status_code}, 详情: {exc.detail}"
+            "HTTP异常，状态码: %s，异常类型: %s，方法: %s，路径: %s",
+            exc.status_code,
+            type(exc).__name__,
+            request.method,
+            request.url.path,
         )
-        log_method(f"请求信息 - URL: {request.url}, Method: {request.method}")
 
         # 构建错误响应
         error_data = _build_error_data(request, exc.status_code, exc.detail)
@@ -75,8 +77,7 @@ async def custom_http_exception_handler(
         return JSONResponse(status_code=exc.status_code, content=error_response.dict())
 
     except Exception as e:
-        logger.error(f"错误处理器本身出错: {str(e)}")
-        logger.error(f"错误堆栈: {traceback.format_exc()}")
+        logger.error("错误处理器本身出错，异常类型: %s", type(e).__name__)
 
         return _create_fallback_response()
 
@@ -130,20 +131,22 @@ async def validation_exception_handler(
         return JSONResponse(status_code=status_code, content=error_response.dict())
 
     except Exception as e:
-        logger.error(f"验证异常处理器出错: {str(e)}")
-        return _create_fallback_response(message="验证异常处理器错误", error=str(e))
+        logger.error("验证异常处理器出错，异常类型: %s", type(e).__name__)
+        return _create_fallback_response(message="验证异常处理器错误")
 
 
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """通用异常处理器"""
     try:
-        logger.error(f"未捕获的异常: {str(exc)}")
-        logger.error(f"异常类型: {type(exc).__name__}")
-        logger.error(f"请求信息 - URL: {request.url}, Method: {request.method}")
-        logger.error(f"异常堆栈: {traceback.format_exc()}")
+        logger.error(
+            "未捕获的异常，异常类型: %s，方法: %s，路径: %s",
+            type(exc).__name__,
+            request.method,
+            request.url.path,
+        )
 
         error_data = _build_error_data(
-            request, HttpStatusCodes.INTERNAL_SERVER_ERROR, str(exc)
+            request, HttpStatusCodes.INTERNAL_SERVER_ERROR, "Internal server error"
         )
         if _debug_details():
             error_data["type"] = type(exc).__name__
@@ -160,8 +163,8 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         )
 
     except Exception as handler_error:
-        logger.critical(f"异常处理器本身出现严重错误: {str(handler_error)}")
-        logger.critical(f"原异常: {str(exc)}")
+        logger.critical("异常处理器本身出现严重错误，异常类型: %s", type(handler_error).__name__)
+        logger.critical("原异常类型: %s", type(exc).__name__)
 
         return _create_critical_fallback_response()
 
@@ -175,9 +178,13 @@ async def aiops_exception_handler(
 
         status_code = _get_http_status_for_aiops_exception(exc)
         logger.warning(
-            f"领域异常: {exc.error_code} - {exc.message} (status={status_code})"
+            "领域异常，错误码: %s，异常类型: %s，状态码: %s，方法: %s，路径: %s",
+            exc.error_code,
+            type(exc).__name__,
+            status_code,
+            request.method,
+            request.url.path,
         )
-        logger.warning(f"请求信息 - URL: {request.url}, Method: {request.method}")
 
         # 构建包含 error_code 与 details 的标准错误数据
         error_data = _build_error_data(request, status_code, exc.details or exc.message)
@@ -197,8 +204,8 @@ async def aiops_exception_handler(
         return JSONResponse(status_code=status_code, content=error_response.dict())
 
     except Exception as e:
-        logger.error(f"AIOps异常处理器出错: {str(e)}")
-        return _create_fallback_response(message="AIOps异常处理器错误", error=str(e))
+        logger.error("AIOps异常处理器出错，异常类型: %s", type(e).__name__)
+        return _create_fallback_response(message="AIOps异常处理器错误")
 
 
 def setup_error_handlers(app: FastAPI) -> None:
@@ -221,8 +228,7 @@ def setup_error_handlers(app: FastAPI) -> None:
         logger.info("错误处理器设置完成")
 
     except Exception as e:
-        logger.error(f"错误处理器设置失败: {str(e)}")
-        logger.error(f"错误堆栈: {traceback.format_exc()}")
+        logger.error("错误处理器设置失败，异常类型: %s", type(e).__name__)
 
 
 def _extract_validation_details(exc: Exception) -> Any:
@@ -236,9 +242,9 @@ def _extract_validation_details(exc: Exception) -> Any:
             errors = exc.errors()
             return _sanitize_error_details(errors)
         else:
-            return str(exc)
+            return "验证失败"
     except Exception as e:
-        logger.warning(f"处理验证异常详情时出错: {e}")
+        logger.warning("处理验证异常详情时出错，异常类型: %s", type(e).__name__)
         return "验证异常详情处理失败"
 
 
@@ -263,6 +269,8 @@ def _sanitize_error_details(errors):
                 return [sanitize_value(item) for item in obj]
             elif isinstance(obj, tuple):
                 return tuple(sanitize_value(item) for item in obj)
+            elif isinstance(obj, BaseException):
+                return type(obj).__name__
             else:
                 # 测试是否可以JSON序列化
                 try:
@@ -274,7 +282,7 @@ def _sanitize_error_details(errors):
         return sanitize_value(errors)
 
     except Exception as e:
-        logger.warning(f"清理错误详情时出错: {e}")
+        logger.warning("清理错误详情时出错，异常类型: %s", type(e).__name__)
         return "错误详情清理失败"
 
 

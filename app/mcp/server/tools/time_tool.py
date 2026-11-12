@@ -65,5 +65,5 @@ class TimeTool(BaseTool):
                     "timezone": "UTC",
                 }
 
-        except Exception as e:
-            raise RuntimeError(f"获取时间失败: {str(e)}")
+        except Exception:
+            raise RuntimeError("获取时间失败") from None

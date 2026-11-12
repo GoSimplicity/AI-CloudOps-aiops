@@ -13,7 +13,6 @@ import asyncio
 from datetime import datetime
 from functools import wraps
 import logging
-import traceback
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 from app.common.constants import HttpStatusCodes, Messages
@@ -88,11 +87,10 @@ class ErrorHandler:
     def log_and_return_error(
         self, error: Exception, context: str, include_traceback: bool = True
     ) -> Tuple[str, Dict[str, Any]]:
-        """记录错误并返回格式化的错误信息"""
+        """记录错误并返回通用错误信息。include_traceback 保留给旧调用方，不再输出堆栈或原文。"""
 
         error_id = f"error_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
 
-        # 构建错误详情
         error_details = {
             "error_id": error_id,
             "error_type": type(error).__name__,
@@ -100,22 +98,19 @@ class ErrorHandler:
             "timestamp": datetime.now().isoformat(),
         }
 
-        # 如果是自定义异常，添加额外信息
         if isinstance(error, AICloudOpsError):
             error_details.update(
                 {"error_code": error.error_code, "details": error.details}
             )
 
-        # 记录日志
-        log_message = f"[{error_id}] {context}: {str(error)}"
+        self.logger.error(
+            "[%s] %s，异常类型: %s",
+            error_id,
+            context,
+            type(error).__name__,
+        )
 
-        if include_traceback:
-            self.logger.error(log_message, exc_info=True)
-            error_details["traceback"] = traceback.format_exc()
-        else:
-            self.logger.error(log_message)
-
-        return str(error), error_details
+        return "内部服务错误", error_details
 
     def handle_validation_error(
         self, error: Exception, context: str = ""
@@ -228,13 +223,21 @@ def retry_on_exception(
                     last_exception = e
                     if attempt == max_retries:
                         _logger.error(
-                            f"Function {func.__name__} failed after {max_retries} retries: {str(e)}"
+                            "Function %s failed after %s retries，异常类型: %s",
+                            func.__name__,
+                            max_retries,
+                            type(e).__name__,
                         )
                         raise
 
                     retry_delay = delay * (backoff_factor**attempt)
                     _logger.warning(
-                        f"Function {func.__name__} failed (attempt {attempt + 1}/{max_retries + 1}), retrying in {retry_delay}s: {str(e)}"
+                        "Function %s failed (attempt %s/%s), retrying in %ss，异常类型: %s",
+                        func.__name__,
+                        attempt + 1,
+                        max_retries + 1,
+                        retry_delay,
+                        type(e).__name__,
                     )
                     await asyncio.sleep(retry_delay)
 
@@ -254,13 +257,21 @@ def retry_on_exception(
                     last_exception = e
                     if attempt == max_retries:
                         _logger.error(
-                            f"Function {func.__name__} failed after {max_retries} retries: {str(e)}"
+                            "Function %s failed after %s retries，异常类型: %s",
+                            func.__name__,
+                            max_retries,
+                            type(e).__name__,
                         )
                         raise
 
                     retry_delay = delay * (backoff_factor**attempt)
                     _logger.warning(
-                        f"Function {func.__name__} failed (attempt {attempt + 1}/{max_retries + 1}), retrying in {retry_delay}s: {str(e)}"
+                        "Function %s failed (attempt %s/%s), retrying in %ss，异常类型: %s",
+                        func.__name__,
+                        attempt + 1,
+                        max_retries + 1,
+                        retry_delay,
+                        type(e).__name__,
                     )
                     time.sleep(retry_delay)
 

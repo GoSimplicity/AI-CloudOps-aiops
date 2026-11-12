@@ -113,7 +113,7 @@ class IntelligentReportGenerator:
                 return self._generate_fallback_report(report_context)
 
         except Exception as e:
-            logger.error(f"生成综合报告失败: {str(e)}")
+            logger.error("生成综合报告失败，异常类型: %s", type(e).__name__)
             return self._generate_fallback_report(report_context)
 
     async def generate_executive_summary(
@@ -158,7 +158,7 @@ class IntelligentReportGenerator:
                 return self._generate_fallback_summary(report_context)
 
         except Exception as e:
-            logger.error(f"生成执行摘要失败: {str(e)}")
+            logger.error("生成执行摘要失败，异常类型: %s", type(e).__name__)
             return self._generate_fallback_summary(report_context)
 
     async def generate_action_plan(
@@ -217,7 +217,7 @@ class IntelligentReportGenerator:
                 return self._generate_fallback_action_plan(report_context, time_horizon)
 
         except Exception as e:
-            logger.error(f"生成行动计划失败: {str(e)}")
+            logger.error("生成行动计划失败，异常类型: %s", type(e).__name__)
             return self._generate_fallback_action_plan(report_context, time_horizon)
 
     async def generate_risk_assessment_report(
@@ -273,7 +273,7 @@ class IntelligentReportGenerator:
                 return self._generate_fallback_risk_assessment(report_context)
 
         except Exception as e:
-            logger.error(f"生成风险评估报告失败: {str(e)}")
+            logger.error("生成风险评估报告失败，异常类型: %s", type(e).__name__)
             return self._generate_fallback_risk_assessment(report_context)
 
     async def generate_cost_optimization_report(
@@ -336,8 +336,8 @@ class IntelligentReportGenerator:
                 return {"status": "fallback", "message": "成本优化报告生成失败"}
 
         except Exception as e:
-            logger.error(f"生成成本优化报告失败: {str(e)}")
-            return {"status": "error", "message": str(e)}
+            logger.error("生成成本优化报告失败，异常类型: %s", type(e).__name__)
+            return {"status": "error", "message": "生成成本优化报告失败"}
 
     def _prepare_report_data(self, context: ReportContext) -> Dict[str, Any]:
         """准备报告数据"""
@@ -384,7 +384,7 @@ class IntelligentReportGenerator:
                 ),
             }
         except Exception as e:
-            logger.error(f"准备报告数据失败: {str(e)}")
+            logger.error("准备报告数据失败，异常类型: %s", type(e).__name__)
             # 返回基本的安全数据
             return {
                 "prediction_type": context.prediction_type.value,
@@ -464,7 +464,7 @@ class IntelligentReportGenerator:
             return summary if summary else self._get_fallback_executive_summary(context)
 
         except Exception as e:
-            logger.error(f"生成执行摘要失败: {str(e)}")
+            logger.error("生成执行摘要失败，异常类型: %s", type(e).__name__)
             return self._get_fallback_executive_summary(context)
 
     def _extract_key_metrics(self, context: ReportContext) -> Dict[str, Any]:
@@ -563,7 +563,7 @@ class IntelligentReportGenerator:
             return overview
 
         except Exception as e:
-            logger.error(f"格式化预测概览失败: {str(e)}")
+            logger.error("格式化预测概览失败，异常类型: %s", type(e).__name__)
             return f"{context.prediction_type.value}预测分析"
 
     def _format_scaling_recommendations(self, context: ReportContext) -> str:
@@ -588,7 +588,7 @@ class IntelligentReportGenerator:
             return "\n".join(formatted_recs)
 
         except Exception as e:
-            logger.error(f"格式化扩缩容建议失败: {str(e)}")
+            logger.error("格式化扩缩容建议失败，异常类型: %s", type(e).__name__)
             return "扩缩容建议格式化失败"
 
     def _parse_action_plan(self, plan_text: str) -> List[Dict[str, Any]]:
@@ -623,7 +623,7 @@ class IntelligentReportGenerator:
             return actions[:5]
 
         except Exception as e:
-            logger.error(f"解析行动计划失败: {str(e)}")
+            logger.error("解析行动计划失败，异常类型: %s", type(e).__name__)
             return [
                 {
                     "title": "行动计划",
@@ -665,7 +665,7 @@ class IntelligentReportGenerator:
             return priority_actions[:3]
 
         except Exception as e:
-            logger.error(f"识别优先级行动失败: {str(e)}")
+            logger.error("识别优先级行动失败，异常类型: %s", type(e).__name__)
             return parsed_actions[:2]
 
     def _analyze_risks(self, context: ReportContext) -> Dict[str, Any]:

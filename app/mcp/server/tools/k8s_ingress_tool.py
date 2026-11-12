@@ -232,8 +232,8 @@ class K8sIngressTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "获取Ingress列表失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取Ingress列表失败", "message": "操作失败"}
 
     async def _get_ingress(
         self, networking_v1: client.NetworkingV1Api, parameters: Dict[str, Any]
@@ -357,10 +357,10 @@ class K8sIngressTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "获取Ingress详情失败",
-                    "message": str(e),
+                    "message": "操作失败",
                 }
-        except Exception as e:
-            return {"success": False, "error": "获取Ingress详情失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取Ingress详情失败", "message": "操作失败"}
 
     async def _create_ingress(
         self, networking_v1: client.NetworkingV1Api, parameters: Dict[str, Any]
@@ -458,9 +458,9 @@ class K8sIngressTool(K8sBaseTool):
                     "message": f"命名空间 {namespace} 中已存在同名Ingress",
                 }
             else:
-                return {"success": False, "error": "创建Ingress失败", "message": str(e)}
-        except Exception as e:
-            return {"success": False, "error": "创建Ingress失败", "message": str(e)}
+                return {"success": False, "error": "创建Ingress失败", "message": "操作失败"}
+        except Exception:
+            return {"success": False, "error": "创建Ingress失败", "message": "操作失败"}
 
     async def _delete_ingress(
         self, networking_v1: client.NetworkingV1Api, parameters: Dict[str, Any]
@@ -504,9 +504,9 @@ class K8sIngressTool(K8sBaseTool):
                     "message": f"在命名空间 {namespace} 中找不到Ingress {ingress_name}",
                 }
             else:
-                return {"success": False, "error": "删除Ingress失败", "message": str(e)}
-        except Exception as e:
-            return {"success": False, "error": "删除Ingress失败", "message": str(e)}
+                return {"success": False, "error": "删除Ingress失败", "message": "操作失败"}
+        except Exception:
+            return {"success": False, "error": "删除Ingress失败", "message": "操作失败"}
 
     async def _get_ingress_classes(
         self, networking_v1: client.NetworkingV1Api, parameters: Dict[str, Any]
@@ -558,9 +558,9 @@ class K8sIngressTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
+        except Exception:
             return {
                 "success": False,
                 "error": "获取IngressClass列表失败",
-                "message": str(e),
+                "message": "操作失败",
             }

@@ -16,6 +16,32 @@ from app.utils.safe_math import evaluate
 
 from ..mcp_server import BaseTool
 
+# 计算器自己写出的校验文案，以及 safe_math 的固定拒绝文案。其它 ValueError 不回传。
+_OWN_VALUE_ERRORS = frozenset(
+    {
+        "precision must be between 0 and 10",
+        "数字列表不能为空",
+        "Expression must be at most 512 characters",
+        "Expression is too complex",
+        "Result must be a finite number within 1e100",
+        "Exponent is too large",
+        "Unsupported expression",
+    }
+)
+_OWN_VALUE_PREFIXES = (
+    "不支持的温度单位转换:",
+    "不支持的单位:",
+    "不支持的类别:",
+)
+
+
+def _public_calculation_error(error: Exception, fallback: str) -> RuntimeError:
+    if type(error) is ValueError:
+        text = str(error)
+        if text in _OWN_VALUE_ERRORS or text.startswith(_OWN_VALUE_PREFIXES):
+            return RuntimeError(text)
+    return RuntimeError(fallback)
+
 
 class CalculatorTool(BaseTool):
     """基础数学计算器工具"""
@@ -101,7 +127,7 @@ class CalculatorTool(BaseTool):
             }
 
         except Exception as e:
-            raise RuntimeError(f"计算失败: {str(e)}")
+            raise _public_calculation_error(e, "计算失败") from None
 
 
 class StatisticsTool(BaseTool):
@@ -202,7 +228,7 @@ class StatisticsTool(BaseTool):
             return {"numbers": numbers, "statistics": result, "operations": operations}
 
         except Exception as e:
-            raise RuntimeError(f"统计计算失败: {str(e)}")
+            raise _public_calculation_error(e, "统计计算失败") from None
 
 
 class UnitConverterTool(BaseTool):
@@ -396,4 +422,4 @@ class UnitConverterTool(BaseTool):
             }
 
         except Exception as e:
-            raise RuntimeError(f"单位转换失败: {str(e)}")
+            raise _public_calculation_error(e, "单位转换失败") from None

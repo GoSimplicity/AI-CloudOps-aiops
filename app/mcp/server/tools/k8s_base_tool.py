@@ -74,7 +74,6 @@ class K8sBaseTool(BaseTool):
         except Exception as error:
             api_client.close()
             logger.error("%s 创建Kubernetes API客户端失败: 错误类型=%s", self.name, type(error).__name__)
-            logger.debug("%s 创建Kubernetes API客户端失败详情", self.name, exc_info=True)
             raise K8sToolInputError("无法创建Kubernetes API客户端") from None
 
     def _new_api_client(self, config_path: Optional[str]) -> client.ApiClient:
@@ -92,7 +91,6 @@ class K8sBaseTool(BaseTool):
                 config.load_incluster_config(client_configuration=configuration)
         except Exception as error:
             logger.error("%s 加载Kubernetes配置失败: 错误类型=%s", self.name, type(error).__name__)
-            logger.debug("%s 加载Kubernetes配置失败详情", self.name, exc_info=True)
             raise K8sToolInputError("无法加载Kubernetes配置") from None
         return client.ApiClient(configuration=configuration)
 
@@ -103,7 +101,6 @@ class K8sBaseTool(BaseTool):
             config.load_kube_config_from_dict(document, client_configuration=configuration, persist_config=False)
         except Exception as error:
             logger.error("%s 加载自定义kubeconfig失败: 错误类型=%s", self.name, type(error).__name__)
-            logger.debug("%s 加载自定义kubeconfig失败详情", self.name, exc_info=True)
             raise K8sToolInputError(CONFIG_PATH_UNAVAILABLE_MESSAGE) from None
         return client.ApiClient(configuration=configuration)
 
@@ -151,9 +148,8 @@ class K8sBaseTool(BaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
         except Exception as e:
-            # SEC-33 L2 P3-4：未知异常只返回通用信息，类型进 ERROR，原始文本只进 DEBUG
+            # 未知异常只返回通用信息；日志只记类型，不附带原文或堆栈
             logger.error("%s 执行失败: 错误类型=%s", self.name, type(e).__name__)
-            logger.debug("%s 执行失败详情", self.name, exc_info=True)
             return {
                 "success": False,
                 "error": "执行失败",

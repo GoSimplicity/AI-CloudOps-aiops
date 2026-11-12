@@ -104,7 +104,7 @@ class K8sClusterCheckTool(K8sBaseTool):
                 if isinstance(result, asyncio.TimeoutError):
                     error_msg = f"检查任务{i}超时: 请求执行时间过长，已跳过"
                 else:
-                    error_msg = f"检查任务{i}失败: {str(result)}"
+                    error_msg = f"检查任务{i}失败"
 
                 if i == 0:
                     cluster_info = {"error": error_msg}
@@ -166,8 +166,8 @@ class K8sClusterCheckTool(K8sBaseTool):
                 "namespace_count": namespace_count,
                 "has_cluster_access": has_cluster_access,
             }
-        except Exception as e:
-            return {"error": f"获取集群信息失败: {str(e)}"}
+        except Exception:
+            return {"error": "获取集群信息失败"}
 
     async def _get_node_status(self, v1: client.CoreV1Api) -> Dict[str, Any]:
         """获取节点状态"""
@@ -222,8 +222,8 @@ class K8sClusterCheckTool(K8sBaseTool):
                 "health_percentage": (ready_nodes / total_nodes * 100),
                 "node_details": node_details[:3],  # 限制详情数量
             }
-        except Exception as e:
-            return {"error": f"获取节点状态失败: {str(e)}"}
+        except Exception:
+            return {"error": "获取节点状态失败"}
 
     async def _get_recent_events(
         self,
@@ -282,8 +282,8 @@ class K8sClusterCheckTool(K8sBaseTool):
             )
 
             return important_events[:8]  # 返回最近8个事件
-        except Exception as e:
-            return [{"error": f"获取事件失败: {str(e)}"}]
+        except Exception:
+            return [{"error": "获取事件失败"}]
 
     async def _get_pod_status(
         self, v1: client.CoreV1Api, namespace_filter: Optional[str] = None
@@ -346,8 +346,8 @@ class K8sClusterCheckTool(K8sBaseTool):
             pod_stats["problem_pods"] = pod_stats["problem_pods"][:3]  # 减少到3个
 
             return pod_stats
-        except Exception as e:
-            return {"error": f"获取Pod状态失败: {str(e)}"}
+        except Exception:
+            return {"error": "获取Pod状态失败"}
 
     async def _get_error_logs(
         self, v1: client.CoreV1Api, namespace_filter: Optional[str] = None
@@ -437,8 +437,8 @@ class K8sClusterCheckTool(K8sBaseTool):
                     )
 
             return error_logs
-        except Exception as e:
-            return [{"error": f"获取日志失败: {str(e)}"}]
+        except Exception:
+            return [{"error": "获取日志失败"}]
 
     def _generate_health_report(
         self,

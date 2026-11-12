@@ -131,7 +131,7 @@ class FeatureExtractor:
             return df
 
         except Exception as e:
-            logger.error(f"特征提取失败: {str(e)}")
+            logger.error("特征提取失败，异常类型: %s", type(e).__name__)
             # 返回默认特征
             return self._get_default_features(prediction_type, current_value)
 

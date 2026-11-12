@@ -219,11 +219,11 @@ class K8sServiceTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
+        except Exception:
             return {
                 "success": False,
                 "error": "获取Service列表失败",
-                "message": str(e),
+                "message": "操作失败",
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
@@ -330,10 +330,10 @@ class K8sServiceTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "获取Service详情失败",
-                    "message": str(e),
+                    "message": "操作失败",
                 }
-        except Exception as e:
-            return {"success": False, "error": "获取Service详情失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取Service详情失败", "message": "操作失败"}
 
     async def _create_service(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -413,9 +413,9 @@ class K8sServiceTool(K8sBaseTool):
                     "message": f"命名空间 {namespace} 中已存在同名Service",
                 }
             else:
-                return {"success": False, "error": "创建Service失败", "message": str(e)}
-        except Exception as e:
-            return {"success": False, "error": "创建Service失败", "message": str(e)}
+                return {"success": False, "error": "创建Service失败", "message": "操作失败"}
+        except Exception:
+            return {"success": False, "error": "创建Service失败", "message": "操作失败"}
 
     async def _delete_service(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -459,9 +459,9 @@ class K8sServiceTool(K8sBaseTool):
                     "message": f"在命名空间 {namespace} 中找不到Service {service_name}",
                 }
             else:
-                return {"success": False, "error": "删除Service失败", "message": str(e)}
-        except Exception as e:
-            return {"success": False, "error": "删除Service失败", "message": str(e)}
+                return {"success": False, "error": "删除Service失败", "message": "操作失败"}
+        except Exception:
+            return {"success": False, "error": "删除Service失败", "message": "操作失败"}
 
     async def _get_endpoints(
         self, v1: client.CoreV1Api, parameters: Dict[str, Any]
@@ -562,5 +562,5 @@ class K8sServiceTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "获取端点信息失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取端点信息失败", "message": "操作失败"}

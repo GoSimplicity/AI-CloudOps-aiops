@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
+from app.common.exceptions import HistoricalDataError, PredictionError, ValidationError
 from app.models import PredictionDataPoint, PredictionGranularity, PredictionType
 
 logger = logging.getLogger("aiops.core.predictor")
@@ -61,10 +62,13 @@ class UnifiedPredictor:
             self._initialized = True
             logger.info("统一预测器初始化完成")
 
-        except Exception as e:
-            logger.error(f"预测器初始化失败: {str(e)}")
+        except (ValidationError, HistoricalDataError):
             self._initialized = False
             raise
+        except Exception as e:
+            logger.error("预测器初始化失败，异常类型: %s", type(e).__name__)
+            self._initialized = False
+            raise PredictionError("预测器初始化失败") from None
 
     async def predict(
         self,
@@ -78,8 +82,6 @@ class UnifiedPredictor:
         """执行预测"""
 
         if not self._initialized:
-            from app.common.exceptions import PredictionError
-
             raise PredictionError("预测器未初始化")
 
         initial_value = current_value
@@ -271,7 +273,7 @@ class UnifiedPredictor:
             ]
             return all(health_checks)
         except Exception as e:
-            logger.warning(f"预测器健康检查失败: {str(e)}")
+            logger.warning("预测器健康检查失败，异常类型: %s", type(e).__name__)
             return False
 
     def _align_features_with_model(

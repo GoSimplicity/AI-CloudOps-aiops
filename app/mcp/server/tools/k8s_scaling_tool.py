@@ -211,10 +211,10 @@ class K8sScalingTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "伸缩Deployment失败",
-                    "message": str(e),
+                    "message": "操作失败",
                 }
-        except Exception as e:
-            return {"success": False, "error": "伸缩Deployment失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "伸缩Deployment失败", "message": "操作失败"}
 
     async def _scale_replicaset(
         self, apps_v1: client.AppsV1Api, parameters: Dict[str, Any]
@@ -281,10 +281,10 @@ class K8sScalingTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "伸缩ReplicaSet失败",
-                    "message": str(e),
+                    "message": "操作失败",
                 }
-        except Exception as e:
-            return {"success": False, "error": "伸缩ReplicaSet失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "伸缩ReplicaSet失败", "message": "操作失败"}
 
     async def _list_hpa(
         self, autoscaling_v1, autoscaling_v2, parameters: Dict[str, Any]
@@ -371,8 +371,8 @@ class K8sScalingTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "获取HPA列表失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取HPA列表失败", "message": "操作失败"}
 
     async def _get_hpa_status(
         self, autoscaling_v1, autoscaling_v2, parameters: Dict[str, Any]
@@ -483,9 +483,9 @@ class K8sScalingTool(K8sBaseTool):
                     "message": f"在命名空间 {namespace} 中找不到HPA {resource_name}",
                 }
             else:
-                return {"success": False, "error": "获取HPA状态失败", "message": str(e)}
-        except Exception as e:
-            return {"success": False, "error": "获取HPA状态失败", "message": str(e)}
+                return {"success": False, "error": "获取HPA状态失败", "message": "操作失败"}
+        except Exception:
+            return {"success": False, "error": "获取HPA状态失败", "message": "操作失败"}
 
     async def _create_hpa(
         self, autoscaling_v1, parameters: Dict[str, Any]
@@ -555,9 +555,9 @@ class K8sScalingTool(K8sBaseTool):
                     "message": f"命名空间 {namespace} 中已存在同名HPA",
                 }
             else:
-                return {"success": False, "error": "创建HPA失败", "message": str(e)}
-        except Exception as e:
-            return {"success": False, "error": "创建HPA失败", "message": str(e)}
+                return {"success": False, "error": "创建HPA失败", "message": "操作失败"}
+        except Exception:
+            return {"success": False, "error": "创建HPA失败", "message": "操作失败"}
 
     async def _delete_hpa(
         self, autoscaling_v1, parameters: Dict[str, Any]
@@ -601,9 +601,9 @@ class K8sScalingTool(K8sBaseTool):
                     "message": f"在命名空间 {namespace} 中找不到HPA {resource_name}",
                 }
             else:
-                return {"success": False, "error": "删除HPA失败", "message": str(e)}
-        except Exception as e:
-            return {"success": False, "error": "删除HPA失败", "message": str(e)}
+                return {"success": False, "error": "删除HPA失败", "message": "操作失败"}
+        except Exception:
+            return {"success": False, "error": "删除HPA失败", "message": "操作失败"}
 
     def _format_v2_metrics(self, metrics: List) -> List[Dict[str, Any]]:
         """格式化v2 API的目标指标"""

@@ -190,11 +190,11 @@ class K8sDeploymentTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
+        except Exception:
             return {
                 "success": False,
                 "error": "获取Deployment列表失败",
-                "message": str(e),
+                "message": "操作失败",
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
@@ -338,13 +338,13 @@ class K8sDeploymentTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "获取Deployment状态失败",
-                    "message": str(e),
+                    "message": "操作失败",
                 }
-        except Exception as e:
+        except Exception:
             return {
                 "success": False,
                 "error": "获取Deployment状态失败",
-                "message": str(e),
+                "message": "操作失败",
             }
 
     async def _update_image(
@@ -422,9 +422,9 @@ class K8sDeploymentTool(K8sBaseTool):
                     "message": f"在命名空间 {namespace} 中找不到Deployment {deployment_name}",
                 }
             else:
-                return {"success": False, "error": "更新镜像失败", "message": str(e)}
-        except Exception as e:
-            return {"success": False, "error": "更新镜像失败", "message": str(e)}
+                return {"success": False, "error": "更新镜像失败", "message": "操作失败"}
+        except Exception:
+            return {"success": False, "error": "更新镜像失败", "message": "操作失败"}
 
     async def _rollback_deployment(
         self, apps_v1: client.AppsV1Api, parameters: Dict[str, Any]
@@ -506,8 +506,8 @@ class K8sDeploymentTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "回滚失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "回滚失败", "message": "操作失败"}
 
     async def _scale_deployment(
         self, apps_v1: client.AppsV1Api, parameters: Dict[str, Any]
@@ -565,9 +565,9 @@ class K8sDeploymentTool(K8sBaseTool):
                     "message": f"在命名空间 {namespace} 中找不到Deployment {deployment_name}",
                 }
             else:
-                return {"success": False, "error": "伸缩失败", "message": str(e)}
-        except Exception as e:
-            return {"success": False, "error": "伸缩失败", "message": str(e)}
+                return {"success": False, "error": "伸缩失败", "message": "操作失败"}
+        except Exception:
+            return {"success": False, "error": "伸缩失败", "message": "操作失败"}
 
     async def _get_rollout_history(
         self, apps_v1: client.AppsV1Api, parameters: Dict[str, Any]
@@ -632,8 +632,8 @@ class K8sDeploymentTool(K8sBaseTool):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
-        except Exception as e:
-            return {"success": False, "error": "获取发布历史失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "获取发布历史失败", "message": "操作失败"}
 
     async def _restart_deployment(
         self, apps_v1: client.AppsV1Api, parameters: Dict[str, Any]
@@ -701,10 +701,10 @@ class K8sDeploymentTool(K8sBaseTool):
                 return {
                     "success": False,
                     "error": "重启Deployment失败",
-                    "message": str(e),
+                    "message": "操作失败",
                 }
-        except Exception as e:
-            return {"success": False, "error": "重启Deployment失败", "message": str(e)}
+        except Exception:
+            return {"success": False, "error": "重启Deployment失败", "message": "操作失败"}
 
     def _format_resources(self, resources) -> Dict[str, Any]:
         """格式化资源配置"""
