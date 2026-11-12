@@ -94,7 +94,7 @@ class StartupService(BaseService):
             try:
                 agent = await get_enterprise_assistant()
             except Exception as e:
-                self.logger.warning(f"AI-CloudOps智能助手初始化失败: {str(e)}")
+                self.logger.warning("AI-CloudOps智能助手初始化失败，异常类型: %s", type(e).__name__)
                 agent = None
 
             result["duration"] = time.time() - start_time
@@ -110,8 +110,8 @@ class StartupService(BaseService):
             result["duration"] = (
                 time.time() - start_time if "start_time" in locals() else 0
             )
-            result["error"] = str(e)
-            self.logger.warning(f"智能助手预热失败: {str(e)}，将在首次使用时初始化")
+            result["error"] = "智能助手预热失败"
+            self.logger.warning("智能助手预热失败，异常类型: %s，将在首次使用时初始化", type(e).__name__)
 
         return result
 
@@ -205,8 +205,8 @@ class StartupService(BaseService):
             result["duration"] = (
                 time.time() - start_time if "start_time" in locals() else 0
             )
-            result["error"] = str(e)
-            self.logger.error(f"服务 {service.service_name} 清理失败: {str(e)}")
+            result["error"] = "服务清理失败"
+            self.logger.error("服务 %s 清理失败，异常类型: %s", service.service_name, type(e).__name__)
 
         return result
 
@@ -252,8 +252,8 @@ class StartupService(BaseService):
             result["duration"] = (
                 time.time() - start_time if "start_time" in locals() else 0
             )
-            result["error"] = str(e)
-            self.logger.error(f"实例 {name} 清理失败: {str(e)}")
+            result["error"] = "实例清理失败"
+            self.logger.error("实例 %s 清理失败，异常类型: %s", name, type(e).__name__)
 
         return result
 
@@ -284,7 +284,8 @@ class StartupService(BaseService):
                     status["healthy"] = instance.is_healthy()
             except Exception as e:
                 status["healthy"] = False
-                status["error"] = str(e)
+                status["error"] = "获取服务状态失败"
+                self.logger.warning("获取实例 %s 状态失败，异常类型: %s", name, type(e).__name__)
 
             services_status[name] = status
 

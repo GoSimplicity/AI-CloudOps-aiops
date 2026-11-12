@@ -70,7 +70,7 @@ class K8sFixerAgent:
                         f"主要OpenAI模型服务状态: {'可用' if primary_healthy else '不可用'}"
                     )
                 except Exception as e:
-                    logger.warning(f"无法连接到OpenAI API: {str(e)}")
+                    logger.warning("无法连接到OpenAI API，异常类型: %s", type(e).__name__)
 
                 # 检查备用提供方
                 try:
@@ -83,7 +83,7 @@ class K8sFixerAgent:
                         f"备用Ollama模型服务状态: {'可用' if backup_healthy else '不可用'}"
                     )
                 except Exception as e:
-                    logger.warning(f"无法连接到Ollama API: {str(e)}")
+                    logger.warning("无法连接到Ollama API，异常类型: %s", type(e).__name__)
             else:
                 # Ollama作为主要提供方
                 try:
@@ -96,7 +96,7 @@ class K8sFixerAgent:
                         f"主要Ollama模型服务状态: {'可用' if primary_healthy else '不可用'}"
                     )
                 except Exception as e:
-                    logger.warning(f"无法连接到Ollama API: {str(e)}")
+                    logger.warning("无法连接到Ollama API，异常类型: %s", type(e).__name__)
 
                 # 检查备用提供方
                 try:
@@ -111,7 +111,7 @@ class K8sFixerAgent:
                         f"备用OpenAI模型服务状态: {'可用' if backup_healthy else '不可用'}"
                     )
                 except Exception as e:
-                    logger.warning(f"无法连接到OpenAI API: {str(e)}")
+                    logger.warning("无法连接到OpenAI API，异常类型: %s", type(e).__name__)
 
             # 输出最终状态
             if primary_healthy:
@@ -122,7 +122,7 @@ class K8sFixerAgent:
                 logger.error("主要和备用LLM模型服务均不可用，自动修复功能可能受限")
 
         except Exception as e:
-            logger.error(f"模型故障切换测试失败: {str(e)}")
+            logger.error("模型故障切换测试失败，异常类型: %s", type(e).__name__)
 
     async def analyze_and_fix_deployment(
         self, deployment_name: str, namespace: str, error_description: str
@@ -298,7 +298,12 @@ class K8sFixerAgent:
                             await asyncio.sleep(self.retry_delay)
                     except Exception as e:
                         retry_count += 1
-                        logger.error(f"分析出错: {str(e)}")
+                        logger.error(
+                            "分析出错，异常类型: %s，部署: %s，命名空间: %s",
+                            type(e).__name__,
+                            deployment_name,
+                            namespace,
+                        )
                         logger.error(f"尝试重试 ({retry_count}/{max_retries})")
 
                         # 记录当前使用的模型配置
@@ -328,7 +333,12 @@ class K8sFixerAgent:
 
                                 # 回退由服务层处理
                         except Exception as backup_e:
-                            logger.error(f"切换到备用模型失败: {str(backup_e)}")
+                            logger.error(
+                                "切换到备用模型失败，异常类型: %s，部署: %s，命名空间: %s",
+                                type(backup_e).__name__,
+                                deployment_name,
+                                namespace,
+                            )
 
                         await asyncio.sleep(self.retry_delay)
 
@@ -362,7 +372,12 @@ class K8sFixerAgent:
                                 logger.error("所有分析尝试均失败")
                                 return "无法分析问题，建议手动检查Kubernetes配置"
                         except Exception as final_e:
-                            logger.error(f"最终分析尝试失败: {str(final_e)}")
+                            logger.error(
+                                "最终分析尝试失败，异常类型: %s，部署: %s，命名空间: %s",
+                                type(final_e).__name__,
+                                deployment_name,
+                                namespace,
+                            )
                             return "无法分析问题，建议手动检查"
 
                 logger.info(f"问题分析完成: {analysis.get('analysis', 'N/A')}")
@@ -383,7 +398,12 @@ class K8sFixerAgent:
                 # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
                 raise
             except Exception as e:
-                logger.error(f"分析或执行修复时出错: {str(e)}")
+                logger.error(
+                    "分析或执行修复时出错，异常类型: %s，部署: %s，命名空间: %s",
+                    type(e).__name__,
+                    deployment_name,
+                    namespace,
+                )
                 # 如果是nginx相关部署，尝试执行默认修复
                 if (
                     deployment_name.lower().startswith("nginx")
@@ -399,14 +419,19 @@ class K8sFixerAgent:
                     return await self._identify_and_fix_common_issues(
                         deployment, context, force_fix=True
                     )["message"]
-                return f"分析或执行修复失败: {str(e)}"
+                return "分析或执行修复失败"
 
         except AIOpsException:
             # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
             raise
         except Exception as e:
-            logger.error(f"分析和修复Deployment失败: {str(e)}")
-            return f"修复失败: {str(e)}"
+            logger.error(
+                "分析和修复Deployment失败，异常类型: %s，部署: %s，命名空间: %s",
+                type(e).__name__,
+                deployment_name,
+                namespace,
+            )
+            return "修复失败"
 
     async def _check_and_fix_k8s_connection(self) -> bool:
         """只检查服务器配置的目标，不扫描或切换其他集群凭据"""
@@ -956,8 +981,8 @@ class K8sFixerAgent:
             # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
             raise
         except Exception as e:
-            logger.error(f"识别和修复常见问题失败: {str(e)}")
-            return {"fixed": False, "message": f"修复失败: {str(e)}"}
+            logger.error("识别和修复常见问题失败，异常类型: %s", type(e).__name__)
+            return {"fixed": False, "message": "修复失败"}
 
     async def _execute_fix(
         self, deployment_name: str, namespace: str, analysis: Dict[str, Any]
@@ -1128,8 +1153,13 @@ class K8sFixerAgent:
             # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
             raise
         except Exception as e:
-            logger.error(f"执行修复操作失败: {str(e)}")
-            return f"执行修复操作失败: {str(e)}"
+            logger.error(
+                "执行修复操作失败，异常类型: %s，部署: %s，命名空间: %s",
+                type(e).__name__,
+                deployment_name,
+                namespace,
+            )
+            return "执行修复操作失败"
 
     async def _execute_additional_action(
         self, deployment_name: str, namespace: str, action: str
@@ -1161,8 +1191,13 @@ class K8sFixerAgent:
             # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
             raise
         except Exception as e:
-            logger.error(f"执行额外操作失败: {str(e)}")
-            return f"执行额外操作失败: {str(e)}"
+            logger.error(
+                "执行额外操作失败，异常类型: %s，部署: %s，命名空间: %s",
+                type(e).__name__,
+                deployment_name,
+                namespace,
+            )
+            return "执行额外操作失败"
 
     async def _verify_fix(self, deployment_name: str, namespace: str) -> str:
         """验证修复效果"""
@@ -1271,8 +1306,13 @@ class K8sFixerAgent:
             return f"就绪Pod: {ready_pods}/{total_pods} ({readiness_percentage:.1f}%)"
 
         except Exception as e:
-            logger.error(f"验证修复效果失败: {str(e)}")
-            return f"验证失败: {str(e)}"
+            logger.error(
+                "验证修复效果失败，异常类型: %s，部署: %s，命名空间: %s",
+                type(e).__name__,
+                deployment_name,
+                namespace,
+            )
+            return "验证失败"
 
     def _extract_pod_info(self, pod: Dict[str, Any]) -> Dict[str, Any]:
         """提取Pod信息"""
@@ -1327,7 +1367,7 @@ class K8sFixerAgent:
 
                 nodes_status = f"节点: {ready_nodes}/{total_nodes} 就绪"
             except Exception as e:
-                logger.error(f"获取节点状态失败: {str(e)}")
+                logger.error("获取节点状态失败，异常类型: %s，命名空间: %s", type(e).__name__, namespace)
 
             # 2. 获取Pod状态
             pods_status = "无法获取Pod状态"
@@ -1364,7 +1404,7 @@ class K8sFixerAgent:
                             f"...以及其他 {len(problematic_pods) - 5} 个问题Pod"
                         )
             except Exception as e:
-                logger.error(f"获取Pod状态失败: {str(e)}")
+                logger.error("获取Pod状态失败，异常类型: %s，命名空间: %s", type(e).__name__, namespace)
 
             # 3. 获取Deployment状态
             deployments_status = "无法获取部署状态"
@@ -1403,7 +1443,7 @@ class K8sFixerAgent:
                             f"- {d['name']}: {d['available']}/{d['desired']} 副本就绪\n"
                         )
             except Exception as e:
-                logger.error(f"获取部署状态失败: {str(e)}")
+                logger.error("获取部署状态失败，异常类型: %s，命名空间: %s", type(e).__name__, namespace)
 
             # 4. 获取最近事件
             events_info = "无法获取事件信息"
@@ -1437,7 +1477,7 @@ class K8sFixerAgent:
                 else:
                     events_info = "没有最近事件"
             except Exception as e:
-                logger.error(f"获取事件信息失败: {str(e)}")
+                logger.error("获取事件信息失败，异常类型: %s，命名空间: %s", type(e).__name__, namespace)
 
             # 汇总诊断结果
             diagnosis = f"""
@@ -1462,8 +1502,8 @@ class K8sFixerAgent:
             return diagnosis
 
         except Exception as e:
-            logger.error(f"诊断集群健康失败: {str(e)}")
-            return f"诊断集群健康失败: {str(e)}"
+            logger.error("诊断集群健康失败，异常类型: %s，命名空间: %s", type(e).__name__, namespace)
+            return "诊断集群健康失败"
 
     def _generate_diagnosis_recommendations(
         self, problematic_pods, problematic_deployments
@@ -1571,8 +1611,8 @@ class K8sFixerAgent:
                 # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
                 raise
             except Exception as fix_e:
-                logger.error(f"修复过程发生错误: {str(fix_e)}")
-                fix_result = f"修复过程发生错误: {str(fix_e)}"
+                logger.error("修复过程发生错误，异常类型: %s，部署: %s，命名空间: %s", type(fix_e).__name__, deployment, namespace)
+                fix_result = "修复过程发生错误"
 
             # 更新上下文
             context["result"] = fix_result
@@ -1606,15 +1646,15 @@ class K8sFixerAgent:
             # 门禁拒绝（FeatureDisabledError / NamespaceNotAllowedError）不得被吞成字符串结果
             raise
         except Exception as e:
-            logger.error(f"K8sFixer处理状态失败: {str(e)}")
+            logger.error("K8sFixer处理状态失败，异常类型: %s", type(e).__name__)
             # 确保context是一个字典
             try:
                 context = dict(state.context) if state.context else {}
-            except (TypeError, ValueError, AttributeError) as e:
-                logger.warning(f"转换状态上下文失败: {e}")
+            except (TypeError, ValueError, AttributeError) as convert_error:
+                logger.warning("转换状态上下文失败，异常类型: %s", type(convert_error).__name__)
                 context = {}
 
-            context["error"] = f"K8sFixer处理失败: {str(e)}"
+            context["error"] = "K8sFixer处理失败"
             from dataclasses import replace
 
             return replace(state, context=context)

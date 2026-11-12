@@ -144,9 +144,15 @@ async def _shutdown_application():
         if factory_cleanup.get("success", False):
             logger.info("ServiceFactory 所有服务清理完成")
         else:
-            logger.warning(f"ServiceFactory 清理存在失败: {factory_cleanup}")
+            failed_names = []
+            results = factory_cleanup.get("results", {}) if isinstance(factory_cleanup, dict) else {}
+            if isinstance(results, dict):
+                for name, item in results.items():
+                    if not (isinstance(item, dict) and item.get("success")):
+                        failed_names.append(str(name))
+            logger.warning("ServiceFactory 清理存在失败，服务: %s", ",".join(failed_names))
     except Exception as e:
-        logger.warning(f"ServiceFactory 清理失败: {e}")
+        logger.warning("ServiceFactory 清理失败，异常类型: %s", type(e).__name__)
 
     await cleanup_resources()
 
@@ -171,14 +177,10 @@ async def cleanup_resources():
             logger.warning("部分服务清理失败，但将继续关闭流程")
             for service_name, result in cleanup_results["services"].items():
                 if not result.get("success"):
-                    logger.warning(
-                        f"服务 {service_name} 清理失败: {result.get('error', '未知错误')}"
-                    )
+                    logger.warning("服务 %s 清理失败", service_name)
             for instance_name, result in cleanup_results["instances"].items():
                 if not result.get("success"):
-                    logger.warning(
-                        f"实例 {instance_name} 清理失败: {result.get('error', '未知错误')}"
-                    )
+                    logger.warning("实例 %s 清理失败", instance_name)
 
         # 额外的全局资源清理
         await _cleanup_global_resources()
@@ -186,7 +188,7 @@ async def cleanup_resources():
         logger.info("资源清理流程完成")
 
     except Exception as e:
-        logger.error(f"资源清理失败: {str(e)}")
+        logger.error("资源清理失败，异常类型: %s", type(e).__name__)
         # 即使清理失败，也要继续关闭流程
 
 
@@ -204,7 +206,7 @@ async def _cleanup_global_resources():
             # 这里可以添加全局缓存管理器的清理逻辑
             logger.debug("缓存资源清理检查完成")
         except Exception as e:
-            logger.debug(f"缓存资源清理检查时出错: {e}")
+            logger.debug("缓存资源清理检查时出错，异常类型: %s", type(e).__name__)
 
         # 强制垃圾回收
         import gc
@@ -213,7 +215,7 @@ async def _cleanup_global_resources():
         logger.debug("垃圾回收完成")
 
     except Exception as e:
-        logger.warning(f"全局资源清理时出错: {e}")
+        logger.warning("全局资源清理时出错，异常类型: %s", type(e).__name__)
 
 
 async def _register_managed_services():
@@ -447,7 +449,7 @@ class GracefulShutdown:
                     # 如果事件循环未运行，直接设置退出标志
                     self.logger.warning("事件循环未运行，设置退出标志")
             except Exception as e:
-                self.logger.error(f"启动优雅关闭流程失败: {e}")
+                self.logger.error("启动优雅关闭流程失败，异常类型: %s", type(e).__name__)
         else:
             self.logger.warning(f"已经开始关闭流程，忽略信号 {signal_name}")
 
@@ -481,7 +483,7 @@ class GracefulShutdown:
                 self.logger.info("优雅关闭流程完成")
 
             except Exception as e:
-                self.logger.error(f"优雅关闭流程失败: {e}")
+                self.logger.error("优雅关闭流程失败，异常类型: %s", type(e).__name__)
             finally:
                 # 强制退出
                 self.logger.info("正在退出应用...")

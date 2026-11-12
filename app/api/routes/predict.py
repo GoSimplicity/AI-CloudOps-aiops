@@ -51,6 +51,18 @@ except Exception:
 router = APIRouter(tags=["prediction"])
 prediction_service = None
 _backtest_slots = asyncio.Semaphore(2)
+_SAFE_BACKTEST_ERRORS = frozenset(
+    {
+        "回测记录数量须为 1 至 10000",
+        "回测窗口或最小历史样本数无效",
+        "回测时间必须包含时区",
+        "预测须先于目标，观测不能早于目标",
+        "预测与观测必须为有限数值",
+        "目标时间不能重复",
+        "不同预测跨度须分别回测",
+        "回测数据超出数值范围",
+    }
+)
 
 
 async def get_prediction_service() -> PredictionService:
@@ -93,7 +105,12 @@ async def backtest_prediction(payload: Any = Body(...)) -> Dict[str, Any]:
     try:
         return await asyncio.shield(task)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
+        # 回测模块写出的校验文案可以返回；其它 ValueError 不带原文。
+        message = str(exc)
+        if message not in _SAFE_BACKTEST_ERRORS:
+            logger.warning("回测失败，异常类型: %s", type(exc).__name__)
+            message = "回测请求无效"
+        raise HTTPException(status_code=400, detail=message) from None
 
 
 @router.post(
@@ -133,12 +150,12 @@ async def backtest_prediction(payload: Any = Body(...)) -> Dict[str, Any]:
                             "summary": "current_qps 不在允许范围",
                             "value": {
                                 "code": 422,
-                                "message": "1 validation error for QpsPredictionRequest\ncurrent_qps\n  Input should be greater than 0 (type=greater_than, input_value=-10, gt=0.0)",
+                                "message": "请求参数验证失败",
                                 "data": {
                                     "status_code": 422,
                                     "path": "/api/v1/predict/qps",
                                     "method": "POST",
-                                    "detail": "current_qps 应为大于 0 的数值",
+                                    "detail": "请求参数验证失败",
                                     "timestamp": "2025-01-01T00:00:00",
                                 },
                             },
@@ -188,11 +205,12 @@ async def predict_qps(
             req = QpsPredictionRequest(**payload)
             logger.debug(f"QPS预测请求参数验证通过: current_qps={req.current_qps}, prediction_hours={req.prediction_hours}")
         except Exception as e:
-            # 对数值范围等验证错误返回422
-            logger.warning(f"QPS预测请求参数验证失败: {str(e)}")
+            # 422 只说明参数无效，不回显校验器里的输入值
+            logger.warning("QPS预测请求参数验证失败，异常类型: %s", type(e).__name__)
             raise HTTPException(
-                status_code=HttpStatusCodes.UNPROCESSABLE_ENTITY, detail=str(e)
-            )
+                status_code=HttpStatusCodes.UNPROCESSABLE_ENTITY,
+                detail="请求参数验证失败",
+            ) from None
 
         # 延后初始化，避免无效请求触发服务逻辑
         await (await get_prediction_service()).initialize()
@@ -244,8 +262,8 @@ async def predict_qps(
         # 透传显式的HTTP错误（如不支持的参数 -> 400，Pydantic校验 -> 422）
         raise he
     except Exception as e:
-        logger.error(f"QPS预测失败: {str(e)}")
-        raise PredictionError(ErrorMessages.PREDICTION_SERVICE_ERROR)
+        logger.error("QPS预测失败，异常类型: %s", type(e).__name__)
+        raise PredictionError(ErrorMessages.PREDICTION_SERVICE_ERROR) from e
 
 
 @router.post(
@@ -323,8 +341,8 @@ async def predict_cpu(
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"CPU预测失败: {str(e)}")
-        raise PredictionError(ErrorMessages.PREDICTION_SERVICE_ERROR)
+        logger.error("CPU预测失败，异常类型: %s", type(e).__name__)
+        raise PredictionError(ErrorMessages.PREDICTION_SERVICE_ERROR) from e
 
 
 @router.post(
@@ -402,8 +420,8 @@ async def predict_memory(
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"内存预测失败: {str(e)}")
-        raise PredictionError(ErrorMessages.PREDICTION_SERVICE_ERROR)
+        logger.error("内存预测失败，异常类型: %s", type(e).__name__)
+        raise PredictionError(ErrorMessages.PREDICTION_SERVICE_ERROR) from e
 
 
 @router.post(
@@ -481,8 +499,8 @@ async def predict_disk(
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"磁盘预测失败: {str(e)}")
-        raise PredictionError(ErrorMessages.PREDICTION_SERVICE_ERROR)
+        logger.error("磁盘预测失败，异常类型: %s", type(e).__name__)
+        raise PredictionError(ErrorMessages.PREDICTION_SERVICE_ERROR) from e
 
 
 @router.get(
@@ -543,9 +561,8 @@ async def _prediction_ready_payload() -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        # 承接 SEC-26 P3-5：503 不把 str(e) 放进 details；日志只记异常类型，完整内容放 debug
+        # 503 不带依赖异常原文；日志只记异常类型，不附带可能含原文的堆栈
         logger.error("就绪检查失败，异常类型: %s", type(e).__name__)
-        logger.debug("就绪检查失败详情: %s", e, exc_info=True)
         raise ServiceUnavailableError("prediction") from e
 
 
@@ -687,8 +704,8 @@ async def model_info() -> Dict[str, Any]:
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"获取模型信息失败: {str(e)}")
-        raise PredictionError("获取模型信息失败")
+        logger.error("获取模型信息失败，异常类型: %s", type(e).__name__)
+        raise PredictionError("获取模型信息失败") from e
 
 
 _READY_MODEL_FIELDS = ("prediction_type", "status", "loaded", "fallback")

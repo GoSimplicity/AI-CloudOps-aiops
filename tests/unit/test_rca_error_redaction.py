@@ -468,7 +468,9 @@ async def test_cleanup_outer_failure_reraises_without_logging_original_text(capl
     service._recovery_clients = [_Client()]
     with pytest.raises(RuntimeError) as raised:
         await service.cleanup()
-    assert str(raised.value) == MARKER
+    assert str(raised.value) == "RCA服务资源清理失败"
+    assert raised.value.__cause__ is None
+    assert MARKER not in str(raised.value)
     text = _rendered(caplog, "aiops.services.rca")
     assert MARKER not in text
     assert "RuntimeError" in text

@@ -53,8 +53,8 @@ async def get_cache_stats() -> Dict[str, Any]:
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"获取缓存统计失败: {str(e)}")
-        raise ConfigurationError(f"获取缓存统计失败: {str(e)}")
+        logger.error("获取缓存统计失败，异常类型: %s", type(e).__name__)
+        raise ConfigurationError("获取缓存统计失败") from e
 
 
 @router.post(
@@ -93,8 +93,8 @@ async def clear_cache(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"清空缓存失败: {str(e)}")
-        raise ConfigurationError(f"清空缓存失败: {str(e)}")
+        logger.error("清空缓存失败，异常类型: %s", type(e).__name__)
+        raise ConfigurationError("清空缓存失败") from e
 
 
 @router.get(
@@ -112,8 +112,8 @@ async def get_cache_performance() -> Dict[str, Any]:
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"获取缓存性能报告失败: {str(e)}")
-        raise ConfigurationError(f"获取缓存性能报告失败: {str(e)}")
+        logger.error("获取缓存性能报告失败，异常类型: %s", type(e).__name__)
+        raise ConfigurationError("获取缓存性能报告失败") from e
 
 
 @router.get(
@@ -131,8 +131,8 @@ async def get_cache_config() -> Dict[str, Any]:
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"获取缓存配置失败: {str(e)}")
-        raise ConfigurationError(f"获取缓存配置失败: {str(e)}")
+        logger.error("获取缓存配置失败，异常类型: %s", type(e).__name__)
+        raise ConfigurationError("获取缓存配置失败") from e
 
 
 __all__ = ["router"]

@@ -178,7 +178,8 @@ class ServiceFactory:
                         await service.cleanup()
                         results["results"][name] = {"success": True}
                     except Exception as e:
-                        results["results"][name] = {"success": False, "error": str(e)}
+                        logger.error("服务 %s 清理失败，异常类型: %s", name, type(e).__name__)
+                        results["results"][name] = {"success": False, "error": "服务清理失败"}
                         results["success"] = False
                 return results
             finally:
