@@ -144,7 +144,7 @@ SEC-44 起，`auto_execute_enabled=true` 时一个动作要免确认执行，必
 | 503 | `SERVICE_UNAVAILABLE` | 依赖不可用（就绪检查失败时 `details` 不含异常文本）；diagnose 的上游超时 / Kubernetes 不可用（`details` 为空） |
 | 504 | `REQUEST_TIMEOUT` | 路由级整体超时（如 repair/diagnose 总耗时超限） |
 
-所有响应均不包含原始异常文本（`str(e)`）；完整堆栈只通过 `logger.exception` 记录在服务端。
+所有响应均不包含原始异常文本（`str(e)`）。路由日志只记异常类型，不附堆栈；服务层仍按 SEC-26 用 `logger.exception` 保留堆栈。
 
 #### diagnose 错误映射
 
@@ -176,7 +176,7 @@ SEC-44 起，`auto_execute_enabled=true` 时一个动作要免确认执行，必
    - **409（可能已产生副作用）**：重复确认/并发确认/重放、计划目标或动作在重新校验时发生变化，以及执行中途失败或部分执行。409 禁止盲目重试，应先人工核对集群实际状态。
 3. **功能关闭时**：`/autofix/repair`、`/autofix/bootstrap` 在开关关闭时返回 **HTTP 403**，响应体 `{"code": 403, "message": "自动修复入口 /autofix/repair 已关闭（autofix.repair_enabled / AUTOFIX_REPAIR_ENABLED=false）…", "data": {...}}`（bootstrap 同理，message 指明 `autofix.bootstrap_enabled`）。`data.error_code = "AUTOFIX_FEATURE_DISABLED"`，`data.details = {"switch": "autofix.repair_enabled" | "autofix.bootstrap_enabled"}`。缺少可信主体时仍先返回 401。关闭时不会初始化 Kubernetes 客户端。
    **`/autofix/bootstrap` 开启但命名空间不允许时**：目标命名空间 `test` 不在 `AUTOFIX_ALLOWED_NAMESPACES` 内（含白名单为空）或属于受限命名空间，返回 **HTTP 403**，`data.error_code = "AUTOFIX_NAMESPACE_NOT_ALLOWED"`，`data.details = {"namespace": "test", "switch": "autofix.allowed_namespaces"}`，message 示例：`测试资源引导入口 /autofix/bootstrap 已开启，但目标命名空间 test 不在白名单内：autofix.allowed_namespaces / AUTOFIX_ALLOWED_NAMESPACES 为空（fail-closed），请将 test 加入 AUTOFIX_ALLOWED_NAMESPACES；已拒绝创建测试资源`。此检查同样先于服务初始化，拒绝时不初始化 Kubernetes 客户端、不创建命名空间或任何资源。要使用 bootstrap 需同时设置 `AUTOFIX_BOOTSTRAP_ENABLED=true` 与 `AUTOFIX_ALLOWED_NAMESPACES` 包含 `test`。判定顺序：401（无可信主体）→ 403 `AUTOFIX_FEATURE_DISABLED` → 403 `AUTOFIX_NAMESPACE_NOT_ALLOWED`。
-4. **`/autofix/repair` 开启后**：不再直接修改集群，内部改走与 `/autofix/workflow` 相同的计划→确认链路，且**固定只出计划**：即使同时设置 `AUTOFIX_AUTO_EXECUTE_ENABLED=true`，repair 也不会免确认执行任何动作（`status = "needs_human_confirmation"`、`executed_actions = []`），必须经确认接口执行；该限制只作用于 repair 本次调用，不影响并发的 `/autofix/workflow` 请求。响应保留 `status/deployment/namespace/success/actions_taken/timestamp/execution_time` 字段，并新增 `next_action`、`plan_id`、`approval`、`candidate_actions`、`blocked_actions`、`review`；默认 `success=false`、`actions_taken=[]`，需要按 `approval.confirm_endpoint` 确认。`force=true` 返回 400（force 修复已停用）。Kubernetes API 错误（`ApiException`）或上游超时返回 HTTP 502、`data.error_code = "AUTOFIX_ERROR"`（debug 文案“自动修复错误: 修复操作失败”）；其他未预期内部异常返回 HTTP 500、`data.error_code = "AUTOFIX_INTERNAL_ERROR"`（debug 文案“自动修复内部错误: 修复操作失败”）；非 debug 模式或生产环境 message 为“内部服务器错误”（均不拼接异常文本），完整异常堆栈仅记录在服务端日志（`logger.exception`）。旧实现中的硬编码回退镜像替换与 force 激进规则已删除，不能通过开关恢复。
+4. **`/autofix/repair` 开启后**：不再直接修改集群，内部改走与 `/autofix/workflow` 相同的计划→确认链路，且**固定只出计划**：即使同时设置 `AUTOFIX_AUTO_EXECUTE_ENABLED=true`，repair 也不会免确认执行任何动作（`status = "needs_human_confirmation"`、`executed_actions = []`），必须经确认接口执行；该限制只作用于 repair 本次调用，不影响并发的 `/autofix/workflow` 请求。响应保留 `status/deployment/namespace/success/actions_taken/timestamp/execution_time` 字段，并新增 `next_action`、`plan_id`、`approval`、`candidate_actions`、`blocked_actions`、`review`；默认 `success=false`、`actions_taken=[]`，需要按 `approval.confirm_endpoint` 确认。`force=true` 返回 400（force 修复已停用）。Kubernetes API 错误（`ApiException`）或上游超时返回 HTTP 502、`data.error_code = "AUTOFIX_ERROR"`（debug 文案“自动修复错误: 修复操作失败”）；其他未预期内部异常返回 HTTP 500、`data.error_code = "AUTOFIX_INTERNAL_ERROR"`（debug 文案“自动修复内部错误: 修复操作失败”）；非 debug 模式或生产环境 message 为“内部服务器错误”（均不拼接异常文本），服务端路由日志只记部署名与异常类型，不记录异常原文或堆栈。旧实现中的硬编码回退镜像替换与 force 激进规则已删除，不能通过开关恢复。
 5. `GET /api/v1/autofix/config` 新增 `data.execution_policy`，返回上述四个开关的当前值与 `confirm_endpoint`。
 
 ### API 接口说明

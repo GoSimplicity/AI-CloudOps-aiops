@@ -1,4 +1,4 @@
-"""SEC-26 P3-1：autofix 响应不再携带 str(e)；服务端 logger.exception 保留堆栈；remediation 日志只记类型与 action_id（全部离线）"""
+"""SEC-26 P3-1：autofix 响应不再携带 str(e)；路由日志只记类型；服务层 logger.exception 仍保留堆栈；remediation 日志只记类型与 action_id（全部离线）"""
 
 import logging
 from unittest.mock import AsyncMock, MagicMock
@@ -31,6 +31,25 @@ def assert_logged_with_traceback(caplog, logger_prefix: str, error_type: str = "
     for record in records:
         assert SECRET not in record.getMessage()  # 日志正文只有异常类型，异常内容仅在服务端堆栈里
         assert error_type in record.getMessage()
+
+
+def assert_route_logged_type_only(caplog, fragment: str, error_type: str = "LeakyError") -> None:
+    """路由失败只记类型和必要上下文，正文与堆栈都不得出现异常原文。"""
+    records = [r for r in caplog.records if r.name == "aiops.api.autofix" and fragment in r.getMessage()]
+    assert len(records) == 1
+    record = records[0]
+    assert record.exc_info is None
+    assert error_type in record.getMessage()
+    assert SECRET not in record.getMessage()
+    rendered = []
+    for item in caplog.records:
+        if not item.name.startswith("aiops"):
+            continue
+        assert item.exc_info is None
+        rendered.append(item.getMessage())
+    text = "\n".join(rendered)
+    assert SECRET not in text
+    assert "Traceback" not in text
 
 
 def assert_error_logged_without_traceback(caplog, logger_prefix: str, error_type: str) -> None:
@@ -66,7 +85,7 @@ def test_ready_route_hides_exception(monkeypatch, caplog) -> None:
     assert response.status_code == 503
     assert SECRET not in response.text
     assert response.json()["data"]["error_code"] == "SERVICE_UNAVAILABLE"
-    assert_logged_with_traceback(caplog, "aiops")
+    assert_route_logged_type_only(caplog, "自动修复就绪检查失败")
 
 
 def test_bootstrap_route_hides_exception(monkeypatch, caplog) -> None:
@@ -82,7 +101,7 @@ def test_bootstrap_route_hides_exception(monkeypatch, caplog) -> None:
     assert SECRET not in response.text
     assert response.json()["data"]["detail"] == "自动修复内部错误: 引导故障资源失败"
     assert response.json()["data"]["error_code"] == "AUTOFIX_INTERNAL_ERROR"
-    assert_logged_with_traceback(caplog, "aiops")
+    assert_route_logged_type_only(caplog, "引导故障资源失败")
 
 
 def test_diagnose_route_hides_exception(monkeypatch, caplog) -> None:
@@ -97,7 +116,7 @@ def test_diagnose_route_hides_exception(monkeypatch, caplog) -> None:
     assert SECRET not in response.text
     assert response.json()["data"]["detail"] == "自动修复内部错误: 诊断操作失败"
     assert response.json()["data"]["error_code"] == "AUTOFIX_INTERNAL_ERROR"
-    assert_logged_with_traceback(caplog, "aiops")
+    assert_route_logged_type_only(caplog, "诊断失败")
 
 
 async def test_service_initialize_hides_exception(monkeypatch, caplog) -> None:

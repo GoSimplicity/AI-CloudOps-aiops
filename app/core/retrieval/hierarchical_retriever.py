@@ -522,7 +522,7 @@ class HierarchicalRetriever:
             return final_result
 
         except Exception as e:
-            logger.error(f"层次化检索失败: {e}")
+            logger.error("层次化检索失败，异常类型: %s", type(e).__name__)
             return []
 
     async def _coarse_retrieval(self, context: RetrievalContext, k: int) -> StageResult:
@@ -591,7 +591,7 @@ class HierarchicalRetriever:
             original_results = list(vector_results)
 
         except Exception as e:
-            logger.warning(f"向量搜索失败: {e}")
+            logger.warning("向量搜索失败，异常类型: %s", type(e).__name__)
 
         # 合并结果
         all_candidates = {}
@@ -927,7 +927,7 @@ class HierarchicalRetriever:
             if vec_bytes:
                 return np.frombuffer(vec_bytes, dtype=np.float32)
         except Exception as e:
-            logger.warning(f"获取文档嵌入失败: {e}")
+            logger.warning("获取文档嵌入失败，异常类型: %s", type(e).__name__)
 
         return None
 
