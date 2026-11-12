@@ -724,7 +724,10 @@ class PredictionService(BaseService, HealthCheckMixin):
             raise
         except Exception as e:
             self.logger.error("增强预测失败，异常类型: %s", type(e).__name__)
-            # 降级到基础预测
+            # 组件存在时是分析失败；组件缺失时保持「不可用」
+            fallback_reason = (
+                "AI分析失败" if self._intelligent_predictor else "AI增强组件不可用"
+            )
             return await self._fallback_to_basic_prediction(
                 PredictionType(prediction_type),
                 current_value,
@@ -734,6 +737,7 @@ class PredictionService(BaseService, HealthCheckMixin):
                 resource_constraints,
                 target_utilization,
                 sensitivity,
+                fallback_reason=fallback_reason,
             )
 
     async def predict_multi_dimension_with_correlation(
@@ -952,6 +956,7 @@ class PredictionService(BaseService, HealthCheckMixin):
         resource_constraints: Optional[Dict],
         target_utilization: float,
         sensitivity: float,
+        fallback_reason: str = "AI增强组件不可用",
     ) -> Dict[str, Any]:
         """降级到基础预测"""
 
@@ -1004,7 +1009,7 @@ class PredictionService(BaseService, HealthCheckMixin):
         result.update(
             {
                 "ai_enhanced": False,
-                "ai_fallback_reason": "AI增强组件不可用",
+                "ai_fallback_reason": fallback_reason,
                 "ai_insights": [
                     "当前使用基础预测模式",
                     "AI增强功能暂时不可用",

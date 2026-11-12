@@ -202,7 +202,7 @@ async def get_all_prometheus_metrics() -> Dict[str, Any]:
 @api_response("AI-CloudOps RCA服务健康检查")
 async def rca_health() -> Dict[str, Any]:
     """兼容前端健康检查入口，复用就绪检查逻辑。"""
-    return await rca_ready()
+    return await _rca_ready_payload()
 
 
 @router.get(
@@ -213,6 +213,11 @@ async def rca_health() -> Dict[str, Any]:
 @api_response("AI-CloudOps RCA服务就绪检查")
 async def rca_ready() -> Dict[str, Any]:
     """检查RCA服务就绪状态"""
+    return await _rca_ready_payload()
+
+
+async def _rca_ready_payload() -> Dict[str, Any]:
+    """就绪与健康检查共用的响应体，由各自的 api_response 包一层。"""
     try:
         await (await get_rca_service()).initialize()
         health_status = await (await get_rca_service()).get_health_status()

@@ -80,7 +80,6 @@ async def test_ai_exception_still_returns_rule_prediction_without_the_error_text
     assert "downstream-failure-marker" not in str(result)
 
 
-@pytest.mark.xfail(strict=True, reason="已知问题：增强预测抛错时 ai_fallback_reason 仍写成组件不可用，见 PR 描述")
 async def test_ai_exception_reports_analysis_failure(offline_cache):
     service = await _service()
     service._intelligent_predictor = Mock()

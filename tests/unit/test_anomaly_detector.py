@@ -55,7 +55,6 @@ async def test_named_methods_and_unknown_method_return_scored_anomalies(method):
     assert all(0.0 <= item.anomaly_score <= 1.0 for item in found)
 
 
-@pytest.mark.xfail(strict=True, reason="已知问题：四分位距为 0 时异常分数除以 0，见 PR 描述")
 async def test_iqr_with_zero_quartile_width_does_not_divide_by_zero():
     series = points([10.0] * 20 + [100.0] + [10.0] * 20)
     with warnings.catch_warnings():
@@ -63,6 +62,27 @@ async def test_iqr_with_zero_quartile_width_does_not_divide_by_zero():
         found = await AnomalyDetector().detect_anomalies(series, sensitivity=0.9, method="iqr")
     assert any(item.predicted_value == 100.0 for item in found)
     assert all(0.0 <= item.anomaly_score <= 1.0 for item in found)
+
+
+@pytest.mark.parametrize(
+    ("method", "sensitivity", "outlier", "expects_outlier"),
+    [
+        ("zscore", 0.8, 12.0, True),
+        ("mad", 0.8, 12.0, False),
+        ("mad", 0.2, 15.0, False),
+        ("mad", 0.95, 15.0, True),
+    ],
+)
+async def test_detector_follows_anomaly_detection_config(monkeypatch, method, sensitivity, outlier, expects_outlier):
+    from app.config import settings
+
+    prediction = dict(settings.CONFIG.get("prediction") or {})
+    prediction["anomaly_detection"] = {"default_method": method, "default_sensitivity": sensitivity}
+    monkeypatch.setitem(settings.CONFIG, "prediction", prediction)
+
+    found = await AnomalyDetector().detect_anomalies(points([10.0] * 10 + [outlier] + [10.0] * 10))
+    flagged = [item for item in found if item.predicted_value == outlier]
+    assert bool(flagged) is expects_outlier
 
 
 async def test_flat_series_does_not_raise():

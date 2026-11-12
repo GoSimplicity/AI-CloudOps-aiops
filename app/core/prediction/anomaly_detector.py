@@ -46,7 +46,7 @@ class AnomalyDetector:
             # 从配置文件获取默认值
             from app.config.settings import config
 
-            anomaly_config = getattr(config.prediction, "anomaly_detection", {})
+            anomaly_config = config.prediction.anomaly_detection_config
 
             # 使用传入值或配置文件默认值
             if sensitivity is None:
@@ -143,13 +143,14 @@ class AnomalyDetector:
         lower_bound = q1 - k * iqr
         upper_bound = q3 + k * iqr
 
-        # 计算异常分数
+        # 四分位距为 0 时序列没有离散度，用绝对偏差计分，避免除以 0
+        score_scale = float(iqr) if iqr > 0 else 1.0
         scores = np.zeros(len(values))
         for i, v in enumerate(values):
             if v < lower_bound:
-                scores[i] = abs(v - lower_bound) / iqr
+                scores[i] = abs(float(v) - float(lower_bound)) / score_scale
             elif v > upper_bound:
-                scores[i] = abs(v - upper_bound) / iqr
+                scores[i] = abs(float(v) - float(upper_bound)) / score_scale
 
         # 找出异常点
         anomaly_indices = np.where((values < lower_bound) | (values > upper_bound))[

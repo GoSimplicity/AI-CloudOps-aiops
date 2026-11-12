@@ -10,6 +10,7 @@ Description: 数据验证工具
 """
 
 from datetime import datetime
+import math
 import re
 from typing import List
 
@@ -53,14 +54,21 @@ def validate_namespace(namespace: str) -> bool:
     return bool(re.match(pattern, namespace)) and len(namespace) <= 63
 
 
+def _is_finite_number(value: object) -> bool:
+    """业务数值必须是有限的 int/float。bool 是 int 的子类，不能当成 QPS 或置信度。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
+
+
 def validate_qps(qps: float) -> bool:
     """验证QPS值"""
-    return isinstance(qps, (int, float)) and qps >= 0
+    return _is_finite_number(qps) and qps >= 0
 
 
 def validate_confidence(confidence: float) -> bool:
     """验证置信度值"""
-    return isinstance(confidence, (int, float)) and 0 <= confidence <= 1
+    return _is_finite_number(confidence) and 0 <= confidence <= 1
 
 
 def validate_metric_list(metrics: List[str]) -> bool:

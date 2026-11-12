@@ -52,9 +52,11 @@ def test_time_range_rejects_empty_inverted_future_and_overlong():
     assert validate_time_range(past - timedelta(minutes=1), past, max_range_minutes=0) is False
 
 
-@pytest.mark.xfail(strict=True, reason="已知问题：naive datetime 与带时区的当前时间比较会抛 TypeError，而不是返回 False，见 PR 描述")
 def test_naive_datetimes_return_false():
+    aware = datetime(2020, 1, 1, 1, 0, tzinfo=timezone.utc)
     assert validate_time_range(datetime(2020, 1, 1, 0, 0, 0), datetime(2020, 1, 1, 1, 0, 0)) is False
+    assert validate_time_range(datetime(2020, 1, 1, 0, 0, 0), aware) is False
+    assert validate_time_range(aware, datetime(2020, 1, 1, 2, 0, 0)) is False
 
 
 @pytest.mark.parametrize(
@@ -123,14 +125,19 @@ def test_qps_rejects_negative_and_non_numeric(value):
     assert validate_qps(value) is False
 
 
-@pytest.mark.xfail(strict=True, reason="已知问题：bool 被当成数字，正无穷也能通过 QPS 检查，见 PR 描述")
-def test_qps_and_confidence_reject_booleans_and_positive_infinity():
-    assert validate_qps(True) is False
-    assert validate_qps(False) is False
-    assert validate_qps(float("inf")) is False
-    assert validate_confidence(True) is False
-    assert validate_confidence(False) is False
-    assert validate_confidence(float("inf")) is False
+@pytest.mark.parametrize(
+    ("validator", "value"),
+    [
+        (validate_qps, True),
+        (validate_qps, False),
+        (validate_qps, float("inf")),
+        (validate_confidence, True),
+        (validate_confidence, False),
+        (validate_confidence, float("inf")),
+    ],
+)
+def test_qps_and_confidence_reject_booleans_and_positive_infinity(validator, value):
+    assert validator(value) is False
 
 
 @pytest.mark.parametrize("value", [0, 0.0, 0.5, 1, 1.0])
