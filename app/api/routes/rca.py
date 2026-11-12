@@ -190,8 +190,8 @@ async def get_all_prometheus_metrics() -> Dict[str, Any]:
         # 领域异常交给中间件处理为统一响应
         raise e
     except Exception as e:
-        logger.error(f"获取Prometheus指标失败: {str(e)}")
-        raise RCAError(ErrorMessages.RCA_SERVICE_ERROR)
+        logger.error("获取Prometheus指标失败，异常类型: %s", type(e).__name__)
+        raise RCAError(ErrorMessages.RCA_SERVICE_ERROR) from e
 
 
 @router.get(
@@ -243,9 +243,8 @@ async def _rca_ready_payload() -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        # 承接 SEC-26 P3-5：503 不把 str(e) 放进 details；日志只记异常类型，完整内容放 debug
+        # 503 不带依赖异常原文；日志只记异常类型，不附带可能含原文的堆栈
         logger.error("就绪检查失败，异常类型: %s", type(e).__name__)
-        logger.debug("就绪检查失败详情: %s", e, exc_info=True)
         raise ServiceUnavailableError("rca") from e
 
 
@@ -277,8 +276,8 @@ async def get_rca_config() -> Dict[str, Any]:
     except (AIOpsException, DomainValidationError):
         raise
     except Exception as e:
-        logger.error(f"获取RCA配置失败: {str(e)}")
-        raise RCAError(f"配置获取失败: {str(e)}")
+        logger.error("获取RCA配置失败，异常类型: %s", type(e).__name__)
+        raise RCAError("配置获取失败") from e
 
 
 @router.post(
@@ -638,8 +637,8 @@ async def get_cache_stats() -> Dict[str, Any]:
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"获取缓存统计失败: {str(e)}")
-        raise RCAError(f"获取缓存统计失败: {str(e)}")
+        logger.error("获取缓存统计失败，异常类型: %s", type(e).__name__)
+        raise RCAError("获取缓存统计失败") from e
 
 
 @router.delete(
@@ -665,8 +664,8 @@ async def clear_all_cache() -> Dict[str, Any]:
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"清理缓存失败: {str(e)}")
-        raise RCAError(f"清理缓存失败: {str(e)}")
+        logger.error("清理缓存失败，异常类型: %s", type(e).__name__)
+        raise RCAError("清理缓存失败") from e
 
 
 @router.post(
@@ -699,8 +698,12 @@ async def clear_namespace_cache(
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"清理命名空间缓存失败: {str(e)}")
-        raise RCAError(f"清理命名空间缓存失败: {str(e)}")
+        logger.error(
+            "清理命名空间缓存失败，异常类型: %s，命名空间: %s",
+            type(e).__name__,
+            request.namespace,
+        )
+        raise RCAError("清理命名空间缓存失败") from e
 
 
 @router.post(
@@ -733,8 +736,12 @@ async def clear_operation_cache(
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        logger.error(f"清理操作缓存失败: {str(e)}")
-        raise RCAError(f"清理操作缓存失败: {str(e)}")
+        logger.error(
+            "清理操作缓存失败，异常类型: %s，操作: %s",
+            type(e).__name__,
+            request.operation,
+        )
+        raise RCAError("清理操作缓存失败") from e
 
 
 @router.get(

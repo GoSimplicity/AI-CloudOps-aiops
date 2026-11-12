@@ -213,7 +213,12 @@ class BaseDataCollector(ABC):
             except Exception as e:
                 last_exception = e
                 self.logger.warning(
-                    f"数据收集失败 (尝试 {attempt + 1}/{max_retries + 1}): {str(e)}"
+                    "数据收集失败 (尝试 %s/%s)，异常类型: %s，收集器: %s，命名空间: %s",
+                    attempt + 1,
+                    max_retries + 1,
+                    type(e).__name__,
+                    self.name,
+                    namespace,
                 )
 
                 if attempt == max_retries:
