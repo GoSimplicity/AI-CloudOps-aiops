@@ -122,8 +122,8 @@ async def autofix_ready() -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        # 响应不携带异常内容；完整堆栈只进服务端日志
-        logger.exception(f"自动修复就绪检查失败, 错误类型: {type(e).__name__}")
+        # 响应不携带异常内容；日志只记异常类型，不附堆栈
+        logger.error("自动修复就绪检查失败, 错误类型: %s", type(e).__name__)
         raise ServiceUnavailableError("autofix") from e
 
 
@@ -463,9 +463,8 @@ async def autofix_k8s(
                     fix_result.get("actions_taken", []),
                 )
             except Exception as e:
-                # 承接 SEC-26 P3-3：warning 只记异常类型，完整内容放 debug
+                # 通知任务失败不影响已返回的修复结果；只记异常类型，不记录原文或堆栈
                 logger.warning("添加通知任务失败，异常类型: %s", type(e).__name__)
-                logger.debug("添加通知任务失败详情: %s", e, exc_info=True)
 
         approval = fix_result.get("approval") or {}
         data = {
@@ -494,8 +493,8 @@ async def autofix_k8s(
     except (AIOpsException, DomainValidationError) as e:
         raise e
     except Exception as e:
-        # 响应不拼接 str(e)；服务端用 logger.exception 保留完整异常堆栈（只附部署名与异常类型，不记录请求头/配置）
-        logger.exception(f"自动修复失败 - 部署: {request.deployment}, 错误类型: {type(e).__name__}")
+        # 响应不拼接异常原文；日志只记部署名与异常类型，不附堆栈，也不记录请求头或配置
+        logger.error("自动修复失败 - 部署: %s, 错误类型: %s", request.deployment, type(e).__name__)
         raise _upstream_or_internal(e, "修复操作失败") from e
 
 
@@ -526,7 +525,7 @@ async def bootstrap_faulty_resources() -> Dict[str, Any]:
     except (FeatureDisabledError, NamespaceNotAllowedError):
         raise
     except Exception as e:
-        logger.exception(f"引导故障资源失败, 错误类型: {type(e).__name__}")
+        logger.error("引导故障资源失败, 错误类型: %s", type(e).__name__)
         raise _upstream_or_internal(e, "引导故障资源失败") from e
 
 
@@ -675,7 +674,7 @@ async def diagnose_k8s(
         # 不再统一改写为 400 + str(e)。SEC-26 P3-e：服务层已把上游超时 / K8s 不可用映射为 503
         raise
     except Exception as e:
-        logger.exception(f"诊断失败 - 部署: {request.deployment}, 错误类型: {type(e).__name__}")
+        logger.error("诊断失败 - 部署: %s, 错误类型: %s", request.deployment, type(e).__name__)
         raise _diagnose_unavailable_or_internal(e, "诊断操作失败") from e
 
 

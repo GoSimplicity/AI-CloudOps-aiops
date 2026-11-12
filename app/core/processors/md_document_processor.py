@@ -824,7 +824,7 @@ class MDDocumentProcessor:
                 self._adjust_weights_from_enhancement(chunk, chunk_enhanced)
 
             except Exception as e:
-                logger.warning(f"块 {i} 元数据增强失败: {e}")
+                logger.warning("块 %s 元数据增强失败，异常类型: %s", i, type(e).__name__)
 
         logger.debug("块元数据增强完成")
 
@@ -866,7 +866,7 @@ class MDDocumentProcessor:
             chunk.structural_weight = max(0.5, min(chunk.structural_weight, 2.0))
 
         except Exception as e:
-            logger.warning(f"权重调整失败: {e}")
+            logger.warning("权重调整失败，异常类型: %s", type(e).__name__)
 
     def _get_cache_key(self, content: str, metadata_str: str) -> str:
         """生成缓存键"""

@@ -280,7 +280,11 @@ def test_p3_3_route_notification_failure_logs_type_only(monkeypatch, caplog) -> 
     warnings = [r.getMessage() for r in caplog.records if r.name == "aiops.api.autofix" and r.levelno == logging.WARNING]
     assert any("LeakyError" in m for m in warnings)
     assert all(SECRET not in m for m in warnings)
-    assert any(SECRET in r.getMessage() for r in caplog.records if r.name == "aiops.api.autofix" and r.levelno == logging.DEBUG)
+    autofix_records = [r for r in caplog.records if r.name == "aiops.api.autofix"]
+    assert all(r.exc_info is None for r in autofix_records)
+    rendered = "\n".join(r.getMessage() for r in autofix_records)
+    assert SECRET not in rendered
+    assert "Traceback" not in rendered
 
 
 # ---------------------------------------------------------------- P3-5：就绪检查 503 不带 str(e)

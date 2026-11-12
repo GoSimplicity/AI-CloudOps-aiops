@@ -315,7 +315,7 @@ async def test_service_level_bootstrap_namespace_check_is_defense_in_depth(monke
     assert_bootstrap_untouched(service, k8s_service)
 
 
-def test_repair_generic_failure_hides_detail_but_logs_full_exception(monkeypatch, caplog) -> None:
+def test_repair_generic_failure_hides_detail_and_logs_type_only(monkeypatch, caplog) -> None:
     import logging
 
     monkeypatch.setattr(config.autofix, "repair_enabled", True)
@@ -333,9 +333,12 @@ def test_repair_generic_failure_hides_detail_but_logs_full_exception(monkeypatch
     records = [r for r in caplog.records if r.name == "aiops.api.autofix" and "自动修复失败" in r.getMessage()]
     assert len(records) == 1
     record = records[0]
-    assert record.exc_info is not None and record.exc_info[0] is RuntimeError
+    assert record.exc_info is None
     assert "RuntimeError" in record.getMessage() and "api" in record.getMessage()
-    # 日志消息本身只含部署名和异常类型；不得带出 API Key / kubeconfig 等配置
+    # 日志只含部署名和异常类型；原文、堆栈、API Key / kubeconfig 都不得出现
     assert secret_like not in record.getMessage()
+    assert secret_like not in caplog.text
+    assert "Traceback" not in caplog.text
+    assert all(item.exc_info is None for item in caplog.records if item.name == "aiops.api.autofix")
     assert KEY not in caplog.text
     assert "kubeconfig" not in caplog.text.lower()
