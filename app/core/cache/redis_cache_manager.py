@@ -137,8 +137,8 @@ class RedisCacheManager:
                 self._reset_stats()
 
         except Exception as e:
-            logger.error(f"Redis缓存管理器初始化失败: {e}")
-            raise RuntimeError(f"无法连接到Redis缓存: {e}")
+            logger.error("Redis缓存管理器初始化失败，异常类型: %s", type(e).__name__)
+            raise RuntimeError("无法连接到Redis缓存") from e
 
     def _reset_stats(self):
         """重置统计信息"""
@@ -271,8 +271,8 @@ class RedisCacheManager:
             return b"raw:" + serialized
 
         except Exception as e:
-            logger.error(f"数据序列化失败: {e}")
-            raise
+            logger.error("数据序列化失败，异常类型: %s", type(e).__name__)
+            raise RuntimeError("数据序列化失败") from e
 
     def _deserialize_data(self, data: bytes) -> Any:
         """反序列化数据"""
@@ -291,7 +291,7 @@ class RedisCacheManager:
                 return pickle.loads(data)
 
         except Exception as e:
-            logger.error(f"数据反序列化失败: {e}")
+            logger.error("数据反序列化失败，异常类型: %s", type(e).__name__)
             return None
 
     def _update_stats(self, operation: str):
@@ -303,7 +303,7 @@ class RedisCacheManager:
                     pipe.hincrby(self.stats_key, f"cache_{operation}s", 1)
                 pipe.execute()
         except Exception as e:
-            logger.warning(f"更新统计信息失败: {e}")
+            logger.warning("更新统计信息失败，异常类型: %s", type(e).__name__)
 
     def get(
         self, question: str, session_id: str = None, history: List = None
@@ -346,14 +346,14 @@ class RedisCacheManager:
                 serialized = self._serialize_data(entry.to_dict())
                 self.redis_client.setex(cache_key, self.default_ttl, serialized)
             except Exception as e:
-                logger.warning(f"更新缓存访问信息失败: {e}")
+                logger.warning("更新缓存访问信息失败，异常类型: %s", type(e).__name__)
 
             self._update_stats("hit")
             logger.debug(f"缓存命中: {cache_key[:DEBUG_KEY_LENGTH]}...")
             return entry.data
 
         except Exception as e:
-            logger.error(f"获取缓存失败: {e}")
+            logger.error("获取缓存失败，异常类型: %s", type(e).__name__)
             return None
 
     def set(
@@ -390,7 +390,7 @@ class RedisCacheManager:
             logger.debug(f"设置缓存: {cache_key[:DEBUG_KEY_LENGTH]}...")
 
         except Exception as e:
-            logger.error(f"设置缓存失败: {e}")
+            logger.error("设置缓存失败，异常类型: %s", type(e).__name__)
 
     def _cleanup_if_needed(self):
         """根据需要清理缓存"""
@@ -437,7 +437,7 @@ class RedisCacheManager:
                 logger.info(f"清理了 {to_remove} 个缓存条目")
 
         except Exception as e:
-            logger.error(f"缓存清理失败: {e}")
+            logger.error("缓存清理失败，异常类型: %s", type(e).__name__)
 
     def clear_pattern(self, pattern: str) -> Dict[str, Any]:
         """根据模式清除缓存"""
@@ -470,10 +470,10 @@ class RedisCacheManager:
             }
 
         except Exception as e:
-            logger.error(f"根据模式清除缓存失败: {e}")
+            logger.error("根据模式清除缓存失败，异常类型: %s，模式: %s", type(e).__name__, pattern)
             return {
                 "success": False,
-                "message": f"根据模式清除缓存失败: {e}",
+                "message": "根据模式清除缓存失败",
                 "cleared_count": 0,
                 "pattern": pattern,
             }
@@ -509,10 +509,10 @@ class RedisCacheManager:
             }
 
         except Exception as e:
-            logger.error(f"清空缓存失败: {e}")
+            logger.error("清空缓存失败，异常类型: %s", type(e).__name__)
             return {
                 "success": False,
-                "message": f"清空缓存失败: {e}",
+                "message": "清空缓存失败",
                 "cleared_count": 0,
             }
 
@@ -539,7 +539,7 @@ class RedisCacheManager:
             }
 
         except Exception as e:
-            logger.error(f"获取统计信息失败: {e}")
+            logger.error("获取统计信息失败，异常类型: %s", type(e).__name__)
             return {}
 
     def health_check(self) -> Dict[str, Any]:
@@ -558,8 +558,8 @@ class RedisCacheManager:
             }
 
         except Exception as e:
-            logger.error(f"缓存健康检查失败: {e}")
-            return {"status": "unhealthy", "error": str(e), "redis_connected": False}
+            logger.error("缓存健康检查失败，异常类型: %s", type(e).__name__)
+            return {"status": "unhealthy", "error": "缓存健康检查失败", "redis_connected": False}
 
     def get_embedding_cache(self, text: str) -> Optional[List[float]]:
         """获取嵌入向量缓存"""
@@ -591,7 +591,7 @@ class RedisCacheManager:
             return embedding_data.get("embedding")
 
         except Exception as e:
-            logger.error(f"获取嵌入向量缓存失败: {e}")
+            logger.error("获取嵌入向量缓存失败，异常类型: %s", type(e).__name__)
             return None
 
     def set_embedding_cache(self, text: str, embedding: List[float], ttl: int = 86400):
@@ -619,7 +619,7 @@ class RedisCacheManager:
             logger.debug(f"嵌入向量缓存设置: {embedding_key[:16]}...")
 
         except Exception as e:
-            logger.error(f"设置嵌入向量缓存失败: {e}")
+            logger.error("设置嵌入向量缓存失败，异常类型: %s", type(e).__name__)
 
     def _generate_embedding_key(self, text: str) -> str:
         """生成嵌入向量缓存键"""
@@ -632,8 +632,8 @@ class RedisCacheManager:
             pattern = f"{self.cache_prefix}embedding:*"
             return self.clear_pattern(pattern)
         except Exception as e:
-            logger.error(f"清除嵌入向量缓存失败: {e}")
-            return {"success": False, "message": f"清除失败: {e}", "cleared_count": 0}
+            logger.error("清除嵌入向量缓存失败，异常类型: %s", type(e).__name__)
+            return {"success": False, "message": "清除失败", "cleared_count": 0}
 
     def shutdown(self):
         """关闭缓存管理器"""
@@ -642,7 +642,7 @@ class RedisCacheManager:
             self.connection_pool.disconnect()
             logger.info("Redis缓存管理器已关闭")
         except Exception as e:
-            logger.warning(f"关闭Redis缓存连接时出错: {e}")
+            logger.warning("关闭Redis缓存连接时出错，异常类型: %s", type(e).__name__)
 
     def __del__(self):
         """清理资源"""

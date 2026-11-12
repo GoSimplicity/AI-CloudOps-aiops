@@ -1225,7 +1225,8 @@ class RCAService(BaseService, HealthCheckMixin):
 
     except Exception as e:
       self.logger.error("RCA服务资源清理失败，异常类型: %s", type(e).__name__)
-      raise
+      # 关闭流程会记录清理异常。这里换成通用错误，避免原异常进入清理结果和关闭日志。
+      raise RuntimeError("RCA服务资源清理失败") from None
 
   # 业务逻辑工具方法（从API层迁移）
   def parse_iso_timestamp(

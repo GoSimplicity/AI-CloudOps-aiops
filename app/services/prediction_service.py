@@ -46,6 +46,14 @@ from app.services.base import BaseService, HealthCheckMixin
 
 logger = logging.getLogger("aiops.services.prediction")
 
+# 本服务自己写出的预测错误可以原样返回。其余异常，包括下层再包装过的 PredictionError，都不带原文。
+_SAFE_PREDICTION_MESSAGES = frozenset(
+    {
+        "预测服务错误: 预测服务未初始化，请先调用 initialize()",
+        "预测服务错误: AI增强组件不可用，无法执行多维度关联分析",
+    }
+)
+
 
 class PredictionService(BaseService, HealthCheckMixin):
     """统一预测服务 - 支持QPS、CPU、内存、磁盘多维度预测"""
@@ -97,7 +105,8 @@ class PredictionService(BaseService, HealthCheckMixin):
                 self.logger.info("预测服务Redis缓存管理器初始化成功")
             except Exception as cache_e:
                 self.logger.warning(
-                    f"Redis缓存管理器初始化失败: {str(cache_e)}，将在无缓存模式下运行"
+                    "Redis缓存管理器初始化失败，异常类型: %s，将在无缓存模式下运行",
+                    type(cache_e).__name__,
                 )
                 self._cache_manager = None
 
@@ -146,7 +155,8 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             except Exception as ai_e:
                 self.logger.warning(
-                    f"增强组件初始化失败: {str(ai_e)}，将使用基础预测模式"
+                    "增强组件初始化失败，异常类型: %s，将使用基础预测模式",
+                    type(ai_e).__name__,
                 )
                 self._intelligent_predictor = None
                 self._prediction_analyzer = None
@@ -156,9 +166,9 @@ class PredictionService(BaseService, HealthCheckMixin):
             self.logger.info("预测服务所有组件初始化完成")
 
         except Exception as e:
-            self.logger.error(f"预测服务初始化失败: {str(e)}")
+            self.logger.error("预测服务初始化失败，异常类型: %s", type(e).__name__)
             self._initialized = False
-            raise PredictionError(f"服务初始化失败: {str(e)}")
+            raise PredictionError("服务初始化失败") from e
 
     async def _do_health_check(self) -> bool:
         """健康检查"""
@@ -177,8 +187,15 @@ class PredictionService(BaseService, HealthCheckMixin):
             return True
 
         except Exception as e:
-            self.logger.warning(f"健康检查失败: {str(e)}")
+            self.logger.warning("健康检查失败，异常类型: %s", type(e).__name__)
             return False
+
+    def _raise_prediction_error(self, action: str, error: Exception) -> None:
+        """依赖失败只对外抛出通用文案。本服务写死的预测错误原样上抛。"""
+        self.logger.error("%s，异常类型: %s", action, type(error).__name__)
+        if isinstance(error, PredictionError) and str(error) in _SAFE_PREDICTION_MESSAGES:
+            raise error
+        raise PredictionError(action) from error
 
     def _ensure_initialized(self) -> None:
         """确保服务已初始化"""
@@ -293,8 +310,7 @@ class PredictionService(BaseService, HealthCheckMixin):
             # 参数验证错误直接透传
             raise
         except Exception as e:
-            self.logger.error(f"QPS预测失败: {str(e)}")
-            raise PredictionError(f"QPS预测失败: {str(e)}")
+            self._raise_prediction_error("QPS预测失败", e)
 
     async def predict_cpu_utilization(
         self,
@@ -403,8 +419,7 @@ class PredictionService(BaseService, HealthCheckMixin):
         except (ValidationError, HistoricalDataError):
             raise
         except Exception as e:
-            self.logger.error(f"CPU预测失败: {str(e)}")
-            raise PredictionError(f"CPU预测失败: {str(e)}")
+            self._raise_prediction_error("CPU预测失败", e)
 
     async def predict_memory_utilization(
         self,
@@ -513,8 +528,7 @@ class PredictionService(BaseService, HealthCheckMixin):
         except (ValidationError, HistoricalDataError):
             raise
         except Exception as e:
-            self.logger.error(f"内存预测失败: {str(e)}")
-            raise PredictionError(f"内存预测失败: {str(e)}")
+            self._raise_prediction_error("内存预测失败", e)
 
     async def predict_disk_utilization(
         self,
@@ -623,8 +637,7 @@ class PredictionService(BaseService, HealthCheckMixin):
         except (ValidationError, HistoricalDataError):
             raise
         except Exception as e:
-            self.logger.error(f"磁盘预测失败: {str(e)}")
-            raise PredictionError(f"磁盘预测失败: {str(e)}")
+            self._raise_prediction_error("磁盘预测失败", e)
 
     # 增强预测方法
 
@@ -796,8 +809,7 @@ class PredictionService(BaseService, HealthCheckMixin):
         except (ValidationError, HistoricalDataError):
             raise
         except Exception as e:
-            self.logger.error(f"多维度预测失败: {str(e)}")
-            raise PredictionError(f"多维度预测失败: {str(e)}")
+            self._raise_prediction_error("多维度预测失败", e)
 
     async def generate_prediction_report(
         self,
@@ -906,7 +918,7 @@ class PredictionService(BaseService, HealthCheckMixin):
                         )
                     )
                 except Exception as e:
-                    self.logger.warning(f"生成扩缩容建议失败: {str(e)}")
+                    self.logger.warning("生成扩缩容建议失败，异常类型: %s", type(e).__name__)
                     analysis_failures.append("扩缩容分析失败")
             else:
                 analysis_failures.append("扩缩容组件不可用")
@@ -920,7 +932,7 @@ class PredictionService(BaseService, HealthCheckMixin):
                         constraints=ResourceConstraints(**resource_constraints),
                     )
                 except Exception as e:
-                    self.logger.warning(f"成本分析失败: {str(e)}")
+                    self.logger.warning("成本分析失败，异常类型: %s", type(e).__name__)
                     analysis_failures.append("成本分析失败")
             elif resource_constraints:
                 analysis_failures.append("成本分析组件不可用")
@@ -943,7 +955,7 @@ class PredictionService(BaseService, HealthCheckMixin):
             return ai_result
 
         except Exception as e:
-            self.logger.error(f"增强AI预测结果失败: {str(e)}")
+            self.logger.error("增强AI预测结果失败，异常类型: %s", type(e).__name__)
             return ai_result
 
     async def _fallback_to_basic_prediction(
@@ -1049,11 +1061,11 @@ class PredictionService(BaseService, HealthCheckMixin):
             }
 
         except Exception as e:
-            self.logger.error(f"获取健康信息失败: {str(e)}")
+            self.logger.error("获取健康信息失败，异常类型: %s", type(e).__name__)
             return {
                 "service_status": "error",
                 "model_status": "unknown",
-                "error": str(e),
+                "error": "获取健康信息失败",
                 "timestamp": datetime.now(),
             }
 
@@ -1066,8 +1078,8 @@ class PredictionService(BaseService, HealthCheckMixin):
             return await self._model_manager.get_detailed_info()
 
         except Exception as e:
-            self.logger.error(f"获取模型信息失败: {str(e)}")
-            return {"models": [], "status": "error", "error_message": str(e)}
+            self.logger.error("获取模型信息失败，异常类型: %s", type(e).__name__)
+            return {"models": [], "status": "error", "error_message": "获取模型信息失败"}
 
     # 私有辅助方法
 
@@ -1449,7 +1461,7 @@ class PredictionService(BaseService, HealthCheckMixin):
             return f"prediction:{prediction_type}:{cache_hash}"
 
         except Exception as e:
-            self.logger.error(f"生成缓存键失败: {str(e)}")
+            self.logger.error("生成缓存键失败，异常类型: %s", type(e).__name__)
             # 降级到简单键
             return f"prediction:uncacheable:{uuid4().hex}"
 
@@ -1467,7 +1479,7 @@ class PredictionService(BaseService, HealthCheckMixin):
                 cached_result["cache_timestamp"] = datetime.now()
                 return cached_result
         except Exception as e:
-            self.logger.warning(f"从缓存获取数据失败: {str(e)}")
+            self.logger.warning("从缓存获取数据失败，异常类型: %s", type(e).__name__)
 
         return None
 
@@ -1493,7 +1505,7 @@ class PredictionService(BaseService, HealthCheckMixin):
             )
             self.logger.debug(f"结果已缓存: {cache_key}")
         except Exception as e:
-            self.logger.warning(f"保存到缓存失败: {str(e)}")
+            self.logger.warning("保存到缓存失败，异常类型: %s", type(e).__name__)
 
     def is_initialized(self) -> bool:
         """检查服务是否已初始化"""
@@ -1509,7 +1521,7 @@ class PredictionService(BaseService, HealthCheckMixin):
                 try:
                     self._cache_manager.shutdown()
                 except Exception as e:
-                    self.logger.warning(f"关闭缓存管理器失败: {str(e)}")
+                    self.logger.warning("关闭缓存管理器失败，异常类型: %s", type(e).__name__)
                 self._cache_manager = None
 
             self._predictor = None
@@ -1520,4 +1532,4 @@ class PredictionService(BaseService, HealthCheckMixin):
             self._model_manager = None
             self.logger.info("预测服务资源已清理")
         except Exception as e:
-            self.logger.error(f"清理资源失败: {str(e)}")
+            self.logger.error("清理资源失败，异常类型: %s", type(e).__name__)
