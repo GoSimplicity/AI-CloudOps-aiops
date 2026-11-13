@@ -171,13 +171,15 @@ async def test_feature_model_and_template_logs_hide_dependency_text(caplog, tmp_
     caplog.set_level(logging.DEBUG, logger="aiops.core")
     extractor = FeatureExtractor()
     extractor._extract_time_features = Mock(side_effect=RuntimeError(MARKER))
-    frame = await extractor.extract_features(
-        datetime(2025, 1, 1, tzinfo=timezone.utc),
-        1.0,
-        [],
-        PredictionType.QPS,
-    )
-    assert MARKER not in repr(frame)
+    with pytest.raises(PredictionError) as caught:
+        await extractor.extract_features(
+            datetime(2025, 1, 1, tzinfo=timezone.utc),
+            1.0,
+            [],
+            PredictionType.QPS,
+            required_features=["sin_time"],
+        )
+    assert MARKER not in str(caught.value)
     _assert_hidden(caplog, "aiops.core.feature_extractor")
 
     caplog.clear()

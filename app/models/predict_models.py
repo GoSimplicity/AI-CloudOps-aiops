@@ -237,6 +237,10 @@ class PredictionResponse(BaseModel):
     method: Optional[str] = Field(None, description="实际预测方法")
     model_version: Optional[str] = Field(None, description="已加载模型版本；未知为 null")
     fallback_reason: Optional[str] = Field(None, description="降级原因")
+    fallback_code: Optional[str] = Field(
+        None,
+        description="降级原因码。无降级为 null。取值 MODEL_SCHEMA_UNKNOWN、MODEL_HISTORY_INSUFFICIENT、MODEL_PREDICT_FAILED、MODEL_UNAVAILABLE、ADAPTED_MODEL",
+    )
     fallback_mode: Optional[bool] = Field(None, description="是否为降级模式")
     analysis_failures: List[str] = Field(default_factory=list, description="未完成的分析环节")
     ai_fallback_reason: Optional[str] = Field(None, description="AI分析降级原因")
@@ -396,6 +400,7 @@ class AIEnhancedPredictionResponse(BaseModel):
     # 降级模式字段
     fallback_mode: Optional[bool] = Field(None, description="是否为降级模式")
     fallback_reason: Optional[str] = Field(None, description="降级原因")
+    fallback_code: Optional[str] = Field(None, description="降级原因码。无降级为 null")
     ai_fallback_reason: Optional[str] = Field(None, description="AI分析降级原因")
     analysis_failures: List[str] = Field(default_factory=list, description="未完成的分析环节")
 

@@ -15,7 +15,7 @@
 | memory | `memory_prediction_model.pkl` | `memory_prediction_scaler.pkl` | `memory_prediction_model_metadata.json` |
 | disk | `disk_prediction_model.pkl` | `disk_prediction_scaler.pkl` | `disk_prediction_model_metadata.json` |
 
-模型需能被 `joblib` 加载，并对加载时的校验向量提供 `predict`。标准化器缺失时不做额外标准化。元数据缺失时版本和回测准确率保持为空，不会编造。某个类型没有自己的模型、但 QPS 模型可用时，会借用 QPS 模型，预测结果的 `fallback_reason` 为 `使用其他指标的模型`。
+模型需能被 `joblib` 加载，并对加载时的校验向量提供 `predict`。标准化器缺失时不做额外标准化。元数据缺失时版本和回测准确率保持为空，不会编造。某个类型没有自己的模型、但 QPS 模型可用时，会借用 QPS 模型。只有这次预测真正跑了借用模型，响应里的 `fallback_reason` 才是 `使用其他指标的模型`，`fallback_code` 为 `ADAPTED_MODEL`。输入结构无法确定或模型所需实测历史不足时，规则降级优先，不用借用原因掩盖。详见 `docs/release/prediction-history-schema.md`。
 
 ## 怎么放进去
 
@@ -42,7 +42,7 @@
 - `any_fallback`：是否至少有一个类型处于兜底（含借用其他指标模型）
 - `models[]`：`prediction_type`、`loaded`、`fallback`、`status`（`loaded` / `adapted` / `missing` / `load_failed`）、`file_status`（该类型自己的文件是 `loaded`、`missing` 还是 `load_failed`；借用时 `status` 为 `adapted`，`file_status` 仍说明专用文件）、`model_path`（该类型自己的文件路径）、`fallback_reason`
 
-`fallback_reason` 与预测接口一致：没有可用模型时为 `预测模型不可用`，借用其他指标模型时为 `使用其他指标的模型`，专用模型正常加载时为 `null`。预测响应里原有的 `method`、`fallback_mode`、`fallback_reason` 含义不变。`model_base_path` 和 `model_path` 只出现在 `/info`。
+这里的 `fallback_reason` 描述模型文件状态：没有可用模型时为 `预测模型不可用`，借用其他指标模型时为 `使用其他指标的模型`，专用模型正常加载时为 `null`。它不是每一次预测响应的最终原因。预测响应另有 `fallback_code`，优先级见 `docs/release/prediction-history-schema.md`。`model_base_path` 和 `model_path` 只出现在 `/info`。
 
 `GET /api/v1/predict/ready` 和复用它的 `/predict/health` 成功时也带 `prediction_models`，但只有 `rule_fallback`、`any_fallback`，以及每个模型的 `prediction_type`、`status`、`loaded`、`fallback`。这里没有目录、文件路径、`file_status` 或 `fallback_reason`。配置了服务密钥时，这两个接口和 `/info` 一样要带密钥；密钥为空的开发环境都不校验，所以就绪响应仍然不放路径。模型一个都没加载，或 Prometheus 不可用时，就绪检查仍返回 503；这时看启动日志和 `/info`。
 
