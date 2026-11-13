@@ -525,8 +525,11 @@ class ModelManager:
             "supported_types": [t.value for t in self.models.keys()],
         }
 
+        report = self.availability()
+        by_type = {item["prediction_type"]: item for item in report["models"]}
         for pred_type, model in self.models.items():
             metadata = self.metadata.get(pred_type, {})
+            record = by_type.get(pred_type.value, {})
 
             model_info = {
                 "type": pred_type.value,
@@ -538,6 +541,8 @@ class ModelManager:
                 "created_at": metadata.get("created_at"),
                 "has_scaler": pred_type in self.scalers
                 and self.scalers[pred_type] is not None,
+                "status": record.get("status", "loaded"),
+                "fallback": bool(record.get("fallback")),
             }
 
             # 添加模型特定信息
@@ -546,6 +551,18 @@ class ModelManager:
 
             info["models"].append(model_info)
 
+        loaded_count = sum(1 for item in report["models"] if item.get("loaded"))
+        info["loaded_models"] = loaded_count
+        failed = any(
+            item.get("file_status") == "load_failed" or item.get("status") == "load_failed"
+            for item in report["models"]
+        )
+        if loaded_count == 0:
+            info["status"] = "load_failed" if failed else "not_loaded"
+        elif report.get("any_fallback"):
+            info["status"] = "degraded"
+        else:
+            info["status"] = "healthy"
         return info
 
     async def reload_model(self, pred_type: PredictionType) -> bool:

@@ -693,12 +693,12 @@ async def model_info() -> Dict[str, Any]:
         response = ModelInfoResponse(
             models=model_details.get("models", []),
             total_models=model_details.get("total_models", 0),
-            loaded_models=model_details.get("loaded_models", 0),
-            status=model_details.get("status", "healthy"),
+            loaded_models=_loaded_model_count(model_details),
+            status=model_details.get("status") or "not_loaded",
             timestamp=datetime.now().isoformat(),
         )
         data = response.dict()
-        # 兼容测试期待字段
+        # HTTP 上两个字段都是已加载类型的数量，避免再把服务层布尔值写成 0。
         data["models_loaded"] = data.get("loaded_models", 0)
         return data
     except (AIOpsException, DomainValidationError) as e:
@@ -706,6 +706,24 @@ async def model_info() -> Dict[str, Any]:
     except Exception as e:
         logger.error("获取模型信息失败，异常类型: %s", type(e).__name__)
         raise PredictionError("获取模型信息失败") from e
+
+
+def _loaded_model_count(details: Dict[str, Any]) -> int:
+    """模型详情里的 loaded_models 是数量。旧的 models_loaded 布尔值不能再被当成 0。"""
+    if "loaded_models" in details and not isinstance(details.get("loaded_models"), bool):
+        try:
+            return max(0, int(details["loaded_models"]))
+        except (TypeError, ValueError):
+            return 0
+    raw = details.get("models_loaded", 0)
+    if raw is True:
+        return len(details.get("models") or [])
+    if isinstance(raw, bool) or raw is None:
+        return 0
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 0
 
 
 _READY_MODEL_FIELDS = ("prediction_type", "status", "loaded", "fallback")
