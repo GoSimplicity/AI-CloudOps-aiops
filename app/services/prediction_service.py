@@ -11,6 +11,7 @@ Description: AI-CloudOps智能预测服务 - 提供四种资源预测能力
 
 from datetime import datetime, timedelta
 import hashlib
+import inspect
 import logging
 import math
 import time
@@ -31,6 +32,11 @@ from app.core.prediction import (
     UnifiedPredictor,
 )
 from app.core.prediction.intelligent_report_generator import ReportContext
+from app.core.prediction.measured_history import (
+    STRUCTURAL_QUERY_HOURS,
+    query_hours_for_features,
+    resolve_model_schema,
+)
 from app.core.prediction.unified_predictor import prediction_provenance
 from app.models import (
     AnomalyPrediction,
@@ -45,6 +51,21 @@ from app.models import (
 from app.services.base import BaseService, HealthCheckMixin
 
 logger = logging.getLogger("aiops.services.prediction")
+
+# 预测缓存契约。历史不足不再冒充模型结果后，旧键不能再命中。
+PREDICTION_CACHE_CONTRACT = "history-schema-v3"
+
+
+def _sync_manager_value(manager, method_name: str, prediction_type: PredictionType):
+    """只读取同步模型管理器。异步替身不能被当成已加载模型。"""
+    method = getattr(manager, method_name, None)
+    if method is None or not callable(method) or inspect.iscoroutinefunction(method):
+        return None
+    value = method(prediction_type)
+    if inspect.iscoroutine(value):
+        value.close()
+        return None
+    return value
 
 # 本服务自己写出的预测错误可以原样返回。其余异常，包括下层再包装过的 PredictionError，都不带原文。
 _SAFE_PREDICTION_MESSAGES = frozenset(
@@ -245,7 +266,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             # 获取历史数据
             historical_data = await self._fetch_historical_data(
-                PredictionType.QPS, metric_query, hours=48
+                PredictionType.QPS, metric_query, hours=self._history_query_hours(PredictionType.QPS)
             )
 
             # 执行预测
@@ -355,7 +376,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             # 获取历史数据
             historical_data = await self._fetch_historical_data(
-                PredictionType.CPU, metric_query, hours=48
+                PredictionType.CPU, metric_query, hours=self._history_query_hours(PredictionType.CPU)
             )
 
             # 执行预测
@@ -464,7 +485,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             # 获取历史数据
             historical_data = await self._fetch_historical_data(
-                PredictionType.MEMORY, metric_query, hours=48
+                PredictionType.MEMORY, metric_query, hours=self._history_query_hours(PredictionType.MEMORY)
             )
 
             # 执行预测
@@ -573,7 +594,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             # 获取历史数据
             historical_data = await self._fetch_historical_data(
-                PredictionType.DISK, metric_query, hours=48
+                PredictionType.DISK, metric_query, hours=self._history_query_hours(PredictionType.DISK)
             )
 
             # 执行预测
@@ -705,7 +726,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
             # 获取历史数据
             historical_data = await self._fetch_historical_data(
-                pred_type, metric_query, hours=48
+                pred_type, metric_query, hours=self._history_query_hours(pred_type)
             )
 
             # 执行增强预测
@@ -784,7 +805,7 @@ class PredictionService(BaseService, HealthCheckMixin):
 
                 # 获取历史数据
                 historical_data = await self._fetch_historical_data(
-                    pred_type, config.get("metric_query"), hours=48
+                    pred_type, config.get("metric_query"), hours=self._history_query_hours(pred_type)
                 )
                 config["historical_data"] = historical_data
                 validated_configs.append(config)
@@ -1106,6 +1127,20 @@ class PredictionService(BaseService, HealthCheckMixin):
             raise ValidationError(
                 "prediction_hours", f"预测时长应在{min_hours}-{max_hours}小时之间"
             )
+
+    def _history_query_hours(self, prediction_type: PredictionType) -> int:
+        """按已加载模型声明的最大回看取数。结构不明时不扩大到猜出来的周窗口。"""
+        manager = self._model_manager
+        model = _sync_manager_value(manager, "get_model", prediction_type)
+        if model is None:
+            return STRUCTURAL_QUERY_HOURS
+        raw_metadata = getattr(manager, "metadata", {})
+        metadata = raw_metadata.get(prediction_type, {}) if isinstance(raw_metadata, dict) else {}
+        scaler = _sync_manager_value(manager, "get_scaler", prediction_type)
+        features, problem = resolve_model_schema(model, metadata if isinstance(metadata, dict) else {}, scaler)
+        if problem or not features:
+            return STRUCTURAL_QUERY_HOURS
+        return query_hours_for_features(features)
 
     async def _fetch_historical_data(
         self, prediction_type: PredictionType, metric_query: Optional[str], hours: int
@@ -1430,7 +1465,7 @@ class PredictionService(BaseService, HealthCheckMixin):
                 "type": prediction_type,
                 "data_contract": "observed-hourly-v1",
                 "time_contract": "utc-v1",
-                "prediction_contract": "provenance-v2",
+                "prediction_contract": PREDICTION_CACHE_CONTRACT,
                 "principal": principal_context.get() or INTERNAL_PRINCIPAL,
                 "current": round(current_value, 2),  # 避免浮点数精度问题
                 "query": metric_query or "default",

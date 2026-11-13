@@ -5,13 +5,13 @@ from unittest.mock import AsyncMock, Mock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pandas as pd
 import pytest
 
 from app.api.middleware.error_handler import setup_error_handlers
 from app.api.routes import predict
 from app.common.exceptions import PredictionError
 from app.common.identity import principal_scope
+from app.core.prediction.feature_extractor import FeatureExtractor
 from app.core.prediction.intelligent_predictor import IntelligentPredictor
 from app.core.prediction.unified_predictor import UnifiedPredictor
 from app.models import PredictionGranularity, PredictionType
@@ -35,8 +35,7 @@ def predictor_for(model, metadata=None):
         get_model=lambda _: model,
         get_scaler=lambda _: None,
     )
-    features = SimpleNamespace(extract_features=AsyncMock(return_value=pd.DataFrame([{}])))
-    predictor = UnifiedPredictor(manager, features)
+    predictor = UnifiedPredictor(manager, FeatureExtractor())
     predictor._initialized = True
     return predictor
 
@@ -45,11 +44,11 @@ def predictor_for(model, metadata=None):
     "model,metadata,method,reason,accuracy,version",
     [
         (None, {}, "rule_based", "预测模型不可用", None, None),
-        (FakeModel(True), {}, "rule_based", "模型预测失败", None, None),
-        (FakeModel(), {"model_version": "v3", "backtest": {"accuracy": 0.72, "sample_count": 12}}, "model:", None, 0.72, "v3"),
-        (FakeModel(), {"model_version": "v2", "backtest": {"accuracy": 0.9, "sample_count": 0}}, "model:", None, None, "v2"),
-        (FakeModel(), {"model_version": "v2", "adapted_for": "cpu", "backtest": {"accuracy": 0.9, "sample_count": 30}}, "model:", "使用其他指标的模型", None, "v2"),
-        (FakeModel(), {"metadata_missing": True, "model_version": "1.0"}, "model:", None, None, None),
+        (FakeModel(True), {"features": ["sin_time"]}, "rule_based", "模型预测失败", None, None),
+        (FakeModel(), {"features": ["sin_time"], "model_version": "v3", "backtest": {"accuracy": 0.72, "sample_count": 12}}, "model:", None, 0.72, "v3"),
+        (FakeModel(), {"features": ["sin_time"], "model_version": "v2", "backtest": {"accuracy": 0.9, "sample_count": 0}}, "model:", None, None, "v2"),
+        (FakeModel(), {"features": ["sin_time"], "model_version": "v2", "adapted_for": "cpu", "backtest": {"accuracy": 0.9, "sample_count": 30}}, "model:", "使用其他指标的模型", None, "v2"),
+        (FakeModel(), {"metadata_missing": True, "features": ["sin_time"], "model_version": "1.0"}, "rule_based", "模型输入结构无法确定", None, None),
     ],
 )
 async def test_prediction_provenance_has_no_invented_confidence(model, metadata, method, reason, accuracy, version):
@@ -279,7 +278,10 @@ async def test_failed_enrichment_is_reported_instead_of_fake_empty_success():
 async def test_ai_failure_does_not_overwrite_model_fallback(model, model_fallback, reason, caplog):
     engine = IntelligentPredictor(None, None)
     engine._initialized = True
-    engine.unified_predictor = predictor_for(model, {"model_version": "v3"})
+    metadata = {"model_version": "v3"}
+    if model is not None:
+        metadata["features"] = ["sin_time"]
+    engine.unified_predictor = predictor_for(model, metadata)
     engine.analyzer = SimpleNamespace(analyze_historical_context=AsyncMock(side_effect=RuntimeError("sensitive-ai-error")))
     result = await engine.predict_with_ai_analysis(PredictionType.CPU, 25, [], 1, PredictionGranularity.HOUR)
     assert result["ai_enhanced"] is False

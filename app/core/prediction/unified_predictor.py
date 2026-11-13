@@ -14,9 +14,18 @@ import logging
 from typing import Any, Dict, List
 
 import numpy as np
-import pandas as pd
 
 from app.common.exceptions import HistoricalDataError, PredictionError, ValidationError
+from app.core.prediction.measured_history import (
+    ADAPTED_REASON,
+    HISTORY_REASON,
+    PREDICT_FAILED_REASON,
+    SCHEMA_REASON,
+    UNAVAILABLE_REASON,
+    MeasuredHistoryError,
+    fallback_code_for,
+    resolve_model_schema,
+)
 from app.models import PredictionDataPoint, PredictionGranularity, PredictionType
 
 logger = logging.getLogger("aiops.core.predictor")
@@ -25,11 +34,12 @@ logger = logging.getLogger("aiops.core.predictor")
 class PredictionBatch(list):
     """单次预测及其来源，避免并发请求共用可变的最近结果。"""
 
-    def __init__(self, points, *, method, model_version=None, fallback_reason=None, model_accuracy=None):
+    def __init__(self, points, *, method, model_version=None, fallback_reason=None, fallback_code=None, model_accuracy=None):
         super().__init__(points)
         self.method = method
         self.model_version = model_version
         self.fallback_reason = fallback_reason
+        self.fallback_code = fallback_code if fallback_code is not None else fallback_code_for(fallback_reason)
         self.model_accuracy = model_accuracy
 
 
@@ -38,6 +48,7 @@ def prediction_provenance(predictions):
         "method": getattr(predictions, "method", None),
         "model_version": getattr(predictions, "model_version", None),
         "fallback_reason": getattr(predictions, "fallback_reason", None),
+        "fallback_code": getattr(predictions, "fallback_code", None),
         "fallback_mode": bool(getattr(predictions, "fallback_reason", None)),
         "model_accuracy": getattr(predictions, "model_accuracy", None),
     }
@@ -85,20 +96,26 @@ class UnifiedPredictor:
             raise PredictionError("预测器未初始化")
 
         initial_value = current_value
+        model = self.model_manager.get_model(prediction_type)
+        if model is None:
+            return await self._rule_based_prediction(
+                prediction_type, current_value, prediction_hours, granularity,
+                fallback_reason=UNAVAILABLE_REASON,
+            )
+
+        raw_metadata = getattr(self.model_manager, "metadata", {})
+        metadata = raw_metadata.get(prediction_type, {}) if isinstance(raw_metadata, dict) else {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        scaler = self.model_manager.get_scaler(prediction_type)
+        declared_features, schema_problem = resolve_model_schema(model, metadata, scaler)
+        if schema_problem or not declared_features:
+            return await self._rule_based_prediction(
+                prediction_type, initial_value, prediction_hours, granularity,
+                fallback_reason=SCHEMA_REASON,
+            )
+
         try:
-            # 获取对应类型的模型
-            model = self.model_manager.get_model(prediction_type)
-            scaler = self.model_manager.get_scaler(prediction_type)
-
-            if model is None:
-                return await self._rule_based_prediction(
-                    prediction_type, current_value, prediction_hours, granularity
-                )
-
-            predictions = []
-            current_time = datetime.now(timezone.utc)
-
-            # 计算预测点数
             if granularity == PredictionGranularity.MINUTE:
                 points = prediction_hours * 60
                 delta = timedelta(minutes=1)
@@ -109,71 +126,56 @@ class UnifiedPredictor:
                 points = prediction_hours // 24
                 delta = timedelta(days=1)
 
-            # 逐点预测
+            predictions = []
+            current_time = datetime.now(timezone.utc)
             for i in range(points):
                 future_time = current_time + delta * (i + 1)
-
-                # 提取特征
+                # 时间特征保持既有本地无时区时间。滞后和窗口锚定最新实测 T，不用预测值回填。
                 features = await self.feature_extractor.extract_features(
-                    # 特征保持既有本地无时区时间，输出时间单独使用UTC
                     timestamp=future_time.astimezone().replace(tzinfo=None),
                     current_value=current_value,
                     historical_data=historical_data,
                     prediction_type=prediction_type,
+                    required_features=declared_features,
                 )
-
-                # 确保特征与模型训练时的格式一致
-                model_metadata = self.model_manager.metadata.get(prediction_type, {})
-                features_aligned = self._align_features_with_model(
-                    features, prediction_type, model_metadata
-                )
-
-                # 标准化特征（转换为numpy数组以保持与训练时的一致性）
+                values = features[declared_features].to_numpy(dtype=float)
+                if values.shape != (1, len(declared_features)) or not np.isfinite(values).all():
+                    raise MeasuredHistoryError(SCHEMA_REASON)
                 if scaler is not None:
-                    # 使用numpy数组进行标准化，避免特征名称不匹配警告
-                    features_scaled = scaler.transform(features_aligned.values)
-                else:
-                    features_scaled = features_aligned.values
-
-                # 预测
-                predicted_value = model.predict(features_scaled)[0]
-
-                # 根据预测类型调整值范围
-                predicted_value = self._adjust_prediction_range(
-                    predicted_value, prediction_type
-                )
-
-                # 创建预测点
-                prediction_point = PredictionDataPoint(
-                    timestamp=future_time,
-                    predicted_value=float(predicted_value),
-                )
-
-                predictions.append(prediction_point)
-
-                # 更新当前值用于下一次预测
+                    values = scaler.transform(values)
+                predicted_value = model.predict(values)[0]
+                if not np.isfinite(float(predicted_value)):
+                    raise PredictionError(PREDICT_FAILED_REASON)
+                predicted_value = self._adjust_prediction_range(predicted_value, prediction_type)
+                predictions.append(PredictionDataPoint(timestamp=future_time, predicted_value=float(predicted_value)))
                 if consider_pattern:
                     current_value = predicted_value
 
-            metadata = self.model_manager.metadata.get(prediction_type, {})
-            backtest = metadata.get("backtest") if isinstance(metadata, dict) else None
+            backtest = metadata.get("backtest") if isinstance(metadata.get("backtest"), dict) else None
             samples = backtest.get("sample_count") if isinstance(backtest, dict) else None
             accuracy = backtest.get("accuracy") if isinstance(samples, int) and not isinstance(samples, bool) and samples > 0 else None
-            if metadata.get("adapted_for") or metadata.get("adapted_from"):
+            adapted = bool(metadata.get("adapted_for") or metadata.get("adapted_from"))
+            if adapted:
                 accuracy = None
             if not isinstance(accuracy, (int, float)) or isinstance(accuracy, bool) or not np.isfinite(accuracy) or not 0 <= accuracy <= 1:
                 accuracy = None
-            return PredictionBatch(predictions, method=f"model:{type(model).__module__}.{type(model).__qualname__}",
-                                   model_version=metadata.get("model_version") if not metadata.get("metadata_missing") else None,
-                                   fallback_reason="使用其他指标的模型" if metadata.get("adapted_for") or metadata.get("adapted_from") else None,
-                                   model_accuracy=accuracy)
-
-        except Exception as e:
-            logger.error("预测执行失败，使用规则预测: %s", type(e).__name__)
-            # 降级到规则基础预测
+            return PredictionBatch(
+                predictions,
+                method=f"model:{type(model).__module__}.{type(model).__qualname__}",
+                model_version=metadata.get("model_version"),
+                fallback_reason=ADAPTED_REASON if adapted else None,
+                model_accuracy=accuracy,
+            )
+        except MeasuredHistoryError as error:
+            reason = SCHEMA_REASON if SCHEMA_REASON in str(error) else HISTORY_REASON
+            return await self._rule_based_prediction(
+                prediction_type, initial_value, prediction_hours, granularity, fallback_reason=reason,
+            )
+        except Exception as error:
+            logger.error("预测执行失败，使用规则预测: %s", type(error).__name__)
             return await self._rule_based_prediction(
                 prediction_type, initial_value, prediction_hours, granularity,
-                fallback_reason="模型预测失败",
+                fallback_reason=PREDICT_FAILED_REASON,
             )
 
     async def _rule_based_prediction(
@@ -182,7 +184,7 @@ class UnifiedPredictor:
         current_value: float,
         prediction_hours: int,
         granularity: PredictionGranularity,
-        fallback_reason: str = "预测模型不可用",
+        fallback_reason: str = UNAVAILABLE_REASON,
     ) -> List[PredictionDataPoint]:
         """基于规则的预测（降级方案）"""
 
@@ -275,131 +277,6 @@ class UnifiedPredictor:
         except Exception as e:
             logger.warning("预测器健康检查失败，异常类型: %s", type(e).__name__)
             return False
-
-    def _align_features_with_model(
-        self,
-        features: pd.DataFrame,
-        prediction_type: PredictionType,
-        model_data: Dict[str, Any],
-    ) -> pd.DataFrame:
-        """确保特征与模型训练时的格式一致"""
-
-        # 获取模型训练时的特征顺序
-        model_features = model_data.get("metadata", {}).get("features", [])
-
-        if not model_features:
-            # 如果没有元数据中的特征信息，使用默认特征列表
-            model_features = self._get_default_model_features(prediction_type)
-
-        # 确保特征DataFrame包含所有必需的特征
-        aligned_features = {}
-
-        for feature in model_features:
-            if feature in features.columns:
-                aligned_features[feature] = features[feature].iloc[0]
-            else:
-                # 对缺失的特征使用默认值
-                aligned_features[feature] = self._get_feature_default_value(feature)
-
-        # 创建新的DataFrame，确保特征顺序与模型训练时一致
-        result_df = pd.DataFrame([aligned_features], columns=model_features)
-
-        return result_df
-
-    def _get_default_model_features(self, prediction_type: PredictionType) -> List[str]:
-        """获取默认的模型特征列表（与模型训练时一致）"""
-
-        base_features = [
-            "sin_time",
-            "cos_time",
-            "sin_day",
-            "cos_day",
-            "is_business_hour",
-            "is_weekend",
-            "is_holiday",
-        ]
-
-        if prediction_type == PredictionType.QPS:
-            return (
-                ["QPS"]
-                + base_features
-                + [
-                    "QPS_1h_ago",
-                    "QPS_1d_ago",
-                    "QPS_1w_ago",
-                    "QPS_change",
-                    "QPS_avg_6h",
-                    "QPS_std_6h",
-                ]
-            )
-        elif prediction_type == PredictionType.CPU:
-            return (
-                ["CPU"]
-                + base_features
-                + [
-                    "CPU_1h_ago",
-                    "CPU_1d_ago",
-                    "CPU_1w_ago",
-                    "CPU_change",
-                    "CPU_avg_6h",
-                    "CPU_std_6h",
-                    "CPU_max_6h",
-                ]
-            )
-        elif prediction_type == PredictionType.MEMORY:
-            return (
-                ["MEMORY"]
-                + base_features
-                + [
-                    "MEMORY_1h_ago",
-                    "MEMORY_1d_ago",
-                    "MEMORY_1w_ago",
-                    "MEMORY_change",
-                    "MEMORY_avg_6h",
-                    "MEMORY_trend",
-                    "MEMORY_min_6h",
-                ]
-            )
-        else:  # DISK
-            return (
-                ["DISK"]
-                + base_features
-                + [
-                    "DISK_1h_ago",
-                    "DISK_1d_ago",
-                    "DISK_1w_ago",
-                    "DISK_change",
-                    "DISK_avg_24h",
-                    "DISK_growth_rate",
-                    "DISK_max_24h",
-                ]
-            )
-
-    def _get_feature_default_value(self, feature_name: str) -> float:
-        """获取特征的默认值"""
-
-        if feature_name.endswith("_ago"):
-            return 50.0  # 历史值默认
-        elif feature_name.endswith("_change"):
-            return 0.0  # 变化率默认为0
-        elif feature_name.startswith("is_"):
-            return 0.0  # 布尔特征默认为0
-        elif "sin_" in feature_name or "cos_" in feature_name:
-            return 0.5  # 三角函数特征默认值
-        elif feature_name.endswith("_avg_6h") or feature_name.endswith("_avg_24h"):
-            return 50.0  # 平均值默认
-        elif feature_name.endswith("_std_6h"):
-            return 5.0  # 标准差默认
-        elif feature_name.endswith("_trend"):
-            return 0.0  # 趋势默认
-        elif feature_name.endswith("_growth_rate"):
-            return 0.001  # 增长率默认
-        elif feature_name.endswith("_min_6h"):
-            return 45.0  # 最小值默认
-        elif feature_name.endswith("_max_6h") or feature_name.endswith("_max_24h"):
-            return 55.0  # 最大值默认
-        else:
-            return 50.0  # 其他特征默认值
 
     async def get_supported_types(self) -> List[PredictionType]:
         """获取支持的预测类型"""

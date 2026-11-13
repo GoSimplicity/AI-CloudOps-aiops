@@ -71,7 +71,9 @@ class ZeroModel:
 
 async def make_predictor(path):
     model = None if path == 'rule' else ZeroModel(fail=path == 'failed_model')
-    manager = SimpleNamespace(models_loaded=True, metadata={}, get_model=lambda _: model, get_scaler=lambda _: None)
+    # 时间契约只关心输出时间。模型路径显式声明不需要历史列的输入，避免被结构不明降级。
+    metadata = {} if model is None else {PredictionType.CPU: {"features": ["sin_time"]}}
+    manager = SimpleNamespace(models_loaded=True, metadata=metadata, get_model=lambda _: model, get_scaler=lambda _: None)
     features = RecordingFeatures()
     predictor = unified_predictor.UnifiedPredictor(manager, features)
     await predictor.initialize()
