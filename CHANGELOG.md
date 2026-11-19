@@ -2,6 +2,10 @@
 
 ## 1.0 开发中
 
+### 2026-11-19 · OpenTelemetry API 修复版本
+
+- 将 FastAPI 带入的 `opentelemetry-api` 从 1.45.1 锁到 1.45.2，对应 GHSA-mf5v-w3w3-f6cg / CVE-2026-126360。不升级 SDK 或 exporter，也不放宽 pip-audit
+
 ### 2026-10-23 · 指标服务并发隔离
 
 - 修复 Prometheus 异步查询直接执行阻塞 HTTP 请求导致整个 API 事件循环暂停的问题
