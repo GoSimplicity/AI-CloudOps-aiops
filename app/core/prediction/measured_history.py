@@ -121,6 +121,36 @@ def _declared_width(estimator: Any) -> Optional[int]:
     return int(width)
 
 
+def _read_feature_names(estimator: Any) -> tuple[str, Optional[List[str]]]:
+    """读取估计器自己的列名。没有该属性表示训练时没有列名；有但读不出可靠名单则不能猜测。"""
+    if estimator is None:
+        return "absent", None
+    try:
+        raw = estimator.feature_names_in_
+    except AttributeError:
+        return "unnamed", None
+    if raw is None:
+        return "unnamed", None
+    if isinstance(raw, (str, bytes)):
+        return "invalid", None
+    try:
+        items = list(raw)
+    except TypeError:
+        return "invalid", None
+    names: List[str] = []
+    for item in items:
+        if isinstance(item, str) and item:
+            names.append(item)
+        else:
+            return "invalid", None
+    if not names or len(set(names)) != len(names):
+        return "invalid", None
+    width = _declared_width(estimator)
+    if width is not None and width != len(names):
+        return "invalid", None
+    return "named", names
+
+
 def resolve_model_schema(
     model: Any, metadata: Optional[Mapping[str, Any]], scaler: Any = None
 ) -> tuple[Optional[List[str]], Optional[str]]:
@@ -136,12 +166,24 @@ def resolve_model_schema(
         or any(feature_role(name) is None for name in features)
     ):
         return None, SCHEMA_REASON
-    width = len(features)
+    declared = list(features)
+    width = len(declared)
     for estimator in (model, scaler):
-        declared = _declared_width(estimator)
-        if declared is not None and declared != width:
+        estimator_width = _declared_width(estimator)
+        if estimator_width is not None and estimator_width != width:
             return None, SCHEMA_REASON
-    return list(features), None
+
+    model_state, model_names = _read_feature_names(model)
+    if model_state == "invalid" or (model_state == "named" and model_names != declared):
+        return None, SCHEMA_REASON
+    if scaler is not None:
+        scaler_state, scaler_names = _read_feature_names(scaler)
+        if scaler_state == "invalid" or (scaler_state == "named" and scaler_names != declared):
+            return None, SCHEMA_REASON
+        # 只有模型和标准化器其中一方带列名时，不能假定另一方顺序相同，也不重排列。
+        if {model_state, scaler_state} == {"named", "unnamed"}:
+            return None, SCHEMA_REASON
+    return declared, None
 
 
 def query_hours_for_features(features: Optional[Sequence[str]]) -> int:

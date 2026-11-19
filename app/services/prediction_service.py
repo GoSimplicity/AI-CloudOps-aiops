@@ -53,7 +53,7 @@ from app.services.base import BaseService, HealthCheckMixin
 logger = logging.getLogger("aiops.services.prediction")
 
 # 预测缓存契约。历史不足不再冒充模型结果后，旧键不能再命中。
-PREDICTION_CACHE_CONTRACT = "history-schema-v3"
+PREDICTION_CACHE_CONTRACT = "history-schema-v4"
 
 
 def _sync_manager_value(manager, method_name: str, prediction_type: PredictionType):

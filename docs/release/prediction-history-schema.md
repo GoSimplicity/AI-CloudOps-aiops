@@ -21,7 +21,7 @@
 
 同时满足多条时，上表从上到下只保留第一条。没有模型时先返回 `MODEL_UNAVAILABLE`。已加载之后，结构不明优先于历史不足，这两者都优先于模型失败；这三条都是规则降级，不用 `ADAPTED_MODEL` 掩盖。`ADAPTED_MODEL` 只表示借用模型实际执行成功，准确率仍为 null。
 
-`MODEL_SCHEMA_UNKNOWN` 包括：元数据缺失或带 `metadata_missing`、特征清单为空、不是字符串列表、有重复或无法识别的列名、清单长度与模型或标准化器的 `n_features_in_` 不一致。这些情况不套用特征提取器、预测器或模型管理器里任何一份默认清单。三份默认清单的列和顺序本来就不一致；另外，预测器原先读取的是并不存在的 `metadata.metadata.features`，顶层 `features` 因此一直被忽略。
+`MODEL_SCHEMA_UNKNOWN` 包括：元数据缺失或带 `metadata_missing`、特征清单为空、不是字符串列表、有重复或无法识别的列名、清单长度与模型或标准化器的 `n_features_in_` 不一致。模型或标准化器若带有 `feature_names_in_`，列名和顺序必须与元数据 `features` 完全相同；只比个数或把输入重排成估计器顺序都不算一致。双方名单冲突、名单存在但无法可靠读出、以及模型和标准化器只有一方有列名时，同样是结构不明，不调用模型。两边都没有列名、只有维数与元数据一致时，仍按元数据顺序调用模型。这些情况不套用特征提取器、预测器或模型管理器里任何一份默认清单。三份默认清单的列和顺序本来就不一致；另外，预测器原先读取的是并不存在的 `metadata.metadata.features`，顶层 `features` 因此一直被忽略。
 
 ## 预测数字
 
@@ -54,4 +54,4 @@ Prometheus 步长仍是 `1h`。查询跨度等于已声明特征相对 T 的最�
 
 `FeatureExtractor.extract_features` 与 `UnifiedPredictor.predict` 使用同一约束。提取器未收到 `required_features` 时使用它自己的清单；这份清单含周滞后，历史不够就失败，不再返回当前值的 95%、90%、85% 或常数表。点名了未知列时失败原因是“模型输入结构无法确定”。提取过程抛错时记录异常类型并抛出不含原文的预测错误，不把常数表当成成功。预测器在历史不足时不调用 `model.predict`。
 
-内部预测缓存键的 `prediction_contract` 从 `provenance-v2` 改为 `history-schema-v3`。升级前写入的模型结果不会再被命中。
+内部预测缓存键的 `prediction_contract` 现为 `history-schema-v4`。列名或顺序冲突仍被当成模型成功的结果，以及更早的 `provenance-v2`、`history-schema-v3` 结果，都不会再被命中。

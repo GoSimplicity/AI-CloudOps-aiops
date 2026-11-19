@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
 
 from app.api.middleware.error_handler import setup_error_handlers
 from app.api.routes import predict
@@ -345,6 +346,165 @@ async def test_unknown_schema_is_rule_fallback_and_does_not_call_the_model(metad
     assert provenance["model_accuracy"] is None
 
 
+class NamedColumnStandIn:
+    """包住按列名拟合的本地线性模型，用来观察 predict 是否被调用。不是生产模型。"""
+
+    def __init__(self, columns):
+        frame = pd.DataFrame([[float(index + 1) for index in range(len(columns))]] * 2, columns=list(columns))
+        self._inner = LinearRegression().fit(frame, np.asarray([1.0, 2.0]))
+        self.calls = 0
+        self.seen = []
+
+    @property
+    def n_features_in_(self):
+        return self._inner.n_features_in_
+
+    @property
+    def feature_names_in_(self):
+        return self._inner.feature_names_in_
+
+    def predict(self, values):
+        self.calls += 1
+        self.seen.append(np.asarray(values, dtype=float).copy())
+        return self._inner.predict(np.asarray(values, dtype=float))
+
+
+def named_scaler(columns):
+    frame = pd.DataFrame(np.ones((4, len(columns))), columns=list(columns))
+    return StandardScaler().fit(frame)
+
+
+def unnamed_scaler(width):
+    return StandardScaler().fit(np.ones((4, width)))
+
+
+def assert_schema_rejection(model, batch):
+    provenance = prediction_provenance(batch)
+    assert model.calls == 0
+    assert model.seen == []
+    assert provenance["method"] == "rule_based"
+    assert provenance["fallback_reason"] == SCHEMA_REASON
+    assert provenance.get("fallback_code") == "MODEL_SCHEMA_UNKNOWN"
+    assert provenance["model_version"] is None
+    assert provenance["model_accuracy"] is None
+    assert batch[0].confidence_level is None
+
+
+async def test_model_column_order_conflict_does_not_call_predict_or_reorder():
+    metadata_columns = ["sin_time", "CPU"]
+    model = NamedColumnStandIn(["CPU", "sin_time"])
+    _, batch = await predict_cpu(model, {"features": metadata_columns, "model_version": "order"}, series(1, unique_value))
+    assert_schema_rejection(model, batch)
+
+
+async def test_model_column_name_conflict_does_not_call_predict():
+    model = NamedColumnStandIn(["sin_time", "CPU_1h_ago"])
+    _, batch = await predict_cpu(model, {"features": ["sin_time", "CPU"], "model_version": "names"}, series(1, unique_value))
+    assert_schema_rejection(model, batch)
+
+
+async def test_scaler_column_order_conflict_does_not_call_predict():
+    columns = ["sin_time", "CPU"]
+    model = NamedColumnStandIn(columns)
+    _, batch = await predict_cpu(
+        model,
+        {"features": columns, "model_version": "scaler-order"},
+        series(1, unique_value),
+        scaler=named_scaler(["CPU", "sin_time"]),
+    )
+    assert_schema_rejection(model, batch)
+
+
+async def test_model_and_scaler_column_names_that_disagree_do_not_call_predict():
+    model = NamedColumnStandIn(["CPU", "sin_time"])
+    _, batch = await predict_cpu(
+        model,
+        {"features": ["sin_time", "CPU"], "model_version": "both"},
+        series(1, unique_value),
+        scaler=named_scaler(["sin_time", "CPU_1h_ago"]),
+    )
+    assert_schema_rejection(model, batch)
+
+
+async def test_names_on_only_one_of_model_and_scaler_are_not_guessed():
+    columns = ["sin_time", "CPU"]
+    named = NamedColumnStandIn(columns)
+    unnamed = LocalLinearStandIn(2)
+    _, named_model_batch = await predict_cpu(
+        named,
+        {"features": columns, "model_version": "one-sided"},
+        series(1, unique_value),
+        scaler=unnamed_scaler(2),
+    )
+    assert_schema_rejection(named, named_model_batch)
+    _, named_scaler_batch = await predict_cpu(
+        unnamed,
+        {"features": columns, "model_version": "one-sided"},
+        series(1, unique_value),
+        scaler=named_scaler(columns),
+    )
+    assert unnamed.calls == 0
+    assert prediction_provenance(named_scaler_batch).get("fallback_code") == "MODEL_SCHEMA_UNKNOWN"
+
+
+async def test_unreadable_feature_names_do_not_call_predict():
+    model = LocalLinearStandIn(2)
+    model.feature_names_in_ = np.asarray([1, 2])
+    _, batch = await predict_cpu(model, {"features": ["sin_time", "CPU"], "model_version": "bad-names"}, series(1, unique_value))
+    assert_schema_rejection(model, batch)
+    short = LocalLinearStandIn(2)
+    short.feature_names_in_ = np.asarray(["sin_time"])
+    _, short_batch = await predict_cpu(short, {"features": ["sin_time", "CPU"], "model_version": "short-names"}, series(1, unique_value))
+    assert_schema_rejection(short, short_batch)
+
+
+async def test_matching_column_names_and_order_call_the_model_without_reordering():
+    columns = ["sin_time", "CPU"]
+    model = NamedColumnStandIn(columns)
+    _, batch = await predict_cpu(
+        model,
+        {"features": columns, "model_version": "aligned"},
+        series(1, unique_value),
+        current=40.0,
+        scaler=named_scaler(columns),
+    )
+    provenance = prediction_provenance(batch)
+    assert model.calls == 1
+    assert provenance["method"].startswith("model:")
+    assert provenance.get("fallback_code") is None
+    assert provenance["fallback_mode"] is False
+    raw = NamedColumnStandIn(columns)
+    _, raw_batch = await predict_cpu(raw, {"features": columns, "model_version": "aligned"}, series(1, unique_value), current=40.0)
+    assert raw.calls == 1
+    assert raw.seen[0].shape == (1, 2)
+    assert raw.seen[0][0, 1] == 40.0
+    assert raw.seen[0][0, 0] != 40.0
+    assert prediction_provenance(raw_batch).get("fallback_code") is None
+
+
+async def test_column_name_conflict_keeps_the_structural_query_window(monkeypatch):
+    model = NamedColumnStandIn(["sin_time"])
+    service = _service(PredictionType.QPS, {"features": ["QPS_1w_ago"], "model_version": "conflict"}, model)
+    probe = _PrometheusProbe(frame=None)
+    _patch_prometheus(monkeypatch, probe)
+    with pytest.raises(HistoricalDataError):
+        await service.predict_qps(10.0, prediction_hours=1)
+    assert len(probe.calls) == 1
+    assert probe.calls[0]["step"] == "1h"
+    assert probe.calls[0]["end"] - probe.calls[0]["start"] == timedelta(hours=1)
+    assert model.calls == 0
+
+
+async def test_unnamed_estimator_with_matching_width_still_uses_declared_metadata_order():
+    model = LocalLinearStandIn(2)
+    _, batch = await predict_cpu(model, {"features": ["sin_time", "CPU"], "model_version": "ndarray"}, series(1, unique_value), current=40.0)
+    provenance = prediction_provenance(batch)
+    assert model.calls == 1
+    assert model.seen[0][0, 1] == 40.0
+    assert provenance["method"].startswith("model:")
+    assert provenance.get("fallback_code") is None
+
+
 async def test_dimension_conflict_between_metadata_and_estimator_does_not_guess():
     model = LocalLinearStandIn(4)
     scaler_model = LocalLinearStandIn(1)
@@ -589,7 +749,8 @@ def test_prediction_cache_key_changes_with_the_history_schema_contract():
         "consider_historical_pattern": True,
     }
     current = service._generate_prediction_cache_key("cpu", 20.0, **kwargs)
-    assert current == cache_key("history-schema-v3", "cpu", 20.0, **kwargs)
+    assert current == cache_key("history-schema-v4", "cpu", 20.0, **kwargs)
+    assert current != cache_key("history-schema-v3", "cpu", 20.0, **kwargs)
     assert current != cache_key("provenance-v2", "cpu", 20.0, **kwargs)
     assert current == service._generate_prediction_cache_key("cpu", 20.0, **kwargs)
 
