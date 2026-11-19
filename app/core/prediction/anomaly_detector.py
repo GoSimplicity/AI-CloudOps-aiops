@@ -162,13 +162,27 @@ class AnomalyDetector:
     def _isolation_forest_detection(
         self, values: np.ndarray, sensitivity: float
     ) -> Tuple[List[int], np.ndarray]:
-        """简化版Isolation Forest检测"""
+        """用 sklearn IsolationForest 找孤立点。常数序列没有孤立点，也不改走 MAD。"""
 
-        # 这是一个简化实现
-        # 实际应用中应使用sklearn的IsolationForest
+        scores = np.zeros(len(values), dtype=float)
+        if len(values) < 8 or float(np.std(values)) < 1e-8:
+            return [], scores
 
-        # 使用MAD作为简化方案
-        return self._mad_detection(values, sensitivity)
+        from sklearn.ensemble import IsolationForest
+
+        contamination = min(0.5, max(1.0 / len(values), 0.02 + 0.2 * max(0.0, float(sensitivity) - 0.5)))
+        model = IsolationForest(
+            n_estimators=100,
+            contamination=contamination,
+            random_state=0,
+            n_jobs=1,
+        )
+        matrix = np.asarray(values, dtype=float).reshape(-1, 1)
+        labels = model.fit_predict(matrix)
+        raw = -model.score_samples(matrix)
+        scores = raw - float(np.min(raw))
+        indices = [index for index, label in enumerate(labels.tolist()) if label == -1]
+        return indices, scores
 
     def _mad_detection(
         self, values: np.ndarray, sensitivity: float

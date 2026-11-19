@@ -72,3 +72,5 @@
 - 真实 Prometheus、Redis、Kubernetes、LLM、飞书和发布网关仍未在本环境验收。`docs/production.md` 列出的预生产验收继续有效。
 
 本地基线曾出现 6 个失败，都在 `tests/unit/test_test_boundaries.py`。原因是 pytest 把子进程的 `HOME` 指到临时目录，而依赖装在用户目录，子进程找不到 pytest。把 `PYTHONUSERBASE` 固定到原用户目录后这 6 项通过。这不是产品缺陷，CI 把依赖装进解释器环境，不受影响。
+
+2026-11-19 另有一批离线修复，见 `prediction-measured-patterns.md`：模式分析和量化变化率不再把未测量结果写成实测，`isolation` 不再转成 MAD。上面列出的特征填值、成本和健康字典没有在那一批里改。特征填值仍由未合并的历史结构修复覆盖。真实环境验收也仍然缺。

@@ -12,6 +12,7 @@ Description: AI-CloudOps智能预测分析器 - 使用大模型解读和分析�
 from datetime import datetime
 import json
 import logging
+import math
 import re
 from typing import Any, Dict, List, Optional
 
@@ -355,30 +356,38 @@ class PredictionAnalyzer:
             if not predictions:
                 return {}
 
-            # 提取预测值
-            values = [p.get("predicted_value", 0) for p in predictions]
+            # 缺测、空值和无穷大不记成 0。真实 0 仍然参与统计。
+            values = [
+                number
+                for number in (
+                    self._finite_metric(p.get("predicted_value") if isinstance(p, dict) else None)
+                    for p in predictions
+                )
+                if number is not None
+            ]
             confidences = [
-                p.get("confidence_level", 0)
-                for p in predictions
-                if p.get("confidence_level")
+                number
+                for number in (
+                    self._finite_metric(p.get("confidence_level") if isinstance(p, dict) else None)
+                    for p in predictions
+                )
+                if number is not None
             ]
 
             # 计算基础统计
             metrics = {
-                "prediction_count": len(predictions),
+                "prediction_count": len(values),
                 "value_range": (
                     {"min": min(values), "max": max(values)} if values else {}
                 ),
                 "value_statistics": {
-                    "mean": sum(values) / len(values) if values else 0,
-                    "median": sorted(values)[len(values) // 2] if values else 0,
+                    "mean": sum(values) / len(values) if values else None,
+                    "median": sorted(values)[len(values) // 2] if values else None,
                 },
                 "confidence_statistics": (
                     {
-                        "mean_confidence": (
-                            sum(confidences) / len(confidences) if confidences else 0
-                        ),
-                        "min_confidence": min(confidences) if confidences else 0,
+                        "mean_confidence": sum(confidences) / len(confidences),
+                        "min_confidence": min(confidences),
                         "confidence_trend": self._analyze_confidence_trend(confidences),
                     }
                     if confidences
@@ -386,26 +395,26 @@ class PredictionAnalyzer:
                 ),
             }
 
-            # 计算变化趋势
+            # 计算变化趋势。前半段均值为 0 时相对变化率没有定义，不写成 0%。
             if len(values) >= 2:
                 first_half = values[: len(values) // 2]
                 second_half = values[len(values) // 2 :]
 
                 first_avg = sum(first_half) / len(first_half)
                 second_avg = sum(second_half) / len(second_half)
+                if second_avg > first_avg:
+                    direction = "increasing"
+                elif second_avg < first_avg:
+                    direction = "decreasing"
+                else:
+                    direction = "stable"
 
                 metrics["trend_analysis"] = {
-                    "direction": (
-                        "increasing"
-                        if second_avg > first_avg
-                        else "decreasing"
-                        if second_avg < first_avg
-                        else "stable"
-                    ),
+                    "direction": direction,
                     "change_percentage": (
-                        ((second_avg - first_avg) / first_avg * 100)
-                        if first_avg > 0
-                        else 0
+                        None
+                        if first_avg == 0
+                        else (second_avg - first_avg) / first_avg * 100
                     ),
                 }
 
@@ -414,6 +423,16 @@ class PredictionAnalyzer:
         except Exception as e:
             logger.error("计算量化指标失败，异常类型: %s", type(e).__name__)
             return {}
+
+    @staticmethod
+    def _finite_metric(value: Any) -> Optional[float]:
+        """只接受有限数值。布尔值不是测量值。"""
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        number = float(value)
+        if not math.isfinite(number):
+            return None
+        return number
 
     def _analyze_confidence_trend(self, confidences: List[float]) -> str:
         """分析置信度趋势"""

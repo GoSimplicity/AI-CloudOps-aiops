@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -429,8 +430,14 @@ class PredictionPromptBuilder:
             if predictions:
                 confidences = []
                 for p in predictions:
-                    if isinstance(p, dict) and p.get("confidence_level"):
-                        confidences.append(p.get("confidence_level", 0))
+                    if not isinstance(p, dict):
+                        continue
+                    level = p.get("confidence_level")
+                    if isinstance(level, bool) or not isinstance(level, (int, float)):
+                        continue
+                    if not math.isfinite(float(level)):
+                        continue
+                    confidences.append(float(level))
 
                 if confidences:
                     confidence_stats = f"平均置信度: {sum(confidences) / len(confidences):.2f}, 范围: {min(confidences):.2f}-{max(confidences):.2f}"

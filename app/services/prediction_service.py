@@ -1298,12 +1298,15 @@ class PredictionService(BaseService, HealthCheckMixin):
     def _analyze_patterns(
         self, predictions: List[PredictionDataPoint]
     ) -> Dict[str, Any]:
-        """分析预测模式"""
+        """分析预测模式。周期只在去趋势后的重复被测到时为真。"""
+        from app.core.prediction.measured_patterns import measured_pattern_report
+
         values = [p.predicted_value for p in predictions]
+        report = measured_pattern_report(predictions)
         return {
-            "has_periodicity": self._check_periodicity(values),
+            "has_periodicity": report["has_periodicity"],
             "volatility": self._calculate_volatility(values),
-            "seasonality": self._detect_seasonality(predictions),
+            "seasonality": report["seasonality"],
         }
 
     def _generate_insights(
@@ -1381,13 +1384,11 @@ class PredictionService(BaseService, HealthCheckMixin):
         max_pred = max(predictions, key=lambda p: p.predicted_value)
         return max_pred.timestamp
 
-    def _check_periodicity(self, values: List[float]) -> bool:
-        """检查周期性"""
-        # 简单的周期性检测逻辑
-        if len(values) < 24:
-            return False
-        # 这里可以实现更复杂的周期性检测算法
-        return True
+    def _check_periodicity(self, predictions: List[PredictionDataPoint]) -> bool:
+        """有实测重复才算有周期。点数够但只是一条直线或常数时为 false。"""
+        from app.core.prediction.measured_patterns import measured_pattern_report
+
+        return bool(measured_pattern_report(predictions)["has_periodicity"])
 
     def _calculate_volatility(self, values: List[float]) -> float:
         """计算波动性"""
@@ -1400,12 +1401,10 @@ class PredictionService(BaseService, HealthCheckMixin):
     def _detect_seasonality(
         self, predictions: List[PredictionDataPoint]
     ) -> Dict[str, Any]:
-        """检测季节性"""
-        return {
-            "daily_pattern": True,
-            "weekly_pattern": False,
-            "monthly_pattern": False,
-        }
+        """按采样间隔检查日、周、月重复。看不到对应周期时为 false。"""
+        from app.core.prediction.measured_patterns import measured_pattern_report
+
+        return dict(measured_pattern_report(predictions)["seasonality"])
 
     async def _get_resource_usage(self) -> Dict[str, float]:
         """获取资源使用情况"""
@@ -1430,7 +1429,7 @@ class PredictionService(BaseService, HealthCheckMixin):
                 "type": prediction_type,
                 "data_contract": "observed-hourly-v1",
                 "time_contract": "utc-v1",
-                "prediction_contract": "provenance-v2",
+                "prediction_contract": "provenance-v3-measured-patterns",
                 "principal": principal_context.get() or INTERNAL_PRINCIPAL,
                 "current": round(current_value, 2),  # 避免浮点数精度问题
                 "query": metric_query or "default",

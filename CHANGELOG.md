@@ -2,6 +2,10 @@
 
 ## 1.0 开发中
 
+### 2026-11-19 · OpenTelemetry API 修复版本
+
+- 将 FastAPI 带入的 `opentelemetry-api` 从 1.45.1 锁到 1.45.2，对应 GHSA-mf5v-w3w3-f6cg / CVE-2026-126360。不升级 SDK 或 exporter，也不放宽 pip-audit
+
 ### 2026-10-23 · 指标服务并发隔离
 
 - 修复 Prometheus 异步查询直接执行阻塞 HTTP 请求导致整个 API 事件循环暂停的问题
@@ -9,6 +13,18 @@
 - 预测历史数据改用异步健康检查，避免在调用链重新引入阻塞
 - 新增 9 个离线回归用例，覆盖所有指标请求入口、源不可达及慢请求期间 HTTP 存活检查
 - 验证范围为本地离线门禁；真实 Kubernetes、Prometheus、Redis、模型及发布环境仍需独立验收
+
+### 2026-11-19 · 预测模式与量化指标按实测序列计算
+
+- 周期和日/周/月季节性只在去趋势后测到对应重复时为真。点数够、直线、常数或时间戳重复不再写成有日周期
+- 量化指标不再把缺测、空值或无穷大填成 0。前半段均值为 0 时变化率是 null，负基线保留真实百分比。置信度 0 仍算实测
+- `method=isolation` 使用 IsolationForest，不再转成 MAD。默认配置仍是 zscore
+- 说明见 `docs/release/prediction-measured-patterns.md`。不改请求和状态码，也不改 `/info`、`/ready`、`/health`、`/models`、成本和健康字典
+
+### 2026-11-19 · 预测缓存不再返回旧模式结果
+
+- 预测缓存契约从 `provenance-v2` 改为 `provenance-v3-measured-patterns`。升级前写入的恒 true 季节性和零基线变化率 0 不再命中，命中路径也不会把这些旧结果的过期时间续上
+- 不使用 `history-schema-v4`。那个名字属于 #26。两边都改同一处 `prediction_contract`，将来两者都合时需要再升一个同时包含历史结构和本次实测模式的版本
 
 ### 2026-10-23 · 通知真实状态与并发修复
 
