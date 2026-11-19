@@ -37,11 +37,17 @@ class ConstantPredictionModel:
 def _write_model(directory, prediction_type: PredictionType):
     path = directory / f"{prediction_type.value}_prediction_model.pkl"
     joblib.dump(ConstantPredictionModel(), path)
+    metadata = directory / f"{prediction_type.value}_prediction_model_metadata.json"
+    metadata.write_text(
+        '{"features": ["sin_time"], "model_version": "test-stand-in"}',
+        encoding="utf-8",
+    )
     return path
 
 
 def _predictor(manager: ModelManager) -> UnifiedPredictor:
-    features = SimpleNamespace(extract_features=AsyncMock(return_value=pd.DataFrame([{}])))
+    # 显式 sin_time 元数据不需要历史列。空表不能再冒充模型输入。
+    features = SimpleNamespace(extract_features=AsyncMock(return_value=pd.DataFrame([{"sin_time": 0.0}])))
     predictor = UnifiedPredictor(manager, features)
     predictor._initialized = True
     return predictor
