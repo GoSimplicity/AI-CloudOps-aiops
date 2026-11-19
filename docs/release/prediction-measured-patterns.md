@@ -22,6 +22,12 @@
 
 配置和直接调用里的 `method=isolation` 使用 scikit-learn 的 `IsolationForest`（`random_state=0`）。常数序列或少于 8 个点不报异常，也不再转去 MAD。默认配置仍是 `zscore`，普通预测请求不传检测方法，因此默认异常列表的算法没有变。未知方法名仍按原来的 Z-score 路径。
 
+## 缓存
+
+模式分析和量化指标会写入预测缓存。`RedisCacheManager.get` 命中时用 `setex` 按默认 TTL 续期，所以旧结果不会自己到期后消失。缓存参数 `prediction_contract` 从 `provenance-v2` 改为 `provenance-v3-measured-patterns`。旧键不再命中，也不会被这次读取续期。
+
+不用 `history-schema-v4`。那个版本名属于未合并的 #26，它也改同一处 `prediction_contract`。将来两个改动都要保留时，需要再升一个同时包含历史结构和本次实测模式的新版本，不能只留其中一个名字。
+
 ## 验证
 
 离线回归在 `tests/unit/test_prediction_measured_patterns.py`。修复前该文件 11 项失败、2 项通过：失败点是固定日周期、零基线变化率被写成 0、缺测被填 0 或直接算失败、置信度 0 被丢掉，以及 isolation 调用了 MAD。当时通过的两项是按小时重复的日周期（旧实现本来就把日季节性写成 true）和常数序列的 isolation（MAD 对常数也不报异常）。修复后该文件全部通过。

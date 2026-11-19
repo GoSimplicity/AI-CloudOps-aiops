@@ -1429,7 +1429,7 @@ class PredictionService(BaseService, HealthCheckMixin):
                 "type": prediction_type,
                 "data_contract": "observed-hourly-v1",
                 "time_contract": "utc-v1",
-                "prediction_contract": "provenance-v2",
+                "prediction_contract": "provenance-v3-measured-patterns",
                 "principal": principal_context.get() or INTERNAL_PRINCIPAL,
                 "current": round(current_value, 2),  # 避免浮点数精度问题
                 "query": metric_query or "default",

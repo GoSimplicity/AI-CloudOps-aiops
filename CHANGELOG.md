@@ -21,6 +21,11 @@
 - `method=isolation` 使用 IsolationForest，不再转成 MAD。默认配置仍是 zscore
 - 说明见 `docs/release/prediction-measured-patterns.md`。不改请求和状态码，也不改 `/info`、`/ready`、`/health`、`/models`、成本和健康字典
 
+### 2026-11-19 · 预测缓存不再返回旧模式结果
+
+- 预测缓存契约从 `provenance-v2` 改为 `provenance-v3-measured-patterns`。升级前写入的恒 true 季节性和零基线变化率 0 不再命中，命中路径也不会把这些旧结果的过期时间续上
+- 不使用 `history-schema-v4`。那个名字属于 #26。两边都改同一处 `prediction_contract`，将来两者都合时需要再升一个同时包含历史结构和本次实测模式的版本
+
 ### 2026-10-23 · 通知真实状态与并发修复
 
 - 修复通知使用不存在的 HTTP 常量，导致供应商成功响应仍被判定失败的问题；同步修复指标健康检查同类缺陷
