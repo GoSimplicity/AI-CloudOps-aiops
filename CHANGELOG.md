@@ -2,6 +2,10 @@
 
 ## 1.0 开发中
 
+### 2026-11-19 · OpenTelemetry API 修复版本
+
+- 将 FastAPI 带入的 `opentelemetry-api` 从 1.45.1 锁到 1.45.2，对应 GHSA-mf5v-w3w3-f6cg / CVE-2026-126360。不升级 SDK 或 exporter，也不放宽 pip-audit
+
 ### 2026-11-13 · 预测真实历史与输入结构降级
 
 - 模型所需实测历史不足或输入结构无法确定时，不再调用模型，也不再用缩放当前值、最早样本或固定常数冒充特征；响应仍为 HTTP 200 / code 0，并带 `fallback_code`

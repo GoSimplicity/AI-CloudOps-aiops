@@ -4,6 +4,8 @@
 aiohttp>=3.14.4,<4
 faiss-cpu==1.12.0
 fastapi>=0.159.1,<1
+# fastapi 直接依赖 opentelemetry-api>=1.44.0。锁在 GHSA-mf5v-w3w3-f6cg 的修复版，不跟随后续次版本。
+opentelemetry-api==1.45.2
 httpx[socks]==0.28.1
 joblib==1.5.1
 kubernetes>=35,<40
